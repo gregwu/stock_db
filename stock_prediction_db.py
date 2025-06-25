@@ -536,15 +536,20 @@ def main():
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
-            day1_pred = st.selectbox("Day 1", ["UP", "DOWN"], key="day1")
+            st.write("**Day 1**")
+            day1_pred = st.radio("", ["UP", "DOWN"], key="day1", label_visibility="collapsed")
         with col2:
-            day2_pred = st.selectbox("Day 2", ["UP", "DOWN"], key="day2")
+            st.write("**Day 2**")
+            day2_pred = st.radio("", ["UP", "DOWN"], key="day2", label_visibility="collapsed")
         with col3:
-            day3_pred = st.selectbox("Day 3", ["UP", "DOWN"], key="day3")
+            st.write("**Day 3**")
+            day3_pred = st.radio("", ["UP", "DOWN"], key="day3", label_visibility="collapsed")
         with col4:
-            day4_pred = st.selectbox("Day 4", ["UP", "DOWN"], key="day4")
+            st.write("**Day 4**")
+            day4_pred = st.radio("", ["UP", "DOWN"], key="day4", label_visibility="collapsed")
         with col5:
-            day5_pred = st.selectbox("Day 5", ["UP", "DOWN"], key="day5")
+            st.write("**Day 5**")
+            day5_pred = st.radio("", ["UP", "DOWN"], key="day5", label_visibility="collapsed")
         
         submitted = st.form_submit_button("Submit Prediction")
         
