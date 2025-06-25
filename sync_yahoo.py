@@ -10,9 +10,9 @@ load_dotenv()
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'port': int(os.getenv('DB_PORT', 5433)),
-    'database': os.getenv('DB_NAME', 'gangwu'),
-    'user': os.getenv('DB_USER', 'gangwu'),
-    'password': os.getenv('DB_PASSWORD', 'gangwu')
+    'database': os.getenv('DB_NAME', 'database'),
+    'user': os.getenv('DB_USER', 'user'),
+    'password': os.getenv('DB_PASSWORD', 'password')
 }
 tickers = ["AAPL", "MSFT", "GOOGL"]  # Modify or dynamically fetch from DB
 
@@ -131,7 +131,7 @@ def main():
         conn = psycopg2.connect(
             host=DB_CONFIG['host'],
             port=DB_CONFIG['port'],
-            database='gangwu',  # Try connecting to default database first
+            database=DB_CONFIG['database'],  # Try connecting to default database first
             user=DB_CONFIG['user'],
             password=DB_CONFIG['password']
         )
