@@ -313,7 +313,7 @@ def fetch_additional_yahoo_data(ticker, end_date, days_needed=200):
         df = yf.download(yahoo_ticker, start=start_date, end=end_date + timedelta(days=1), progress=False, auto_adjust=True)
         
         if df.empty:
-            st.warning(f"No additional data found for {yahoo_ticker}")
+            st.toast(f"⚠️ No additional data found for {yahoo_ticker}", icon='⚠️')
             return pd.DataFrame()
         
         df.reset_index(inplace=True)
@@ -337,7 +337,7 @@ def fetch_additional_yahoo_data(ticker, end_date, days_needed=200):
         return df
         
     except Exception as e:
-        st.error(f"Error fetching data from Yahoo Finance: {e}")
+        st.toast(f"❌ Error fetching data from Yahoo Finance: {e}", icon='❌')
         return pd.DataFrame()
 
 def ensure_sufficient_data_for_indicators(ticker, end_date, min_days_needed=200):
@@ -363,17 +363,16 @@ def ensure_sufficient_data_for_indicators(ticker, end_date, min_days_needed=200)
     
     # If we don't have enough data, fetch from Yahoo Finance
     if existing_count < min_days_needed:
-        st.info(f"Fetching additional historical data for {ticker} to calculate technical indicators...")
-        
-        # Fetch additional data from Yahoo Finance
-        yahoo_data = fetch_additional_yahoo_data(ticker, end_date, days_needed=min_days_needed + 50)
-        
-        if not yahoo_data.empty:
-            # Store the additional data in the database
-            store_yahoo_data_in_db(yahoo_data, ticker)
-            st.success(f"Successfully fetched and stored {len(yahoo_data)} additional data points")
-        else:
-            st.warning("Could not fetch additional data from Yahoo Finance")
+        with st.spinner(f"Fetching additional historical data for {ticker} to calculate technical indicators..."):
+            # Fetch additional data from Yahoo Finance
+            yahoo_data = fetch_additional_yahoo_data(ticker, end_date, days_needed=min_days_needed + 50)
+            
+            if not yahoo_data.empty:
+                # Store the additional data in the database
+                store_yahoo_data_in_db(yahoo_data, ticker)
+                st.toast(f"✅ Successfully fetched and stored {len(yahoo_data)} additional data points", icon='🎉')
+            else:
+                st.toast("⚠️ Could not fetch additional data from Yahoo Finance", icon='⚠️')
 
 def store_yahoo_data_in_db(df, ticker):
     """Store Yahoo Finance data in the database"""
@@ -408,7 +407,7 @@ def store_yahoo_data_in_db(df, ticker):
             conn.commit()
             
     except Exception as e:
-        st.error(f"Error storing data in database: {e}")
+        st.toast(f"❌ Error storing data in database: {e}", icon='❌')
 
 def main():
     st.set_page_config(page_title="Stock Prediction App", layout="wide")
@@ -426,10 +425,10 @@ def main():
     try:
         tickers = get_available_tickers()
         if not tickers:
-            st.error("No tickers found in database!")
+            st.toast("❌ No tickers found in database!", icon='❌')
             return
     except Exception as e:
-        st.error(f"Database connection error: {e}")
+        st.toast(f"❌ Database connection error: {e}", icon='❌')
         return
     
     # Ticker selection
@@ -452,14 +451,11 @@ def main():
         
         df = get_stock_data_from_date(selected_ticker, st.session_state.current_view_date, days_before=50)
         if df.empty:
-            st.warning(f"No data found for {clean_ticker_display(selected_ticker)} around the selected date.")
+            st.toast(f"⚠️ No data found for {clean_ticker_display(selected_ticker)} around the selected date.", icon='⚠️')
             return
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.toast(f"❌ Error loading data: {e}", icon='❌')
         return
-    
-    # Ensure sufficient historical data for indicators
-    ensure_sufficient_data_for_indicators(selected_ticker, st.session_state.current_view_date, min_days_needed=200)
     
     # Main content area
     col1, col2 = st.columns([3, 1])
@@ -495,7 +491,7 @@ def main():
                         st.session_state.current_view_date = next_date
                     st.rerun()
                 else:
-                    st.warning("No more data available for future dates.")
+                    st.toast("⚠️ No more data available for future dates.", icon='⚠️')
         
         with col_btn2:
             if st.session_state.current_view_date > base_date:
@@ -566,7 +562,7 @@ def main():
             }
             
             st.session_state.predictions.append(prediction)
-            st.success("Prediction submitted successfully!")
+            st.toast("🎉 Prediction submitted successfully!", icon='✅')
             st.rerun()
     
     # Scoring section - show if there are predictions
