@@ -1,21 +1,34 @@
 #!/usr/bin/env python3
 """
-savedb.py - Load stock data from CSV files to PostgreSQL database
+savedb.py - Integrated Stock Data Processing and Database Loader
 
-This script uses the load_csv_file function from data_loader.py to process
-stock data files and save them to a PostgreSQL database.
+This script provides a complete, self-contained solution for:
+1. Loading stock data from CSV files
+2. Calculating basic and enhanced technical indicators
+3. Saving processed data to PostgreSQL database
+
+Features:
+- Integrated data loading (no external data_loader dependency)
+- Basic technical indicators (SMA, RSI, MACD, Bollinger Bands, etc.)
+- Enhanced technical features (60+ advanced indicators)
+- Comprehensive database schema with all features
+- Memory-optimized processing
+- Error handling and logging
+
+Dependencies: pandas, numpy, psycopg2, sqlalchemy, scipy, python-dotenv, tqdm
 """
 
 import os
 import sys
 import pandas as pd
+import numpy as np
 import psycopg2
 from pathlib import Path
 from tqdm import tqdm
 from sqlalchemy import create_engine, text
 import logging
-from data_loader import load_csv_file
 from dotenv import load_dotenv
+from scipy.stats import linregress
 
 # Database configuration
 # Load environment variables from .env file
@@ -86,7 +99,7 @@ def create_stock_data_table(engine):
         volume BIGINT NOT NULL,
         open_interest REAL,
         
-        -- Technical Indicators
+        -- Basic Technical Indicators
         sma_20 REAL,
         sma_144 REAL,
         sma_144_dist REAL,
@@ -104,6 +117,69 @@ def create_stock_data_table(engine):
         touches_upper_bb BOOLEAN,
         vol_sma_10 REAL,
         volume_spike BOOLEAN,
+        
+        -- Enhanced Price Features
+        price_change REAL,
+        price_change_abs REAL,
+        high_low_ratio REAL,
+        open_close_ratio REAL,
+        price_volatility REAL,
+        
+        -- Additional Moving Averages
+        sma_5 REAL,
+        sma_50 REAL,
+        price_to_sma_5 REAL,
+        price_to_sma_20 REAL,
+        price_to_sma_50 REAL,
+        sma_5_slope REAL,
+        sma_20_slope REAL,
+        sma_50_slope REAL,
+        
+        -- Exponential Moving Averages
+        ema_12 REAL,
+        ema_26 REAL,
+        
+        -- Enhanced MACD Features
+        macd_histogram REAL,
+        macd_momentum REAL,
+        
+        -- Enhanced Bollinger Bands
+        bb_width REAL,
+        bb_position REAL,
+        
+        -- Stochastic Oscillator
+        stoch_k REAL,
+        stoch_d REAL,
+        
+        -- Enhanced Volume Features
+        volume_sma REAL,
+        volume_ratio REAL,
+        volume_momentum REAL,
+        price_volume REAL,
+        obv REAL,
+        obv_momentum REAL,
+        
+        -- Volatility Measures
+        volatility_20 REAL,
+        volatility_momentum REAL,
+        
+        -- Support/Resistance Levels
+        resistance_20 REAL,
+        support_20 REAL,
+        resistance_distance REAL,
+        support_distance REAL,
+        
+        -- Lagged Features (Key Predictors)
+        price_change_lag_1 REAL,
+        price_change_lag_2 REAL,
+        price_change_lag_3 REAL,
+        price_change_lag_4 REAL,
+        price_change_lag_5 REAL,
+        volume_ratio_lag_1 REAL,
+        volume_ratio_lag_2 REAL,
+        volume_ratio_lag_3 REAL,
+        volume_ratio_lag_4 REAL,
+        volume_ratio_lag_5 REAL,
         
         -- Indexes
         UNIQUE(ticker, date)
@@ -133,6 +209,10 @@ def prepare_dataframe_for_db(df, ticker):
     if 'TICKER' not in db_df.columns:
         db_df['TICKER'] = ticker
     
+    # Technical indicators should already be calculated by load_csv_file
+    # No need for additional calculation here
+    logger.info(f"📊 Preparing {len(db_df)} records for {ticker} (already has {len(db_df.columns)} columns)")
+    
     # Define columns that should be kept in the database
     allowed_columns = {
         'TICKER': 'ticker',
@@ -144,6 +224,8 @@ def prepare_dataframe_for_db(df, ticker):
         'CLOSE': 'close_price',
         'VOL': 'volume',
         'OPENINT': 'open_interest',
+        
+        # Basic Technical Indicators (support both old and new formats)
         'SMA_20': 'sma_20',
         'SMA_144': 'sma_144',
         'SMA_144_Dist': 'sma_144_dist',
@@ -160,18 +242,94 @@ def prepare_dataframe_for_db(df, ticker):
         'Touches_Lower_BB': 'touches_lower_bb',
         'Touches_Upper_BB': 'touches_upper_bb',
         'Vol_SMA_10': 'vol_sma_10',
-        'Volume_Spike': 'volume_spike'
+        'Volume_Spike': 'volume_spike',
+        
+        # Enhanced Price Features (uppercase)
+        'PRICE_CHANGE': 'price_change',
+        'PRICE_CHANGE_ABS': 'price_change_abs',
+        'HIGH_LOW_RATIO': 'high_low_ratio',
+        'OPEN_CLOSE_RATIO': 'open_close_ratio',
+        'PRICE_VOLATILITY': 'price_volatility',
+        
+        # Additional Moving Averages (uppercase)
+        'SMA_5': 'sma_5',
+        'SMA_50': 'sma_50',
+        'PRICE_TO_SMA_5': 'price_to_sma_5',
+        'PRICE_TO_SMA_20': 'price_to_sma_20',
+        'PRICE_TO_SMA_50': 'price_to_sma_50',
+        'SMA_5_SLOPE': 'sma_5_slope',
+        'SMA_20_SLOPE': 'sma_20_slope',
+        'SMA_50_SLOPE': 'sma_50_slope',
+        
+        # Exponential Moving Averages (uppercase)
+        'EMA_12': 'ema_12',
+        'EMA_26': 'ema_26',
+        
+        # Enhanced MACD Features (uppercase)
+        'MACD_HISTOGRAM': 'macd_histogram',
+        'MACD_MOMENTUM': 'macd_momentum',
+        
+        # Enhanced Bollinger Bands (uppercase)
+        'BB_WIDTH': 'bb_width',
+        'BB_POSITION': 'bb_position',
+        
+        # Stochastic Oscillator (uppercase)
+        'STOCH_K': 'stoch_k',
+        'STOCH_D': 'stoch_d',
+        
+        # Enhanced Volume Features (uppercase)
+        'VOLUME_SMA': 'volume_sma',
+        'VOLUME_RATIO': 'volume_ratio',
+        'VOLUME_MOMENTUM': 'volume_momentum',
+        'PRICE_VOLUME': 'price_volume',
+        'OBV': 'obv',
+        'OBV_MOMENTUM': 'obv_momentum',
+        
+        # Volatility Measures (uppercase)
+        'VOLATILITY_20': 'volatility_20',
+        'VOLATILITY_MOMENTUM': 'volatility_momentum',
+        
+        # Support/Resistance Levels (uppercase)
+        'RESISTANCE_20': 'resistance_20',
+        'SUPPORT_20': 'support_20',
+        'RESISTANCE_DISTANCE': 'resistance_distance',
+        'SUPPORT_DISTANCE': 'support_distance',
+        
+        # Lagged Features (Key Predictors) (uppercase)
+        'PRICE_CHANGE_LAG_1': 'price_change_lag_1',
+        'PRICE_CHANGE_LAG_2': 'price_change_lag_2',
+        'PRICE_CHANGE_LAG_3': 'price_change_lag_3',
+        'PRICE_CHANGE_LAG_4': 'price_change_lag_4',
+        'PRICE_CHANGE_LAG_5': 'price_change_lag_5',
+        'VOLUME_RATIO_LAG_1': 'volume_ratio_lag_1',
+        'VOLUME_RATIO_LAG_2': 'volume_ratio_lag_2',
+        'VOLUME_RATIO_LAG_3': 'volume_ratio_lag_3',
+        'VOLUME_RATIO_LAG_4': 'volume_ratio_lag_4',
+        'VOLUME_RATIO_LAG_5': 'volume_ratio_lag_5'
     }
     
     # Log all columns in the DataFrame for debugging
-    logger.info(f"📋 DataFrame columns for {ticker}: {list(df.columns)}")
+    original_columns = list(db_df.columns)
+    logger.info(f"📋 DataFrame columns for {ticker}: {original_columns}")
     
-    # Filter to only keep allowed columns
-    available_columns = [col for col in db_df.columns if col in allowed_columns]
+    # Filter to only keep allowed columns and handle duplicates
+    available_columns = []
+    used_db_columns = set()
+    
+    for col in db_df.columns:
+        if col in allowed_columns:
+            db_col = allowed_columns[col]
+            # Only add if we haven't seen this database column yet
+            if db_col not in used_db_columns:
+                available_columns.append(col)
+                used_db_columns.add(db_col)
+            else:
+                logger.info(f"⚠️ Skipping duplicate mapping for {col} -> {db_col}")
+    
     db_df = db_df[available_columns]
     
     # Log any columns that were dropped
-    dropped_columns = [col for col in df.columns if col not in allowed_columns]
+    dropped_columns = [col for col in original_columns if col not in available_columns]
     if dropped_columns:
         logger.info(f"🗑️ Dropped columns for {ticker}: {dropped_columns}")
     
@@ -281,6 +439,187 @@ def process_stock_files(data_directory, engine):
     logger.info(f"   ✅ Files processed: {processed_files}")
     logger.info(f"   ❌ Files failed: {failed_files}")
     logger.info(f"   📈 Total records saved: {total_records}")
+
+def clean_volume(v):
+    """Clean volume data by converting to integer."""
+    try:
+        return int(float(v))
+    except:
+        return 0
+
+def calculate_all_technical_indicators(df):
+    """
+    Calculate comprehensive technical indicators for stock data.
+    This function combines basic and enhanced technical features into one unified calculation.
+    Expects columns: CLOSE, VOL, HIGH, LOW, OPEN (uppercase)
+    """
+    logger.info("🔧 Calculating comprehensive technical indicators...")
+    
+    # Create a copy to avoid modifying original
+    df = df.copy()
+    
+    # Ensure we have the required base columns
+    required_cols = ['CLOSE', 'VOL', 'HIGH', 'LOW', 'OPEN']
+    for col in required_cols:
+        if col not in df.columns:
+            logger.error(f"❌ Missing required column '{col}'. Available columns: {list(df.columns)}")
+            return df
+    
+    # =================
+    # BASIC PRICE FEATURES
+    # =================
+    df['PRICE_CHANGE'] = df['CLOSE'].pct_change()
+    df['PRICE_CHANGE_ABS'] = df['PRICE_CHANGE'].abs()
+    df['HIGH_LOW_RATIO'] = df['HIGH'] / df['LOW']
+    df['OPEN_CLOSE_RATIO'] = df['OPEN'] / df['CLOSE']
+    df['PRICE_VOLATILITY'] = (df['HIGH'] - df['LOW']) / df['CLOSE']
+    
+    # =================
+    # MOVING AVERAGES
+    # =================
+    # Simple Moving Averages (basic + enhanced)
+    for window in [5, 20, 50, 144]:
+        col_name = f'SMA_{window}'
+        df[col_name] = df['CLOSE'].rolling(window=window).mean()
+        
+        # Enhanced MA features (skip for SMA_144 to avoid redundancy)
+        if window != 144:
+            df[f'PRICE_TO_SMA_{window}'] = df['CLOSE'] / df[col_name]
+            df[f'SMA_{window}_SLOPE'] = df[col_name].pct_change(5)
+    
+    # SMA_144 specific features
+    df['SMA_144_Dist'] = (df['CLOSE'] - df['SMA_144']) / df['SMA_144'] * 100
+    
+    def calc_slope(series, window=10):
+        y = series[-window:]
+        x = np.arange(len(y))
+        if y.isnull().any() or len(y) < window:
+            return np.nan
+        try:
+            slope, _, _, _, _ = linregress(x, y)
+            return slope
+        except:
+            return np.nan
+    
+    df['SMA_144_Slope'] = df['SMA_144'].rolling(window=20).apply(lambda x: calc_slope(pd.Series(x)), raw=False)
+    
+    # Exponential Moving Averages
+    df['EMA_12'] = df['CLOSE'].ewm(span=12).mean()
+    df['EMA_26'] = df['CLOSE'].ewm(span=26).mean()
+    
+    # =================
+    # MACD FAMILY
+    # =================
+    df['MACD'] = df['EMA_12'] - df['EMA_26']
+    df['MACD_Signal'] = df['MACD'].ewm(span=9).mean()
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+    df['MACD_Up'] = df['MACD_Hist'].diff() > 0
+    
+    # Enhanced MACD features
+    df['MACD_HISTOGRAM'] = df['MACD_Hist']  # Alias for consistency
+    df['MACD_MOMENTUM'] = df['MACD'].pct_change(3)
+    
+    # =================
+    # RSI
+    # =================
+    up = df['CLOSE'].diff().clip(lower=0)
+    down = -df['CLOSE'].diff().clip(upper=0)
+    rs = up.rolling(14).mean() / down.rolling(14).mean()
+    df['RSI_14'] = 100 - (100 / (1 + rs))
+    
+    # =================
+    # BOLLINGER BANDS
+    # =================
+    df['BB_Middle'] = df['SMA_20']
+    df['BB_Std'] = df['CLOSE'].rolling(20).std()
+    df['BB_Upper'] = df['BB_Middle'] + 2 * df['BB_Std']
+    df['BB_Lower'] = df['BB_Middle'] - 2 * df['BB_Std']
+    df['Touches_Lower_BB'] = df['CLOSE'] <= df['BB_Lower']
+    df['Touches_Upper_BB'] = df['CLOSE'] >= df['BB_Upper']
+    
+    # Enhanced Bollinger Bands features
+    df['BB_WIDTH'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle']
+    df['BB_POSITION'] = (df['CLOSE'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
+    
+    # =================
+    # STOCHASTIC OSCILLATOR
+    # =================
+    low_14 = df['LOW'].rolling(14).min()
+    high_14 = df['HIGH'].rolling(14).max()
+    df['STOCH_K'] = ((df['CLOSE'] - low_14) / (high_14 - low_14)) * 100
+    df['STOCH_D'] = df['STOCH_K'].rolling(3).mean()
+    
+    # =================
+    # VOLUME INDICATORS
+    # =================
+    # Basic volume indicators
+    df['Vol_SMA_10'] = df['VOL'].rolling(10).mean()
+    df['Volume_Spike'] = df['VOL'] > 1.5 * df['Vol_SMA_10']
+    
+    # Enhanced volume features
+    df['VOLUME_SMA'] = df['VOL'].rolling(20).mean()
+    df['VOLUME_RATIO'] = df['VOL'] / df['VOLUME_SMA']
+    df['VOLUME_MOMENTUM'] = df['VOL'].pct_change(3)
+    df['PRICE_VOLUME'] = df['CLOSE'] * df['VOL']
+    
+    # On-Balance Volume (OBV)
+    df['OBV'] = (np.sign(df['CLOSE'].diff()) * df['VOL']).fillna(0).cumsum()
+    df['OBV_MOMENTUM'] = df['OBV'].pct_change(5)
+    
+    # =================
+    # VOLATILITY MEASURES
+    # =================
+    df['VOLATILITY_20'] = df['PRICE_CHANGE'].rolling(20).std() * np.sqrt(252)
+    df['VOLATILITY_MOMENTUM'] = df['VOLATILITY_20'].pct_change(5)
+    
+    # =================
+    # SUPPORT/RESISTANCE LEVELS
+    # =================
+    df['RESISTANCE_20'] = df['HIGH'].rolling(20).max()
+    df['SUPPORT_20'] = df['LOW'].rolling(20).min()
+    df['RESISTANCE_DISTANCE'] = (df['RESISTANCE_20'] - df['CLOSE']) / df['CLOSE']
+    df['SUPPORT_DISTANCE'] = (df['CLOSE'] - df['SUPPORT_20']) / df['CLOSE']
+    
+    # =================
+    # LAGGED FEATURES (KEY PREDICTORS)
+    # =================
+    for lag in [1, 2, 3, 4, 5]:
+        df[f'PRICE_CHANGE_LAG_{lag}'] = df['PRICE_CHANGE'].shift(lag)
+        df[f'VOLUME_RATIO_LAG_{lag}'] = df['VOLUME_RATIO'].shift(lag)
+    
+    logger.info(f"✅ Comprehensive technical indicators calculated. DataFrame now has {len(df.columns)} columns")
+    
+    return df
+
+def load_csv_file(filepath, dropna=True):
+    """Load and process CSV stock data file with technical indicators."""
+    # Load and clean
+    if filepath.stat().st_size == 0:
+        raise ValueError("File is empty")
+
+    df = pd.read_csv(filepath, skiprows=1, header=None)
+    if len(df) == 0:
+        raise ValueError("File contains no data rows")
+
+    df.columns = ["TICKER", "PER", "DATE", "TIME", "OPEN", "HIGH", "LOW", "CLOSE", "VOL", "OPENINT"]
+    df["DATE"] = pd.to_datetime(df["DATE"], format="%Y%m%d")
+    df = df.sort_values("DATE")
+
+    df["VOL"] = df["VOL"].apply(clean_volume)
+    df = df.dropna(subset=["OPEN", "HIGH", "LOW", "CLOSE", "VOL"])
+
+    # Memory optimization
+    df = df.astype({'OPEN': 'float32', 'HIGH': 'float32', 'LOW': 'float32',
+                    'CLOSE': 'float32', 'VOL': 'float32'})
+
+    # Add comprehensive technical indicators
+    df = calculate_all_technical_indicators(df)
+
+    # Drop NaNs caused by rolling windows
+    if dropna:
+        df = df.dropna().reset_index(drop=True)
+
+    return df
 
 def main():
     """Main function"""

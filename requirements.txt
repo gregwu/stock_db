@@ -6,3 +6,4 @@ dotenv
 sqlalchemy
 tqdm
 scipy
+tables

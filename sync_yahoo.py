@@ -21,7 +21,7 @@ def get_last_date_for_ticker(conn, ticker):
         cur.execute("""
             SELECT MAX(date) FROM stock_data 
             WHERE ticker = %s 
-              AND date < (CURRENT_DATE - INTERVAL '1 day')
+             -- AND date < (CURRENT_DATE - INTERVAL '1 day')
         """, (ticker,))
         result = cur.fetchone()[0]
         return result
@@ -32,16 +32,8 @@ def get_unique_tickers(conn):
             SELECT DISTINCT ticker 
             FROM stock_data 
             WHERE ticker IS NOT NULL
-              AND (
-            SELECT MAX(date) 
-            FROM stock_data sd2 
-            WHERE sd2.ticker = stock_data.ticker
-              ) < (CURRENT_DATE - INTERVAL '1 day')
-              AND (
-            SELECT MAX(date)
-            FROM stock_data sd2
-            WHERE sd2.ticker = stock_data.ticker
-              ) <= DATE '2025-06-12'
+            --  AND ( SELECT MAX(date)  FROM stock_data sd2  WHERE sd2.ticker = stock_data.ticker ) < (CURRENT_DATE - INTERVAL '1 day')
+              AND (  SELECT MAX(date) FROM stock_data sd2 WHERE sd2.ticker = stock_data.ticker ) <= DATE '2025-06-14'
         """)
         results = cur.fetchall()
         tickers = sorted(set(row[0].split('.')[0] for row in results if '.' in row[0]))
@@ -51,6 +43,7 @@ def get_unique_tickers(conn):
 def fetch_yahoo_data(ticker, start_date, include_today=False):
     try:
         df = yf.download(ticker, start=start_date, progress=False, auto_adjust=True)
+        #print(f"📈 Downloaded data for {ticker} from {start_date} to {datetime.now().date()}")
         if df.empty:
             print(f"⚠️ No data found for ticker: {ticker}")
             return None
@@ -83,6 +76,9 @@ def fetch_yahoo_data(ticker, start_date, include_today=False):
     return df
 
 def insert_data(conn, df):
+    print(df.columns.tolist())  # Debug: Show column names before processing
+    print(df.head())  # Debug: Show the first few rows of the DataFrame
+    # Ensure the DataFrame is not None or empty
     if df is None or df.empty:
         return
 
@@ -105,6 +101,7 @@ def insert_data(conn, df):
     df_insert = df[required_columns].copy()
     
     df_insert = df_insert.where(pd.notnull(df_insert), None)  # Replace NaN with None
+    print(df_insert.head())  # Debug: Show the first few rows of the DataFrame to be inserted
     rows = df_insert.to_dict("records")
 
     with conn.cursor() as cur:
@@ -146,7 +143,7 @@ def main():
                 start_date = last_date + pd.Timedelta(days=1) if last_date else "2000-01-01"
                 print(f"Fetching {ticker} from {start_date}...")
 
-                df = fetch_yahoo_data(ticker, start_date)
+                df = fetch_yahoo_data(ticker, start_date, True)
                 if df is not None:
                     df["ticker"] = ticker + ".US"  # Store in DB as original format
                     insert_data(conn, df)
