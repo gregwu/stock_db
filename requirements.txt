@@ -7,3 +7,4 @@ sqlalchemy
 tqdm
 scipy
 tables
+ta

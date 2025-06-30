@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 from scipy.stats import linregress
 import ta
 
+pd.set_option('display.max_rows', None)
 # Database configuration
 # Load environment variables from .env file
 load_dotenv()
@@ -181,7 +182,10 @@ def create_stock_data_table(engine):
         volume_ratio_lag_3 REAL,
         volume_ratio_lag_4 REAL,
         volume_ratio_lag_5 REAL,
-        one_day_change REAL,
+        change_pct_1d REAL,
+        change_pct_2d REAL,
+        change_pct_5d REAL,
+
         -- Indexes
         UNIQUE(ticker, date)
     );
@@ -295,7 +299,10 @@ def prepare_dataframe_for_db(df, ticker):
         'SUPPORT_20': 'support_20',
         'RESISTANCE_DISTANCE': 'resistance_distance',
         'SUPPORT_DISTANCE': 'support_distance',
-        
+        'CHANGE_PCT_1D': 'change_pct_1d',
+        'CHANGE_PCT_2D': 'change_pct_2d',
+        'CHANGE_PCT_5D': 'change_pct_5d',
+
         # Lagged Features (Key Predictors) (uppercase)
         'PRICE_CHANGE_LAG_1': 'price_change_lag_1',
         'PRICE_CHANGE_LAG_2': 'price_change_lag_2',
@@ -311,7 +318,7 @@ def prepare_dataframe_for_db(df, ticker):
     
     # Log all columns in the DataFrame for debugging
     original_columns = list(db_df.columns)
-    logger.info(f"📋 DataFrame columns for {ticker}: {original_columns}")
+    #logger.info(f"📋 DataFrame columns for {ticker}: {original_columns}")
     
     # Filter to only keep allowed columns and handle duplicates
     available_columns = []
@@ -374,7 +381,9 @@ def prepare_dataframe_for_db(df, ticker):
     for col in required_cols:
         if col not in db_df.columns:
             logger.warning(f"⚠️ Missing required column: {col}")
-    
+
+    #print(f"📊 Prepared DataFrame for {ticker} with {len(db_df)} records and {len(db_df.columns)} columns")
+    #print(db_df[['date', 'close_price', 'bb_std']])
     return db_df
 
 def save_dataframe_to_db(df, engine, ticker):
@@ -384,13 +393,7 @@ def save_dataframe_to_db(df, engine, ticker):
         db_df = prepare_dataframe_for_db(df, ticker)
         
         # Save to database with conflict resolution
-        db_df.to_sql(
-            'stock_data',
-            engine,
-            if_exists='append',
-            index=False,
-            method='multi'
-        )
+        db_df.to_sql( 'stock_data', engine, if_exists='append', index=False, method='multi')
         
         logger.info(f"✅ Saved {len(db_df)} records for {ticker}")
         return len(db_df)
@@ -419,15 +422,16 @@ def process_stock_files(data_directory, engine):
         try:
             # Extract ticker from filename
             ticker = file_path.stem.split('.')[0].upper()
-            if(ticker != 'PSHG'):
+            #if(ticker != 'TOPS'):
                 #logger.info(f"Skipping file {file_path.name} for ticker {ticker}")
-                continue
-            
+            #    continue
+            print(f"📄 Processing file: {file_path.name} for ticker {ticker}")
             # Load and process data
             df = load_csv_file(file_path, dropna=False)
             
             if df is not None and len(df) > 0:
                 # Save to database
+
                 records_saved = save_dataframe_to_db(df, engine, ticker)
                 total_records += records_saved
                 processed_files += 1
@@ -450,6 +454,14 @@ def clean_volume(v):
         return int(float(v))
     except:
         return 0
+
+
+def manual_rolling_std(series, window=20):
+    arr = series.values if isinstance(series, pd.Series) else np.array(series)
+    result = [np.nan] * (window - 1)
+    for i in range(window - 1, len(arr)):
+        result.append(np.std(arr[i-window+1:i+1], ddof=1))
+    return result
 
 def calculate_all_technical_indicators(df):
     """
@@ -477,7 +489,7 @@ def calculate_all_technical_indicators(df):
     df['HIGH_LOW_RATIO'] = df['HIGH'] / df['LOW']
     df['OPEN_CLOSE_RATIO'] = df['OPEN'] / df['CLOSE']
     df['PRICE_VOLATILITY'] = (df['HIGH'] - df['LOW']) / df['CLOSE']
-    df['CLOSE'] = df['CLOSE'].astype('float64') 
+
     # =================
     # MOVING AVERAGES
     # =================
@@ -542,7 +554,9 @@ def calculate_all_technical_indicators(df):
     #    print(df.iloc[i-19:i+1][['DATE', 'CLOSE']])
     #    print(df['CLOSE'].iloc[i-19:i+1].std())
 
-    df['BB_Std'] = df['CLOSE'].rolling(20).std()
+#    df['BB_Std'] = df['CLOSE'].rolling(20).std()
+    df['BB_Std'] = manual_rolling_std(df['CLOSE'], 20)
+
     df['BB_Upper'] = df['BB_Middle'] + 2 * df['BB_Std']
     df['BB_Lower'] = df['BB_Middle'] - 2 * df['BB_Std']
     df['Touches_Lower_BB'] = df['CLOSE'] <= df['BB_Lower']
@@ -590,7 +604,10 @@ def calculate_all_technical_indicators(df):
     df['SUPPORT_20'] = df['LOW'].rolling(20).min()
     df['RESISTANCE_DISTANCE'] = (df['RESISTANCE_20'] - df['CLOSE']) / df['CLOSE']
     df['SUPPORT_DISTANCE'] = (df['CLOSE'] - df['SUPPORT_20']) / df['CLOSE']
-    
+    df['CHANGE_PCT_1D'] = df['CLOSE'].pct_change(periods=1) * 100
+    df['CHANGE_PCT_2D'] = df['CLOSE'].pct_change(periods=2) * 100
+    df['CHANGE_PCT_5D'] = df['CLOSE'].pct_change(periods=5) * 100
+
     # =================
     # LAGGED FEATURES (KEY PREDICTORS)
     # =================
@@ -620,8 +637,7 @@ def load_csv_file(filepath, dropna=True):
     df = df.dropna(subset=["OPEN", "HIGH", "LOW", "CLOSE", "VOL"])
 
     # Memory optimization
-    df = df.astype({'OPEN': 'float64', 'HIGH': 'float64', 'LOW': 'float64',
-                    'CLOSE': 'float64', 'VOL': 'float64'})
+    df = df.astype({'OPEN': 'float64', 'HIGH': 'float64', 'LOW': 'float64', 'CLOSE': 'float64', 'VOL': 'float64'})
 
     # Add comprehensive technical indicators
     df = calculate_all_technical_indicators(df)
