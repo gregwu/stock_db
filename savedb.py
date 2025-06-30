@@ -29,6 +29,7 @@ from sqlalchemy import create_engine, text
 import logging
 from dotenv import load_dotenv
 from scipy.stats import linregress
+import ta
 
 # Database configuration
 # Load environment variables from .env file
@@ -180,7 +181,7 @@ def create_stock_data_table(engine):
         volume_ratio_lag_3 REAL,
         volume_ratio_lag_4 REAL,
         volume_ratio_lag_5 REAL,
-        
+        one_day_change REAL,
         -- Indexes
         UNIQUE(ticker, date)
     );
@@ -418,6 +419,9 @@ def process_stock_files(data_directory, engine):
         try:
             # Extract ticker from filename
             ticker = file_path.stem.split('.')[0].upper()
+            if(ticker != 'PSHG'):
+                #logger.info(f"Skipping file {file_path.name} for ticker {ticker}")
+                continue
             
             # Load and process data
             df = load_csv_file(file_path, dropna=False)
@@ -473,7 +477,7 @@ def calculate_all_technical_indicators(df):
     df['HIGH_LOW_RATIO'] = df['HIGH'] / df['LOW']
     df['OPEN_CLOSE_RATIO'] = df['OPEN'] / df['CLOSE']
     df['PRICE_VOLATILITY'] = (df['HIGH'] - df['LOW']) / df['CLOSE']
-    
+    df['CLOSE'] = df['CLOSE'].astype('float64') 
     # =================
     # MOVING AVERAGES
     # =================
@@ -531,6 +535,13 @@ def calculate_all_technical_indicators(df):
     # BOLLINGER BANDS
     # =================
     df['BB_Middle'] = df['SMA_20']
+    #print(df.dtypes)
+    #print(df['CLOSE'].iloc[-30:])
+    #print(df['CLOSE'].iloc[-20:].unique())
+    #for i in range(len(df) - 20, len(df)):
+    #    print(df.iloc[i-19:i+1][['DATE', 'CLOSE']])
+    #    print(df['CLOSE'].iloc[i-19:i+1].std())
+
     df['BB_Std'] = df['CLOSE'].rolling(20).std()
     df['BB_Upper'] = df['BB_Middle'] + 2 * df['BB_Std']
     df['BB_Lower'] = df['BB_Middle'] - 2 * df['BB_Std']
@@ -609,8 +620,8 @@ def load_csv_file(filepath, dropna=True):
     df = df.dropna(subset=["OPEN", "HIGH", "LOW", "CLOSE", "VOL"])
 
     # Memory optimization
-    df = df.astype({'OPEN': 'float32', 'HIGH': 'float32', 'LOW': 'float32',
-                    'CLOSE': 'float32', 'VOL': 'float32'})
+    df = df.astype({'OPEN': 'float64', 'HIGH': 'float64', 'LOW': 'float64',
+                    'CLOSE': 'float64', 'VOL': 'float64'})
 
     # Add comprehensive technical indicators
     df = calculate_all_technical_indicators(df)
@@ -618,6 +629,10 @@ def load_csv_file(filepath, dropna=True):
     # Drop NaNs caused by rolling windows
     if dropna:
         df = df.dropna().reset_index(drop=True)
+    
+    #print(df[['DATE', 'CLOSE', 'BB_Std']].tail(30))
+    #print(df['BB_Std'].isna().sum())
+    #print(df['BB_Std'].value_counts())
 
     return df
 
