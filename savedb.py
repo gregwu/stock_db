@@ -182,6 +182,7 @@ def create_stock_data_table(engine):
         volume_ratio_lag_3 REAL,
         volume_ratio_lag_4 REAL,
         volume_ratio_lag_5 REAL,
+        change_pct REAL,
         change_pct_1d REAL,
         change_pct_2d REAL,
         change_pct_5d REAL,
@@ -299,6 +300,7 @@ def prepare_dataframe_for_db(df, ticker):
         'SUPPORT_20': 'support_20',
         'RESISTANCE_DISTANCE': 'resistance_distance',
         'SUPPORT_DISTANCE': 'support_distance',
+        'CHANGE_PCT': 'change_pct',
         'CHANGE_PCT_1D': 'change_pct_1d',
         'CHANGE_PCT_2D': 'change_pct_2d',
         'CHANGE_PCT_5D': 'change_pct_5d',
@@ -604,9 +606,10 @@ def calculate_all_technical_indicators(df):
     df['SUPPORT_20'] = df['LOW'].rolling(20).min()
     df['RESISTANCE_DISTANCE'] = (df['RESISTANCE_20'] - df['CLOSE']) / df['CLOSE']
     df['SUPPORT_DISTANCE'] = (df['CLOSE'] - df['SUPPORT_20']) / df['CLOSE']
-    df['CHANGE_PCT_1D'] = df['CLOSE'].pct_change(periods=1) * 100
-    df['CHANGE_PCT_2D'] = df['CLOSE'].pct_change(periods=2) * 100
-    df['CHANGE_PCT_5D'] = df['CLOSE'].pct_change(periods=5) * 100
+    df['CHANGE_PCT'] = df['CLOSE'].pct_change(periods=1) * 100
+    df['CHANGE_PCT_1D'] = df['CLOSE'].pct_change(periods=-1) * 100
+    df['CHANGE_PCT_2D'] = df['CLOSE'].pct_change(periods=-2) * 100
+    df['CHANGE_PCT_5D'] = df['CLOSE'].pct_change(periods=-5) * 100
 
     # =================
     # LAGGED FEATURES (KEY PREDICTORS)
