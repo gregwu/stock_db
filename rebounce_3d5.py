@@ -29,7 +29,7 @@ def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop
     drop_labels = [str(int(b)) for a, b in drop_ranges]
     bounce_step = step  # Fine rebounce buckets every 5%
     # --- Fine rebounce buckets (every 1%) ---
-    rebounce_edges = list(range(-100, 105, 5))
+    rebounce_edges = list(range(-105, 125, bounce_step))  # Rebounce edges from -200% to 400%
     rebounce_buckets = []
     for i in range(len(rebounce_edges)-1):
         left = rebounce_edges[i]
@@ -57,8 +57,8 @@ def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop
             SELECT * FROM (
                 SELECT
                     CASE
-                        WHEN rebounce <= -95 THEN '<= -95'
-                        WHEN rebounce > 95 THEN '>= 95'
+                        WHEN rebounce <= -300 THEN '<= -300'
+                        WHEN rebounce > 500 THEN '>= 500'
                         ELSE
                             CONCAT(
                                 CAST(FLOOR(rebounce/{bounce_step})*{bounce_step} AS INT),
@@ -83,7 +83,10 @@ def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop
     Z = np.array(all_distributions)
 
     # --- Save to npz file for later use ---
+    print(f"Saving 3D rebounce data to {filename}... {save}")
     if save:
+        if not filename.endswith('.npz'):
+            filename = f"rebounce_surface_data.npz"
         np.savez_compressed(filename,
                             Z=Z,
                             drop_labels=np.array(drop_labels),
@@ -94,10 +97,10 @@ def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop
 parser = argparse.ArgumentParser(description="3D Rebounce Distribution Plotter")
 parser.add_argument('--file', type=str, default='rebounce_surface_data.npz', help='Path to npz data file')
 parser.add_argument('--plot', type=str, default='surface', help='Plot type (surface or line)')
-parser.add_argument('--start', type=int, default=105)
+parser.add_argument('--start', type=int, default=125)
 parser.add_argument('--end', type=int, default=-105)
 parser.add_argument('--step', type=int, default=1)
-parser.add_argument('--save', type=bool, default=False, help='Save the data to npz file')
+parser.add_argument('--save', action='store_true', help='Save the data to npz file')
 args = parser.parse_args()
 
 
@@ -108,7 +111,8 @@ file = args.file
 plot_type = args.plot
 step = args.step
 if not os.path.exists(file):
-    Z, drop_labels, rebounce_buckets, drop_ranges = get_data_and_save_npz(file, save=save, drop_start=drop_start, drop_end=drop_end, step=step)
+   print(f"File {file} does not exist. Generating data...")
+   # Z, drop_labels, rebounce_buckets, drop_ranges = get_data_and_save_npz(file, save=save, drop_start=drop_start, drop_end=drop_end, step=step)
 else:
     with np.load(file, allow_pickle=True) as data:
         Z = data['Z']
@@ -122,7 +126,7 @@ else:
 
 def plot_surface():
     # --- 3D Surface Plot ---
-    fig = plt.figure(figsize=(20, 12))
+    fig = plt.figure(figsize=(24, 18))
     ax = fig.add_subplot(111, projection='3d')
 
     X = np.arange(len(rebounce_buckets))
