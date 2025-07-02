@@ -112,7 +112,7 @@ plot_type = args.plot
 step = args.step
 if not os.path.exists(file):
    print(f"File {file} does not exist. Generating data...")
-   # Z, drop_labels, rebounce_buckets, drop_ranges = get_data_and_save_npz(file, save=save, drop_start=drop_start, drop_end=drop_end, step=step)
+   Z, drop_labels, rebounce_buckets, drop_ranges = get_data_and_save_npz(file, save=save, drop_start=drop_start, drop_end=drop_end, step=step)
 else:
     with np.load(file, allow_pickle=True) as data:
         Z = data['Z']
@@ -207,10 +207,55 @@ def plot_bar():
     plt.tight_layout()
     plt.show()
 
+def plot_2d_bar():
+    percent_matrix = np.array(Z)  # Use Z as the percent matrix
+
+    fig, ax = plt.subplots(figsize=(16, 10))
+    width = 0.15  # Width of each bar
+    x = np.arange(len(rebounce_buckets))  # Rebounce buckets
+
+    # Define up_buckets and down_buckets based on rebounce_buckets labels
+    # For example, up_buckets: rebounce >= 0, down_buckets: rebounce < 0
+    up_buckets = [b for b in rebounce_buckets if isinstance(b, str) and (b.startswith('0') or b.startswith('1') or b.startswith('2') or b.startswith('3') or b.startswith('4') or b.startswith('>') or ('~' in b and int(b.split('~')[0].strip()) >= 0))]
+    down_buckets = [b for b in rebounce_buckets if isinstance(b, str) and (b.startswith('-') or b.startswith('<') or ('~' in b and int(b.split('~')[0].strip()) < 0))]
+
+    # Calculate up and down counts from percent_matrix and rebounce_buckets
+    up_indices = [i for i, b in enumerate(rebounce_buckets) if b in up_buckets]
+    down_indices = [i for i, b in enumerate(rebounce_buckets) if b in down_buckets]
+
+    up_count = percent_matrix[:, up_indices].sum()
+    down_count = percent_matrix[:, down_indices].sum()
+    total = up_count + down_count
+
+    up_pct = up_count / total * 100 if total else 0
+    down_pct = down_count / total * 100 if total else 0
+
+    print(f"\nUP: {up_count:.1f} ({up_pct:.1f}%)")
+    print(f"DOWN: {down_count:.1f} ({down_pct:.1f}%)")
+    print(f"Total: {total:.1f}")
+
+    for i in range(len(drop_ranges)):
+        ax.bar(x + i * width, percent_matrix[i], width, label=f"{drop_ranges[i][0]} to {drop_ranges[i][1]}")
+
+    ax.set_xticks(x + width * (len(drop_ranges) - 1) / 2)
+    ax.set_xticklabels(rebounce_buckets, rotation=30, ha='right')
+    ax.set_xlabel("Rebounce Bucket (%)")
+    ax.set_ylabel("Percent (%)")
+    ax.set_title("Rebounce Distribution by Drop Range and Rebounce Bucket (2D Bar Chart)")
+    ax.legend(title="Drop Range (change_pct)")
+
+    plt.tight_layout()
+    plt.show()
 
 if plot_type == 'bar':
     plot_bar()
 elif plot_type == 'line':   
     plot_line()
+elif plot_type == '2d_bar':
+    plot_2d_bar()
+elif plot_type == 'surface':
+    plot_surface()
+elif plot_type == '3d_bar':
+    plot_bar()
 else:
     plot_surface()
