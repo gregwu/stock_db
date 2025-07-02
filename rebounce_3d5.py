@@ -1,4 +1,3 @@
-import psycopg2
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,7 +9,7 @@ from tqdm import tqdm
 import sys
 import argparse
 
-def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop_start=105, drop_end=-105):
+def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop_start=105, drop_end=-105, step=1):
     # --- DB Config ---
     load_dotenv()
     DB_CONFIG = {
@@ -24,13 +23,13 @@ def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop
     # --- Parse drop range from command line or use defaults ---
     # Defaults: start=105, end=-105, step=1
 
-    step = 1
+    step = step
     drop_ends = np.arange(drop_start, drop_end, -step)
     drop_ranges = [(drop_ends[i], drop_ends[i+1]) for i in range(len(drop_ends)-1)]
     drop_labels = [str(int(b)) for a, b in drop_ranges]
-
+    bounce_step = step  # Fine rebounce buckets every 5%
     # --- Fine rebounce buckets (every 1%) ---
-    rebounce_edges = list(range(-100, 105, 1))
+    rebounce_edges = list(range(-100, 105, 5))
     rebounce_buckets = []
     for i in range(len(rebounce_edges)-1):
         left = rebounce_edges[i]
@@ -58,13 +57,13 @@ def get_data_and_save_npz(filename="rebounce_surface_data.npz", save=False, drop
             SELECT * FROM (
                 SELECT
                     CASE
-                        WHEN rebounce <= -100 THEN '<= -100'
-                        WHEN rebounce > 100 THEN '>= 100'
+                        WHEN rebounce <= -95 THEN '<= -95'
+                        WHEN rebounce > 95 THEN '>= 95'
                         ELSE
                             CONCAT(
-                                CAST(FLOOR(rebounce/1)*1 AS INT),
+                                CAST(FLOOR(rebounce/{bounce_step})*{bounce_step} AS INT),
                                 ' ~ ',
-                                CAST(FLOOR(rebounce/1)*1 + 1 AS INT)
+                                CAST(FLOOR(rebounce/{bounce_step})*{bounce_step} + {bounce_step} AS INT)
                             )
                     END AS bucket,
                     COUNT(*) AS cnt
@@ -97,6 +96,7 @@ parser.add_argument('--file', type=str, default='rebounce_surface_data.npz', hel
 parser.add_argument('--plot', type=str, default='surface', help='Plot type (surface or line)')
 parser.add_argument('--start', type=int, default=105)
 parser.add_argument('--end', type=int, default=-105)
+parser.add_argument('--step', type=int, default=1)
 parser.add_argument('--save', type=bool, default=False, help='Save the data to npz file')
 args = parser.parse_args()
 
@@ -106,8 +106,9 @@ drop_end = args.end
 save = args.save
 file = args.file
 plot_type = args.plot
+step = args.step
 if not os.path.exists(file):
-    Z, drop_labels, rebounce_buckets, drop_ranges = get_data_and_save_npz(file, save=save, drop_start=drop_start, drop_end=drop_end)
+    Z, drop_labels, rebounce_buckets, drop_ranges = get_data_and_save_npz(file, save=save, drop_start=drop_start, drop_end=drop_end, step=step)
 else:
     with np.load(file, allow_pickle=True) as data:
         Z = data['Z']
@@ -183,8 +184,10 @@ def plot_bar():
     z = np.zeros_like(x)
     dz = percent_matrix.ravel()
 
-    dx = 0.7 * np.ones_like(z)
-    dy = 0.7 * np.ones_like(z)
+
+    # Remove gaps: set dx, dy to 1 (full width)
+    dx = np.ones_like(z)
+    dy = np.ones_like(z)
 
     ax.bar3d(x, y, z, dx, dy, dz, shade=True, color='skyblue')
 
