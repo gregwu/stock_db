@@ -29,11 +29,10 @@ def get_last_date_for_ticker(conn, ticker):
 def get_unique_tickers(conn):
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT DISTINCT ticker 
-            FROM stock_data 
-            WHERE ticker IS NOT NULL
-            --  AND ( SELECT MAX(date)  FROM stock_data sd2  WHERE sd2.ticker = stock_data.ticker ) < (CURRENT_DATE - INTERVAL '1 day')
-              AND (  SELECT MAX(date) FROM stock_data sd2 WHERE sd2.ticker = stock_data.ticker ) <= DATE '2025-06-14'
+            SELECT ticker, MAX(date) AS last_date
+            FROM stock_data
+            GROUP BY ticker
+            HAVING MAX(date) < CURRENT_DATE        
         """)
         results = cur.fetchall()
         tickers = sorted(set(row[0].split('.')[0] for row in results if '.' in row[0]))
@@ -97,7 +96,7 @@ def insert_data(conn, df):
     df['date'] = pd.to_datetime(df['date']).dt.date
     
     # Select only the columns we need for the database
-    required_columns = ['ticker', 'date', 'time', 'open_price', 'high_price', 'low_price', 'close_price', 'volume']
+    required_columns = ['ticker', 'date',  'open_price', 'high_price', 'low_price', 'close_price', 'volume']
     df_insert = df[required_columns].copy()
     
     df_insert = df_insert.where(pd.notnull(df_insert), None)  # Replace NaN with None
@@ -110,10 +109,10 @@ def insert_data(conn, df):
             
             cur.execute("""
                 INSERT INTO stock_data (
-                    ticker, date, time, open_price, high_price, low_price, close_price, volume
+                    ticker, date,  open_price, high_price, low_price, close_price, volume
                 )
                 VALUES (
-                    %(ticker)s, %(date)s, %(time)s, %(open_price)s, %(high_price)s, %(low_price)s, %(close_price)s, %(volume)s
+                    %(ticker)s, %(date)s,  %(open_price)s, %(high_price)s, %(low_price)s, %(close_price)s, %(volume)s
                 )
                 ON CONFLICT (ticker, date) DO NOTHING
             """, row)

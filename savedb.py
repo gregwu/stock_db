@@ -93,7 +93,6 @@ def create_stock_data_table(engine):
         id SERIAL PRIMARY KEY,
         ticker VARCHAR(10) NOT NULL,
         date DATE NOT NULL,
-        time TIME,
         open_price REAL NOT NULL,
         high_price REAL NOT NULL,
         low_price REAL NOT NULL,
@@ -183,9 +182,15 @@ def create_stock_data_table(engine):
         volume_ratio_lag_4 REAL,
         volume_ratio_lag_5 REAL,
         change_pct REAL,
+        change_low REAL,
         change_pct_1d REAL,
         change_pct_2d REAL,
+        change_pct_3d REAL,
+        change_pct_4d REAL,
         change_pct_5d REAL,
+        change_pct_6d REAL,
+        change_pct_7d REAL,
+        change_pct_14d REAL,
 
         -- Indexes
         UNIQUE(ticker, date)
@@ -223,7 +228,6 @@ def prepare_dataframe_for_db(df, ticker):
     allowed_columns = {
         'TICKER': 'ticker',
         'DATE': 'date',
-        'TIME': 'time',
         'OPEN': 'open_price',
         'HIGH': 'high_price',
         'LOW': 'low_price',
@@ -301,9 +305,15 @@ def prepare_dataframe_for_db(df, ticker):
         'RESISTANCE_DISTANCE': 'resistance_distance',
         'SUPPORT_DISTANCE': 'support_distance',
         'CHANGE_PCT': 'change_pct',
+        'CHANGE_LOW': 'change_low',
         'CHANGE_PCT_1D': 'change_pct_1d',
         'CHANGE_PCT_2D': 'change_pct_2d',
+        'CHANGE_PCT_3D': 'change_pct_3d',
+        'CHANGE_PCT_4D': 'change_pct_4d',
         'CHANGE_PCT_5D': 'change_pct_5d',
+        'CHANGE_PCT_6D': 'change_pct_6d',
+        'CHANGE_PCT_7D': 'change_pct_7d',
+        'CHANGE_PCT_14D': 'change_pct_14d',
 
         # Lagged Features (Key Predictors) (uppercase)
         'PRICE_CHANGE_LAG_1': 'price_change_lag_1',
@@ -348,13 +358,6 @@ def prepare_dataframe_for_db(df, ticker):
     
     # Handle data type conversions
     try:
-        # Handle time column - if it's numeric (like 0), convert to None
-        if 'time' in db_df.columns:
-            # If time column contains only zeros or is numeric, set to None
-            if db_df['time'].dtype in ['int64', 'float64'] or (db_df['time'] == 0).all():
-                db_df['time'] = None
-                logger.info(f"🕐 Set time column to NULL for {ticker} (was numeric)")
-            
         # Ensure date column is properly formatted
         if 'date' in db_df.columns:
             db_df['date'] = pd.to_datetime(db_df['date']).dt.date
@@ -607,9 +610,15 @@ def calculate_all_technical_indicators(df):
     df['RESISTANCE_DISTANCE'] = (df['RESISTANCE_20'] - df['CLOSE']) / df['CLOSE']
     df['SUPPORT_DISTANCE'] = (df['CLOSE'] - df['SUPPORT_20']) / df['CLOSE']
     df['CHANGE_PCT'] = df['CLOSE'].pct_change(periods=1) * 100
+    df['CHANGE_LOW'] = (df['LOW'] - df['CLOSE'].shift(1)) / df['CLOSE'].shift(1) * 100
     df['CHANGE_PCT_1D'] = df['CLOSE'].pct_change(periods=-1) * 100
     df['CHANGE_PCT_2D'] = df['CLOSE'].pct_change(periods=-2) * 100
+    df['CHANGE_PCT_3D'] = df['CLOSE'].pct_change(periods=-3) * 100
+    df['CHANGE_PCT_4D'] = df['CLOSE'].pct_change(periods=-4) * 100
     df['CHANGE_PCT_5D'] = df['CLOSE'].pct_change(periods=-5) * 100
+    df['CHANGE_PCT_6D'] = df['CLOSE'].pct_change(periods=-6) * 100
+    df['CHANGE_PCT_7D'] = df['CLOSE'].pct_change(periods=-7) * 100
+    df['CHANGE_PCT_14D'] = df['CLOSE'].pct_change(periods=-14) * 100
 
     # =================
     # LAGGED FEATURES (KEY PREDICTORS)

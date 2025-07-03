@@ -32,7 +32,8 @@ def fetch():
         SQL = f"""
     WITH base AS (
         SELECT
-            (LEAD(high_price, 1) OVER (PARTITION BY ticker ORDER BY date) - close_price) * 100.0 / close_price AS rebounce
+            (LEAD(high_price, 1) OVER (PARTITION BY ticker ORDER BY date) - close_price) * 100.0 / close_price AS rebounce,
+            change_pct_1d AS rebounce1
         FROM stock_data
         WHERE close_price > 0 AND change_pct <= {a} AND change_pct > {b}
     )
@@ -75,7 +76,7 @@ def fetch():
     results_df = pd.DataFrame(results)
     return results_df
 
-filename = 'rebounce_data.csv'
+filename = 'rebounce_data4.csv'
 if os.path.exists(filename):
     print( "Load from pickle ")
     #results_df = pd.read_pickle(filename)
@@ -83,7 +84,7 @@ if os.path.exists(filename):
 else:
     print("Fetch data from database") 
     results_df = fetch()
-    results_df.to_csv(filename)
+    #results_df.to_csv(filename)
 
 print(results_df)
 # Assuming 'df' is your summary table as above
@@ -96,6 +97,8 @@ print(best_row)
 plt.figure(figsize=(14,6))
 plt.plot(results_df['drop_range'], results_df['up_count'], label='UP %', color='green')
 plt.plot(results_df['drop_range'], results_df['down_count'], label='DOWN %', color='red')
+#plt.plot(results_df['drop_range'], results_df['up_pct'], label='UP %', color='green')
+#plt.plot(results_df['drop_range'], results_df['down_pct'], label='DOWN %', color='red')
 plt.xticks(rotation=90, fontsize=7)
 plt.title("Positive/Negative Rebounce Percent by Drop Range (change_pct)")
 plt.xlabel("Drop Range (change_pct)")
@@ -106,6 +109,7 @@ try:
     idx2 = results_df.index[results_df['drop_range'] == '0 to -1'][0]
     # The line is between idx1 and idx2, so place it at idx1 + 0.5
     plt.axvline(x=idx1 + 0.5, color='blue', linestyle='--', label='Break: 0')
+    plt.axhline(y=50, color='blue', linestyle='--', label='50%')  # Horizontal line at y=50%
     # Optionally annotate
     plt.text(idx1 + 0.5, plt.ylim()[1]*0.95, '0%', color='blue', ha='center')
 except IndexError:

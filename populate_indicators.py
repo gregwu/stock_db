@@ -3,8 +3,10 @@
 populate_indicators.py - Populate technical indicators for existing stock data
 
 This script reads stock data from the PostgreSQL database, calculates technical
-indicators using the feature_engineering module, and updates the database with
-the calculated values.
+indicators using the unified calculation function from savedb.py, and updates 
+the database with the calculated values.
+
+Updated to use the new unified technical indicator pipeline with uppercase columns.
 """
 
 import os
@@ -15,7 +17,9 @@ from sqlalchemy import create_engine, text
 import logging
 from tqdm import tqdm
 from dotenv import load_dotenv
-from feature_engineering import add_technical_indicators
+
+# Import the unified technical indicator calculation function
+from savedb import calculate_all_technical_indicators
 
 # Load environment variables
 load_dotenv()
@@ -48,7 +52,7 @@ def get_unique_tickers(engine):
 
 def get_stock_data(engine, ticker):
     """Get stock data for a specific ticker, but only process if there are missing indicators"""
-    # First check if there are missing indicators
+    # First check if there are missing indicators (checking key ones that should exist)
     check_query = text("""
     SELECT COUNT(*) as missing_count
     FROM stock_data 
@@ -68,7 +72,7 @@ def get_stock_data(engine, ticker):
     
     # Get ALL data for proper indicator calculation
     full_query = text("""
-    SELECT ticker, date, time, open_price, high_price, low_price, close_price, 
+    SELECT ticker, date, open_price, high_price, low_price, close_price, 
            volume, open_interest
     FROM stock_data 
     WHERE ticker = :ticker 
@@ -93,7 +97,7 @@ def get_stock_data(engine, ticker):
     
     missing_dates = set(missing_dates_df['date'].tolist())
     
-    # Rename columns to match feature_engineering expectations
+    # Rename columns to match the new unified function expectations (uppercase)
     df_full = df_full.rename(columns={
         'open_price': 'OPEN',
         'high_price': 'HIGH', 
@@ -103,7 +107,6 @@ def get_stock_data(engine, ticker):
         'open_interest': 'OPENINT',
         'ticker': 'TICKER',
         'date': 'DATE',
-        'time': 'TIME'
     })
     
     return df_full, missing_dates
@@ -119,12 +122,105 @@ def update_indicators_in_db(engine, ticker, df_full, missing_dates):
     if df_to_update.empty:
         return 0
     
-    # Prepare the data for database update
-    update_data = df_to_update[['DATE', 'SMA_20', 'SMA_144', 'SMA_144_Dist', 'SMA_144_Slope',
-                               'RSI_14', 'MACD', 'MACD_Signal', 'MACD_Hist', 'MACD_Up',
-                               'BB_Middle', 'BB_Std', 'BB_Upper', 'BB_Lower', 
-                               'Touches_Lower_BB', 'Touches_Upper_BB', 
-                               'Vol_SMA_10', 'Volume_Spike']].copy()
+    # Define all indicator columns that need to be updated
+    # This maps DataFrame column names (uppercase) to database column names (lowercase)
+    indicator_columns = {
+        # Basic Technical Indicators
+        'SMA_20': 'sma_20',
+        'SMA_144': 'sma_144', 
+        'SMA_144_Dist': 'sma_144_dist',
+        'SMA_144_Slope': 'sma_144_slope',
+        'RSI_14': 'rsi_14',
+        'MACD': 'macd',
+        'MACD_Signal': 'macd_signal',
+        'MACD_Hist': 'macd_hist',
+        'MACD_Up': 'macd_up',
+        'BB_Middle': 'bb_middle',
+        'BB_Std': 'bb_std',
+        'BB_Upper': 'bb_upper',
+        'BB_Lower': 'bb_lower',
+        'Touches_Lower_BB': 'touches_lower_bb',
+        'Touches_Upper_BB': 'touches_upper_bb',
+        'Vol_SMA_10': 'vol_sma_10',
+        'Volume_Spike': 'volume_spike',
+        
+        # Enhanced Price Features
+        'PRICE_CHANGE': 'price_change',
+        'PRICE_CHANGE_ABS': 'price_change_abs',
+        'HIGH_LOW_RATIO': 'high_low_ratio',
+        'OPEN_CLOSE_RATIO': 'open_close_ratio',
+        'PRICE_VOLATILITY': 'price_volatility',
+        
+        # Additional Moving Averages
+        'SMA_5': 'sma_5',
+        'SMA_50': 'sma_50',
+        'PRICE_TO_SMA_5': 'price_to_sma_5',
+        'PRICE_TO_SMA_20': 'price_to_sma_20',
+        'PRICE_TO_SMA_50': 'price_to_sma_50',
+        'SMA_5_SLOPE': 'sma_5_slope',
+        'SMA_20_SLOPE': 'sma_20_slope',
+        'SMA_50_SLOPE': 'sma_50_slope',
+        
+        # Exponential Moving Averages
+        'EMA_12': 'ema_12',
+        'EMA_26': 'ema_26',
+        
+        # Enhanced MACD Features
+        'MACD_HISTOGRAM': 'macd_histogram',
+        'MACD_MOMENTUM': 'macd_momentum',
+        
+        # Enhanced Bollinger Bands
+        'BB_WIDTH': 'bb_width',
+        'BB_POSITION': 'bb_position',
+        
+        # Stochastic Oscillator
+        'STOCH_K': 'stoch_k',
+        'STOCH_D': 'stoch_d',
+        
+        # Enhanced Volume Features
+        'VOLUME_SMA': 'volume_sma',
+        'VOLUME_RATIO': 'volume_ratio',
+        'VOLUME_MOMENTUM': 'volume_momentum',
+        'PRICE_VOLUME': 'price_volume',
+        'OBV': 'obv',
+        'OBV_MOMENTUM': 'obv_momentum',
+        
+        # Volatility Measures
+        'VOLATILITY_20': 'volatility_20',
+        'VOLATILITY_MOMENTUM': 'volatility_momentum',
+        
+        # Support/Resistance Levels
+        'RESISTANCE_20': 'resistance_20',
+        'SUPPORT_20': 'support_20',
+        'RESISTANCE_DISTANCE': 'resistance_distance',
+        'SUPPORT_DISTANCE': 'support_distance',
+
+        'CHANGE_PCT': 'change_pct',
+        'CHANGE_LOW': 'change_low',
+        'CHANGE_PCT_1D': 'change_pct_1d',
+        'CHANGE_PCT_2D': 'change_pct_2d',
+        'CHANGE_PCT_3D': 'change_pct_3d',
+        'CHANGE_PCT_4D': 'change_pct_4d',
+        'CHANGE_PCT_5D': 'change_pct_5d',
+        'CHANGE_PCT_6D': 'change_pct_6d',
+        'CHANGE_PCT_7D': 'change_pct_7d',
+        'CHANGE_PCT_14D': 'change_pct_14d', 
+        # Lagged Features
+        'PRICE_CHANGE_LAG_1': 'price_change_lag_1',
+        'PRICE_CHANGE_LAG_2': 'price_change_lag_2',
+        'PRICE_CHANGE_LAG_3': 'price_change_lag_3',
+        'PRICE_CHANGE_LAG_4': 'price_change_lag_4',
+        'PRICE_CHANGE_LAG_5': 'price_change_lag_5',
+        'VOLUME_RATIO_LAG_1': 'volume_ratio_lag_1',
+        'VOLUME_RATIO_LAG_2': 'volume_ratio_lag_2',
+        'VOLUME_RATIO_LAG_3': 'volume_ratio_lag_3',
+        'VOLUME_RATIO_LAG_4': 'volume_ratio_lag_4',
+        'VOLUME_RATIO_LAG_5': 'volume_ratio_lag_5',
+    }
+    
+    # Filter to only columns that exist in the DataFrame
+    available_columns = ['DATE'] + [col for col in indicator_columns.keys() if col in df_to_update.columns]
+    update_data = df_to_update[available_columns].copy()
     
     # Convert boolean columns to proper format
     boolean_cols = ['MACD_Up', 'Touches_Lower_BB', 'Touches_Upper_BB', 'Volume_Spike']
@@ -135,58 +231,37 @@ def update_indicators_in_db(engine, ticker, df_full, missing_dates):
     # Replace NaN with None for database
     update_data = update_data.where(pd.notnull(update_data), None)
     
+    # Build dynamic update query
+    set_clauses = []
+    for df_col, db_col in indicator_columns.items():
+        if df_col in update_data.columns:
+            set_clauses.append(f"{db_col} = :{df_col.lower()}")
+    
+    if not set_clauses:
+        logger.warning(f"No indicator columns found to update for {ticker}")
+        return 0
+    
+    update_query_sql = f"""
+    UPDATE stock_data 
+    SET {', '.join(set_clauses)}
+    WHERE ticker = :ticker AND date = :date
+    """
+    
     updated_count = 0
     
     with engine.connect() as conn:
         trans = conn.begin()
         try:
             for _, row in update_data.iterrows():
-                # Update query for technical indicators
-                update_query = text("""
-                UPDATE stock_data 
-                SET sma_20 = :sma_20,
-                    sma_144 = :sma_144,
-                    sma_144_dist = :sma_144_dist,
-                    sma_144_slope = :sma_144_slope,
-                    rsi_14 = :rsi_14,
-                    macd = :macd,
-                    macd_signal = :macd_signal,
-                    macd_hist = :macd_hist,
-                    macd_up = :macd_up,
-                    bb_middle = :bb_middle,
-                    bb_std = :bb_std,
-                    bb_upper = :bb_upper,
-                    bb_lower = :bb_lower,
-                    touches_lower_bb = :touches_lower_bb,
-                    touches_upper_bb = :touches_upper_bb,
-                    vol_sma_10 = :vol_sma_10,
-                    volume_spike = :volume_spike
-                WHERE ticker = :ticker AND date = :date
-                """)
+                # Build parameters dictionary
+                params = {'ticker': ticker, 'date': row['DATE']}
                 
-                params = {
-                    'ticker': ticker,
-                    'date': row['DATE'],
-                    'sma_20': row['SMA_20'],
-                    'sma_144': row['SMA_144'],
-                    'sma_144_dist': row['SMA_144_Dist'],
-                    'sma_144_slope': row['SMA_144_Slope'],
-                    'rsi_14': row['RSI_14'],
-                    'macd': row['MACD'],
-                    'macd_signal': row['MACD_Signal'],
-                    'macd_hist': row['MACD_Hist'],
-                    'macd_up': row['MACD_Up'],
-                    'bb_middle': row['BB_Middle'],
-                    'bb_std': row['BB_Std'],
-                    'bb_upper': row['BB_Upper'],
-                    'bb_lower': row['BB_Lower'],
-                    'touches_lower_bb': row['Touches_Lower_BB'],
-                    'touches_upper_bb': row['Touches_Upper_BB'],
-                    'vol_sma_10': row['Vol_SMA_10'],
-                    'volume_spike': row['Volume_Spike']
-                }
+                # Add all indicator values
+                for df_col, db_col in indicator_columns.items():
+                    if df_col in update_data.columns:
+                        params[df_col.lower()] = row[df_col]
                 
-                result = conn.execute(update_query, params)
+                result = conn.execute(text(update_query_sql), params)
                 updated_count += result.rowcount
             
             trans.commit()
@@ -210,8 +285,8 @@ def process_ticker(engine, ticker):
             logger.info(f"✅ No missing indicators for {ticker}")
             return 0
         
-        # Calculate technical indicators for all data
-        df_with_indicators = add_technical_indicators(df_full)
+        # Calculate technical indicators for all data using the unified function
+        df_with_indicators = calculate_all_technical_indicators(df_full)
         
         # Update database only for missing records
         updated_count = update_indicators_in_db(engine, ticker, df_with_indicators, missing_dates)
@@ -224,15 +299,15 @@ def process_ticker(engine, ticker):
         return 0
 
 def main():
-    """Main function"""
+    """Main function - populate technical indicators using unified calculation pipeline"""
     import argparse
     
     # Add command line argument parsing
-    parser = argparse.ArgumentParser(description='Populate technical indicators for stock data')
+    parser = argparse.ArgumentParser(description='Populate technical indicators for stock data using unified pipeline')
     parser.add_argument('--ticker', type=str, help='Process only this specific ticker')
     args = parser.parse_args()
     
-    print("🚀 Starting technical indicators population...")
+    print("🚀 Starting technical indicators population with unified pipeline...")
     
     try:
         # Create database engine
@@ -269,6 +344,7 @@ def main():
         logger.info(f"🎉 Processing complete!")
         logger.info(f"   ✅ Tickers processed: {successful_tickers}/{len(tickers)}")
         logger.info(f"   📈 Total records updated: {total_updated}")
+        logger.info(f"   🔧 Using unified technical indicator pipeline with {70} features")
         
     except Exception as e:
         logger.error(f"💥 Fatal error: {e}")
