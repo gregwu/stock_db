@@ -132,6 +132,7 @@ def create_stock_data_table(engine):
         price_to_sma_5 REAL,
         price_to_sma_20 REAL,
         price_to_sma_50 REAL,
+        price_to_sma_144 REAL,
         sma_5_slope REAL,
         sma_20_slope REAL,
         sma_50_slope REAL,
@@ -239,7 +240,7 @@ def prepare_dataframe_for_db(df, ticker):
         'SMA_20': 'sma_20',
         'SMA_144': 'sma_144',
         'SMA_144_Dist': 'sma_144_dist',
-        'SMA_144_Slope': 'sma_144_slope',
+        'SMA_144_SLOPE': 'sma_144_slope',
         'RSI_14': 'rsi_14',
         'MACD': 'macd',
         'MACD_Signal': 'macd_signal',
@@ -267,6 +268,7 @@ def prepare_dataframe_for_db(df, ticker):
         'PRICE_TO_SMA_5': 'price_to_sma_5',
         'PRICE_TO_SMA_20': 'price_to_sma_20',
         'PRICE_TO_SMA_50': 'price_to_sma_50',
+        'PRICE_TO_SMA_144': 'price_to_sma_144',
         'SMA_5_SLOPE': 'sma_5_slope',
         'SMA_20_SLOPE': 'sma_20_slope',
         'SMA_50_SLOPE': 'sma_50_slope',
@@ -459,7 +461,16 @@ def clean_volume(v):
         return int(float(v))
     except:
         return 0
-
+def calc_slope(series, window=10):
+    y = series[-window:]
+    x = np.arange(len(y))
+    if y.isnull().any() or len(y) < window:
+        return np.nan
+    try:
+        slope, _, _, _, _ = linregress(x, y)
+        return slope
+    except:
+        return np.nan
 
 def manual_rolling_std(series, window=20):
     arr = series.values if isinstance(series, pd.Series) else np.array(series)
@@ -503,36 +514,25 @@ def calculate_all_technical_indicators(df):
         col_name = f'SMA_{window}'
         df[col_name] = df['CLOSE'].rolling(window=window).mean()
         
-        # Enhanced MA features (skip for SMA_144 to avoid redundancy)
-        if window != 144:
-            df[f'PRICE_TO_SMA_{window}'] = df['CLOSE'] / df[col_name]
-            df[f'SMA_{window}_SLOPE'] = df[col_name].pct_change(5)
+        df[f'PRICE_TO_SMA_{window}'] = df['CLOSE'] / df[col_name]
+        df[f'SMA_{window}_SLOPE'] = df[col_name].rolling(window=20).apply(lambda x: calc_slope(pd.Series(x)), raw=False)
     
     # SMA_144 specific features
     df['SMA_144_Dist'] = (df['CLOSE'] - df['SMA_144']) / df['SMA_144'] * 100
     
-    def calc_slope(series, window=10):
-        y = series[-window:]
-        x = np.arange(len(y))
-        if y.isnull().any() or len(y) < window:
-            return np.nan
-        try:
-            slope, _, _, _, _ = linregress(x, y)
-            return slope
-        except:
-            return np.nan
+
     
-    df['SMA_144_Slope'] = df['SMA_144'].rolling(window=20).apply(lambda x: calc_slope(pd.Series(x)), raw=False)
+    #df['SMA_144_Slope'] = df['SMA_144'].rolling(window=20).apply(lambda x: calc_slope(pd.Series(x)), raw=False)
     
     # Exponential Moving Averages
-    df['EMA_12'] = df['CLOSE'].ewm(span=12).mean()
-    df['EMA_26'] = df['CLOSE'].ewm(span=26).mean()
+    df['EMA_12'] = df['CLOSE'].ewm(span=12, adjust=False).mean()
+    df['EMA_26'] = df['CLOSE'].ewm(span=26, adjust=False).mean()
     
     # =================
     # MACD FAMILY
     # =================
     df['MACD'] = df['EMA_12'] - df['EMA_26']
-    df['MACD_Signal'] = df['MACD'].ewm(span=9).mean()
+    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
     df['MACD_Up'] = df['MACD_Hist'].diff() > 0
     
@@ -543,25 +543,30 @@ def calculate_all_technical_indicators(df):
     # =================
     # RSI
     # =================
-    up = df['CLOSE'].diff().clip(lower=0)
-    down = -df['CLOSE'].diff().clip(upper=0)
-    rs = up.rolling(14).mean() / down.rolling(14).mean()
+    # Standard RSI calculation matching TA library
+    delta = df['CLOSE'].diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+    
+    # Calculate the first average gain and loss using simple moving average
+    avg_gain = gain.rolling(window=14, min_periods=14).mean()
+    avg_loss = loss.rolling(window=14, min_periods=14).mean()
+    
+    # Apply Wilder's smoothing for subsequent values
+    alpha = 1.0 / 14
+    for i in range(14, len(df)):
+        if pd.notna(avg_gain.iloc[i-1]) and pd.notna(avg_loss.iloc[i-1]):
+            avg_gain.iloc[i] = alpha * gain.iloc[i] + (1 - alpha) * avg_gain.iloc[i-1]
+            avg_loss.iloc[i] = alpha * loss.iloc[i] + (1 - alpha) * avg_loss.iloc[i-1]
+    
+    rs = avg_gain / avg_loss
     df['RSI_14'] = 100 - (100 / (1 + rs))
     
     # =================
     # BOLLINGER BANDS
     # =================
     df['BB_Middle'] = df['SMA_20']
-    #print(df.dtypes)
-    #print(df['CLOSE'].iloc[-30:])
-    #print(df['CLOSE'].iloc[-20:].unique())
-    #for i in range(len(df) - 20, len(df)):
-    #    print(df.iloc[i-19:i+1][['DATE', 'CLOSE']])
-    #    print(df['CLOSE'].iloc[i-19:i+1].std())
-
-#    df['BB_Std'] = df['CLOSE'].rolling(20).std()
-    df['BB_Std'] = manual_rolling_std(df['CLOSE'], 20)
-
+    df['BB_Std'] = df['CLOSE'].rolling(20).std(ddof=0)  # Use population std for BB
     df['BB_Upper'] = df['BB_Middle'] + 2 * df['BB_Std']
     df['BB_Lower'] = df['BB_Middle'] - 2 * df['BB_Std']
     df['Touches_Lower_BB'] = df['CLOSE'] <= df['BB_Lower']
@@ -593,7 +598,23 @@ def calculate_all_technical_indicators(df):
     df['PRICE_VOLUME'] = df['CLOSE'] * df['VOL']
     
     # On-Balance Volume (OBV)
-    df['OBV'] = (np.sign(df['CLOSE'].diff()) * df['VOL']).fillna(0).cumsum()
+    price_change = df['CLOSE'].diff()
+    obv_values = []
+    obv = 0
+    
+    for i in range(len(df)):
+        if i == 0 or pd.isna(price_change.iloc[i]):
+            obv_values.append(obv)
+        elif price_change.iloc[i] > 0:
+            obv += df['VOL'].iloc[i]
+            obv_values.append(obv)
+        elif price_change.iloc[i] < 0:
+            obv -= df['VOL'].iloc[i]
+            obv_values.append(obv)
+        else:  # price_change == 0
+            obv_values.append(obv)
+    
+    df['OBV'] = obv_values
     df['OBV_MOMENTUM'] = df['OBV'].pct_change(5)
     
     # =================
@@ -611,14 +632,15 @@ def calculate_all_technical_indicators(df):
     df['SUPPORT_DISTANCE'] = (df['CLOSE'] - df['SUPPORT_20']) / df['CLOSE']
     df['CHANGE_PCT'] = df['CLOSE'].pct_change(periods=1) * 100
     df['CHANGE_LOW'] = (df['LOW'] - df['CLOSE'].shift(1)) / df['CLOSE'].shift(1) * 100
-    df['CHANGE_PCT_1D'] = df['CLOSE'].pct_change(periods=-1) * 100
-    df['CHANGE_PCT_2D'] = df['CLOSE'].pct_change(periods=-2) * 100
-    df['CHANGE_PCT_3D'] = df['CLOSE'].pct_change(periods=-3) * 100
-    df['CHANGE_PCT_4D'] = df['CLOSE'].pct_change(periods=-4) * 100
-    df['CHANGE_PCT_5D'] = df['CLOSE'].pct_change(periods=-5) * 100
-    df['CHANGE_PCT_6D'] = df['CLOSE'].pct_change(periods=-6) * 100
-    df['CHANGE_PCT_7D'] = df['CLOSE'].pct_change(periods=-7) * 100
-    df['CHANGE_PCT_14D'] = df['CLOSE'].pct_change(periods=-14) * 100
+    df['CHANGE_PCT_1D'] = (df['CLOSE'].shift(-1) - df['CLOSE']) / df['CLOSE'] * 100
+    df['CHANGE_PCT_2D'] = (df['CLOSE'].shift(-2) - df['CLOSE']) / df['CLOSE'] * 100
+    df['CHANGE_PCT_3D'] = (df['CLOSE'].shift(-3) - df['CLOSE']) / df['CLOSE'] * 100
+    df['CHANGE_PCT_4D'] = (df['CLOSE'].shift(-4) - df['CLOSE']) / df['CLOSE'] * 100
+    df['CHANGE_PCT_5D'] = (df['CLOSE'].shift(-5) - df['CLOSE']) / df['CLOSE'] * 100
+    df['CHANGE_PCT_6D'] = (df['CLOSE'].shift(-6) - df['CLOSE']) / df['CLOSE'] * 100
+    df['CHANGE_PCT_7D'] = (df['CLOSE'].shift(-7) - df['CLOSE']) / df['CLOSE'] * 100
+    df['CHANGE_PCT_14D'] = (df['CLOSE'].shift(-14) - df['CLOSE']) / df['CLOSE'] * 100
+
 
     # =================
     # LAGGED FEATURES (KEY PREDICTORS)

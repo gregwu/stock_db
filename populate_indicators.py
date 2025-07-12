@@ -44,11 +44,42 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def get_unique_tickers(engine):
-    """Get all unique tickers from the database"""
+    """Get all unique tickers from the database, filtering out problematic ones"""
     with engine.connect() as conn:
         result = conn.execute(text("SELECT DISTINCT ticker FROM stock_data ORDER BY ticker"))
-        tickers = [row[0] for row in result.fetchall()]
-    return tickers
+        all_tickers = [row[0] for row in result.fetchall()]
+    
+    # Filter out problematic ticker patterns (same logic as sync_yahoo.py)
+    filtered_tickers = []
+    filtered_out_count = 0
+    
+    for full_ticker in all_tickers:
+        if '.' in full_ticker:
+            ticker_base = full_ticker.split('.')[0]  # e.g., "AAPL" from "AAPL.US"
+            
+            # Skip tickers with problematic patterns:
+            # 1. Underscores (special classes)
+            # 2. Any hyphens (warrants, units, special classes like AACT-WS, AAM-U)
+            # 3. Long tickers ending with 'W' (≥5 chars) - these are typically warrants
+            #    Short W tickers (≤4 chars like ARW, CDW) are usually legitimate stocks
+            should_filter = (
+                '_' in ticker_base or 
+                '-' in ticker_base or
+                (ticker_base.endswith('W') and len(ticker_base) >= 5)
+            )
+            
+            if should_filter:
+                filtered_out_count += 1
+            else:
+                filtered_tickers.append(full_ticker)  # Keep full format for indicators
+        else:
+            # Keep tickers without .US suffix as-is
+            filtered_tickers.append(full_ticker)
+    
+    if filtered_out_count > 0:
+        logger.info(f"🧹 Filtered out {filtered_out_count} problematic tickers (warrants ≥5 chars ending in W, hyphenated instruments)")
+    
+    return filtered_tickers
 
 def get_stock_data(engine, ticker):
     """Get stock data for a specific ticker, but only process if there are missing indicators"""
@@ -70,21 +101,41 @@ def get_stock_data(engine, ticker):
     
     logger.info(f"📊 Found {missing_count} records missing indicators for {ticker}")
     
-    # Get ALL data for proper indicator calculation
+    # Validate data quality before processing
+    quality_check_query = text("""
+    SELECT COUNT(*) as invalid_count
+    FROM stock_data 
+    WHERE ticker = :ticker 
+      AND (close_price <= 0 OR high_price <= 0 OR low_price <= 0 OR open_price <= 0
+           OR high_price < low_price)
+    """)
+    
+    with engine.connect() as conn:
+        result = conn.execute(quality_check_query, {'ticker': ticker})
+        invalid_count = result.fetchone()[0]
+    
+    if invalid_count > 0:
+        logger.warning(f"⚠️ Found {invalid_count} invalid price records for {ticker}")
+    
+    # Get ALL data for proper indicator calculation (excluding invalid records)
     full_query = text("""
     SELECT ticker, date, open_price, high_price, low_price, close_price, 
            volume, open_interest
     FROM stock_data 
     WHERE ticker = :ticker 
+      AND close_price > 0 AND high_price > 0 AND low_price > 0 AND open_price > 0
+      AND high_price >= low_price
     ORDER BY date
     """)
     
-    # Get records that need updating
+    # Get records that need updating (excluding invalid records)
     missing_query = text("""
     SELECT date
     FROM stock_data 
     WHERE ticker = :ticker 
       AND (sma_20 IS NULL OR sma_144 IS NULL OR rsi_14 IS NULL OR macd IS NULL OR bb_upper IS NULL)
+      AND close_price > 0 AND high_price > 0 AND low_price > 0 AND open_price > 0
+      AND high_price >= low_price
     ORDER BY date
     """)
     
@@ -93,10 +144,25 @@ def get_stock_data(engine, ticker):
         missing_dates_df = pd.read_sql(missing_query, conn, params={'ticker': ticker})
     
     if df_full.empty:
+        logger.warning(f"⚠️ No valid data found for {ticker}")
         return None, None
     
     missing_dates = set(missing_dates_df['date'].tolist())
     
+    # Additional data validation
+    initial_rows = len(df_full)
+    
+    # Remove any remaining outliers (extreme price changes)
+    df_full['price_change'] = df_full['close_price'].pct_change()
+    extreme_changes = (df_full['price_change'].abs() > 0.5)  # 50% change in one day
+    outlier_count = extreme_changes.sum()
+    
+    if outlier_count > 0:
+        logger.warning(f"⚠️ Found {outlier_count} potential outliers for {ticker} (>50% daily change)")
+        # For now, keep them but flag them
+    
+    logger.info(f"📈 Using {len(df_full)} valid records for {ticker} (from {initial_rows} total)")
+
     # Rename columns to match the new unified function expectations (uppercase)
     df_full = df_full.rename(columns={
         'open_price': 'OPEN',
@@ -301,13 +367,17 @@ def process_ticker(engine, ticker):
 def main():
     """Main function - populate technical indicators using unified calculation pipeline"""
     import argparse
+    import time
     
     # Add command line argument parsing
     parser = argparse.ArgumentParser(description='Populate technical indicators for stock data using unified pipeline')
     parser.add_argument('--ticker', type=str, help='Process only this specific ticker')
+    parser.add_argument('--limit', type=int, help='Limit number of tickers to process (for testing)')
+    parser.add_argument('--dry-run', action='store_true', help='Show what would be processed without making changes')
     args = parser.parse_args()
     
     print("🚀 Starting technical indicators population with unified pipeline...")
+    start_time = time.time()
     
     try:
         # Create database engine
@@ -324,27 +394,55 @@ def main():
             tickers = [args.ticker]
             logger.info(f"📊 Processing specific ticker: {args.ticker}")
         else:
-            tickers = get_unique_tickers(engine)
-            logger.info(f"📊 Found {len(tickers)} tickers to process")
+            all_tickers = get_unique_tickers(engine)
+            if args.limit:
+                tickers = all_tickers[:args.limit]
+                logger.info(f"� Limited to first {args.limit} tickers (of {len(all_tickers)} total)")
+            else:
+                tickers = all_tickers
+                logger.info(f"�📊 Found {len(tickers)} tickers to process")
         
         if not tickers:
             logger.warning("⚠️ No tickers found in database")
             return
         
+        if args.dry_run:
+            print("🔍 DRY RUN - Would process these tickers:")
+            for ticker in tickers[:10]:  # Show first 10
+                print(f"   {ticker}")
+            if len(tickers) > 10:
+                print(f"   ... and {len(tickers) - 10} more")
+            return
+        
         # Process each ticker
         total_updated = 0
         successful_tickers = 0
+        failed_tickers = 0
         
         for ticker in tqdm(tickers, desc="Processing tickers"):
             updated_count = process_ticker(engine, ticker)
             if updated_count > 0:
                 total_updated += updated_count
                 successful_tickers += 1
+            elif updated_count == 0:
+                # Distinguish between "no work needed" and "failed"
+                successful_tickers += 1
+            else:
+                failed_tickers += 1
         
+        elapsed_time = time.time() - start_time
+        
+        print(f"\n🎉 Processing complete! ({elapsed_time:.1f} seconds)")
         logger.info(f"🎉 Processing complete!")
-        logger.info(f"   ✅ Tickers processed: {successful_tickers}/{len(tickers)}")
+        logger.info(f"   ✅ Tickers processed successfully: {successful_tickers}/{len(tickers)}")
+        if failed_tickers > 0:
+            logger.info(f"   ❌ Tickers failed: {failed_tickers}")
         logger.info(f"   📈 Total records updated: {total_updated}")
-        logger.info(f"   🔧 Using unified technical indicator pipeline with {70} features")
+        logger.info(f"   🔧 Using unified technical indicator pipeline with 70+ features")
+        logger.info(f"   ⏱️ Processing time: {elapsed_time:.1f} seconds")
+        
+        if total_updated > 0:
+            logger.info(f"   🚀 Average processing rate: {total_updated/elapsed_time:.1f} records/second")
         
     except Exception as e:
         logger.error(f"💥 Fatal error: {e}")
