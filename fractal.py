@@ -97,15 +97,86 @@ st.write("""
 
 # --- Data Input Options ---
 st.subheader("Data Input")
-data_source = st.radio("Choose data source:", ["Upload CSV File", "Yahoo Finance Ticker", "Database"], index=1)
+data_source = st.radio("Choose data source:", ["Upload Data File", "Yahoo Finance Ticker", "Database"], index=1)
 
 df = None
 
-if data_source == "Upload CSV File":
-    uploaded_file = st.file_uploader("Upload daily OHLCV CSV (with 'date' and 'close' columns)", type=['csv'])
+# Initialize session state for data persistence
+if 'loaded_data' not in st.session_state:
+    st.session_state.loaded_data = None
+if 'data_source_type' not in st.session_state:
+    st.session_state.data_source_type = None
+if 'data_info' not in st.session_state:
+    st.session_state.data_info = None
+
+if data_source == "Upload Data File":
+    uploaded_file = st.file_uploader("Upload daily OHLCV data file", type=['csv', 'txt'])
+    
     if uploaded_file:
-        df = pd.read_csv(uploaded_file, parse_dates=['date']).sort_values('date')
-        df = df.set_index('date')
+        try:
+            # Auto-detect file format
+            # First, try to read a sample to check the format
+            sample_df = pd.read_csv(uploaded_file, nrows=5)
+            uploaded_file.seek(0)  # Reset file pointer
+            
+            # Check if it has standard format (with 'date' column)
+            if 'date' in sample_df.columns and len(sample_df.columns) >= 5:
+                # Standard format with date column
+                df = pd.read_csv(uploaded_file, parse_dates=['date']).sort_values('date')
+                df = df.set_index('date')
+                st.info("📄 Detected standard format (with date column)")
+                
+            elif len(sample_df.columns) >= 10:
+                # Custom format: TICKER,PER,DATE,TIME,OPEN,HIGH,LOW,CLOSE,VOL,OPENINT
+                df = pd.read_csv(uploaded_file, header=None, names=['ticker', 'period', 'date', 'time', 'open', 'high', 'low', 'close', 'volume', 'openint'])
+                
+                # Check if first row contains placeholders like <DATE>, <TICKER>, etc.
+                if df.iloc[0]['date'] == '<DATE>' or str(df.iloc[0]['date']).startswith('<'):
+                    # Remove the header row with placeholders
+                    df = df.iloc[1:].reset_index(drop=True)
+                    st.info("🔧 Removed placeholder header row")
+                
+                # Get ticker info after processing (after removing placeholder header if present)
+                ticker_name = df.iloc[0]['ticker'] if len(df) > 0 else "Unknown"
+                
+                # Convert date to datetime - handle both YYYYMMDD format and other date formats
+                try:
+                    # First try standard YYYYMMDD format
+                    df['date'] = pd.to_datetime(df['date'], format='%Y%m%d')
+                except:
+                    # If that fails, try parsing as generic date format
+                    df['date'] = pd.to_datetime(df['date'])
+                
+                # Ensure numeric columns are properly converted
+                numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+                for col in numeric_cols:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+                # Select and rename columns to match expected format
+                df = df[['date', 'open', 'high', 'low', 'close', 'volume']].copy()
+                df = df.sort_values('date').set_index('date')
+                
+                st.info(f"📄 Detected custom format (TICKER,PER,DATE,TIME,OPEN,HIGH,LOW,CLOSE,VOL,OPENINT)")
+                st.info(f"📊 Loaded data for ticker: {ticker_name}")
+                
+            else:
+                st.error("❌ Unable to detect file format. Please ensure your file has either:")
+                st.write("• Standard format: date, open, high, low, close, volume columns")
+                st.write("• Custom format: TICKER,PER,DATE,TIME,OPEN,HIGH,LOW,CLOSE,VOL,OPENINT")
+                df = None
+            
+            if df is not None:
+                st.success(f"✅ Successfully loaded {len(df)} days of data from data file")
+                
+                # Store in session state
+                st.session_state.loaded_data = df
+                st.session_state.data_source_type = "Upload Data File"
+                st.session_state.data_info = f"{len(df)} days from uploaded file"
+            
+        except Exception as e:
+            st.error(f"Error reading data file: {str(e)}")
+            st.info("Please ensure your file matches the selected format")
+            df = None
 
 elif data_source == "Yahoo Finance Ticker":
     col1, col2 = st.columns(2)
@@ -123,6 +194,11 @@ elif data_source == "Yahoo Finance Ticker":
             # Load from local file automatically
             df = pd.read_csv(csv_filename, parse_dates=['date'], index_col='date')
             st.info(f"📁 Using cached data: {len(df)} days for {ticker_symbol.upper()}")
+            
+            # Store in session state
+            st.session_state.loaded_data = df
+            st.session_state.data_source_type = "Yahoo Finance Ticker"
+            st.session_state.data_info = f"{len(df)} days for {ticker_symbol.upper()} (cached)"
         elif fetch_button:
             # Only fetch new data when button is clicked
             with st.spinner(f"Fetching all available data for {ticker_symbol}..."):
@@ -171,6 +247,11 @@ elif data_source == "Yahoo Finance Ticker":
                                     # Save to CSV file
                                     df.to_csv(csv_filename)
                                     st.success(f"✅ Successfully fetched and saved {len(df)} days of data for {ticker_symbol}")
+                                    
+                                    # Store in session state
+                                    st.session_state.loaded_data = df
+                                    st.session_state.data_source_type = "Yahoo Finance Ticker"
+                                    st.session_state.data_info = f"{len(df)} days for {ticker_symbol.upper()} (fetched)"
                             except Exception as conversion_error:
                                 st.error(f"Error converting data format for {ticker_symbol}: {str(conversion_error)}")
                         
@@ -196,17 +277,19 @@ elif data_source == "Database":
                 
                 # Query to get stock data for the ticker
                 query = """
-                    SELECT date, open, high, low, close, volume
+                    SELECT date, open_price as open, high_price as high, 
+                           low_price as low, close_price as close, volume
                     FROM stock_data 
-                    WHERE ticker = %s 
+                    WHERE ticker = %(ticker)s 
                     ORDER BY date ASC
                 """
                 
-                # Execute query and load data
-                df = pd.read_sql_query(query, engine, params=[db_ticker_symbol.upper()], parse_dates=['date'])
+                # Execute query and load data - append .US to match database format
+                ticker_with_suffix = f"{db_ticker_symbol.upper()}.US"
+                df = pd.read_sql_query(query, engine, params={'ticker': ticker_with_suffix}, parse_dates=['date'])
                 
                 if df.empty:
-                    st.error(f"No data found for ticker {db_ticker_symbol.upper()} in the database.")
+                    st.error(f"No data found for ticker {ticker_with_suffix} in the database.")
                     
                     # Show available tickers for reference
                     try:
@@ -218,7 +301,12 @@ elif data_source == "Database":
                         pass
                 else:
                     df = df.set_index('date')
-                    st.success(f"📊 Successfully loaded {len(df)} days of data for {db_ticker_symbol.upper()} from database")
+                    st.success(f"📊 Successfully loaded {len(df)} days of data for {ticker_with_suffix} from database")
+                    
+                    # Store in session state
+                    st.session_state.loaded_data = df
+                    st.session_state.data_source_type = "Database"
+                    st.session_state.data_info = f"{len(df)} days for {ticker_with_suffix} from database"
                     
                 engine.dispose()
                 
@@ -227,6 +315,12 @@ elif data_source == "Database":
                 st.info(f"💡 Check database connection. Using config: {DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}")
     elif db_ticker_symbol and not load_db_button:
         st.info(f"💾 Click 'Load from Database' to fetch {db_ticker_symbol.upper()} data from PostgreSQL database.")
+
+# Use session state data if available and no new data was loaded
+if df is None and st.session_state.loaded_data is not None:
+    df = st.session_state.loaded_data
+    if st.session_state.data_source_type and st.session_state.data_info:
+        st.info(f"📋 Using previously loaded data: {st.session_state.data_info}")
 
 if df is not None:
     # --- Page Navigation ---
@@ -255,8 +349,16 @@ if df is not None:
             st.metric("Weekly Periods", len(weekly))
             st.metric("Monthly Periods", len(monthly))
         with col3:
-            st.metric("Price Range", f"${df['close'].min():.2f} - ${df['close'].max():.2f}")
-            st.metric("Latest Price", f"${df['close'].iloc[-1]:.2f}")
+            try:
+                price_min = df['close'].min()
+                price_max = df['close'].max()
+                latest_price = df['close'].iloc[-1]
+                st.metric("Price Range", f"${price_min:.2f} - ${price_max:.2f}")
+                st.metric("Latest Price", f"${latest_price:.2f}")
+            except (ValueError, TypeError) as e:
+                st.metric("Price Range", "Data Error")
+                st.metric("Latest Price", "Data Error")
+                st.error(f"Price data formatting error: {str(e)}")
     
     else:  # Pattern Analysis page
         # Create resamples for analysis (without displaying)
