@@ -813,6 +813,7 @@ if df is not None:
         default_exclude_self = st.session_state.search_config.get('exclude_self_matches', True)
         default_filter_close = st.session_state.search_config.get('filter_close_matches', True)
         default_min_separation = st.session_state.search_config.get('min_separation_days', 30)
+        default_save_results = st.session_state.search_config.get('save_results_to_folder', False)
     else:
         default_threshold = 0.93
         default_min_window = 8
@@ -822,6 +823,7 @@ if df is not None:
         default_exclude_self = True
         default_filter_close = True
         default_min_separation = 30
+        default_save_results = False
     
     similarity_threshold = st.sidebar.slider("Similarity threshold", 0.80, 0.99, default_threshold, 0.01)
     min_window_monthly = st.sidebar.slider("Min window size (weeks/days)", 4, 30, default_min_window)
@@ -840,6 +842,9 @@ if df is not None:
     else:
         min_separation_days = 30  # Default value when filtering is disabled
     
+    save_results_to_folder = st.sidebar.checkbox("Save detailed results to folder", value=default_save_results,
+                                                 help="Save complete analysis with charts and data files (cache is always enabled)")
+    
     # Search button
     search_button = st.sidebar.button("🔍 Start Pattern Search", type="primary")
     
@@ -854,7 +859,8 @@ if df is not None:
             'max_window_multiplier': max_window_multiplier,
             'exclude_self_matches': exclude_self_matches,
             'filter_close_matches': filter_close_matches,
-            'min_separation_days': min_separation_days
+            'min_separation_days': min_separation_days,
+            'save_results_to_folder': save_results_to_folder
         }
         
         cached_data = load_search_results_cache(st.session_state.data_info, current_config)
@@ -983,7 +989,8 @@ if df is not None:
                 'max_window_multiplier': max_window_multiplier,
                 'exclude_self_matches': exclude_self_matches,
                 'filter_close_matches': filter_close_matches,
-                'min_separation_days': min_separation_days
+                'min_separation_days': min_separation_days,
+                'save_results_to_folder': save_results_to_folder
             }
             
             # Save results to cache for quick reload
@@ -995,19 +1002,23 @@ if df is not None:
             if cache_file:
                 st.sidebar.success("💾 Results cached for quick reload")
             
-            # Automatically save complete results to folder
-            folder_path, result = save_search_results_to_folder(
-                st.session_state.search_results, 
-                st.session_state.search_config,
-                st.session_state.data_info
-            )
-            if folder_path:
-                st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
-                st.info(f"📁 **Results automatically saved to:** `{folder_path}`")
-                st.info(f"📊 **Files saved:** {result} matches + charts + data + config")
+            # Save complete results to folder if enabled
+            if save_results_to_folder:
+                folder_path, result = save_search_results_to_folder(
+                    st.session_state.search_results, 
+                    st.session_state.search_config,
+                    st.session_state.data_info
+                )
+                if folder_path:
+                    st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+                    st.info(f"📁 **Results saved to:** `{folder_path}`")
+                    st.info(f"📊 **Files saved:** {result} matches + charts + data + config")
+                else:
+                    st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+                    st.warning(f"⚠️ Could not save results to folder: {result}")
             else:
-                st.success(f"Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
-                st.warning(f"⚠️ Could not save results to folder: {result}")
+                st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+                st.info("💾 Results cached for quick access. Enable 'Save detailed results to folder' to export complete analysis.")
 
     # Check if we have stored search results to display
     if st.session_state.search_results is not None:
