@@ -40,7 +40,59 @@ def dtw_similarity(a, b):
     sim = 1 / (1 + distance)   # Normalize: higher sim is better
     return sim
 
-def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, method='cosine', allow_inversion=False, use_dtw=False):
+def filter_overlapping_matches(matches, series_dates, min_separation_days=30):
+    """
+    Filter out overlapping or close-proximity matches, keeping only the best similarity from each cluster.
+    
+    Args:
+        matches: List of match dictionaries
+        series_dates: DatetimeIndex of the series
+        min_separation_days: Minimum days between matches to consider them separate
+    
+    Returns:
+        Filtered list of matches with overlaps removed
+    """
+    if not matches:
+        return matches
+    
+    # Sort matches by similarity (highest first)
+    sorted_matches = sorted(matches, key=lambda x: x['similarity'], reverse=True)
+    
+    filtered_matches = []
+    
+    for match in sorted_matches:
+        match_start_date = series_dates[match['start']]
+        match_end_date = series_dates[match['start'] + match['size'] - 1]
+        
+        # Check if this match overlaps or is too close to any already accepted match
+        is_too_close = False
+        for accepted_match in filtered_matches:
+            accepted_start_date = series_dates[accepted_match['start']]
+            accepted_end_date = series_dates[accepted_match['start'] + accepted_match['size'] - 1]
+            
+            # Calculate the gap between matches
+            if match_end_date < accepted_start_date:
+                # Current match is before accepted match
+                gap_days = (accepted_start_date - match_end_date).days
+            elif accepted_end_date < match_start_date:
+                # Current match is after accepted match
+                gap_days = (match_start_date - accepted_end_date).days
+            else:
+                # Matches overlap
+                gap_days = 0
+            
+            # If gap is less than minimum separation, consider them too close
+            if gap_days < min_separation_days:
+                is_too_close = True
+                break
+        
+        # Only add this match if it's not too close to existing matches
+        if not is_too_close:
+            filtered_matches.append(match)
+    
+    return filtered_matches
+
+def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, method='cosine', allow_inversion=False, use_dtw=False, series_dates=None, exclude_overlap=True, filter_close_matches=True, min_separation_days=30):
     matches = []
     for pat_name, pattern in patterns:
         pat_len = len(pattern)
@@ -48,6 +100,26 @@ def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, m
             for start in range(len(series) - win_size + 1):
                 window = series[start:start+win_size]
                 window_norm = normalize_and_resample(window, pat_len)
+                
+                # Skip self-matches when using "Monthly Whole History" pattern
+                if exclude_overlap and pat_name == "Monthly Whole History" and series_dates is not None:
+                    # Get the date range of the current window
+                    window_start_date = series_dates[start]
+                    window_end_date = series_dates[start + win_size - 1]
+                    
+                    # For monthly pattern, exclude matches that significantly overlap with monthly boundaries
+                    # This prevents the system from matching a monthly period to itself
+                    window_start_month = window_start_date.replace(day=1)
+                    window_end_month = (window_end_date.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+                    
+                    # Skip if this window represents a significant portion of any single month
+                    # (to avoid matching monthly patterns to themselves)
+                    if win_size >= 20:  # For weekly data, 4+ weeks might overlap significantly with monthly
+                        # Calculate overlap with month boundaries
+                        total_days = (window_end_date - window_start_date).days + 1
+                        if total_days >= 25:  # If window covers most of a month, likely a self-match
+                            continue
+                
                 if use_dtw:
                     sim = dtw_similarity(pattern, window_norm)
                 else:
@@ -71,6 +143,11 @@ def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, m
                         'window': window_norm,
                         'inverted': found_inversion
                     })
+    
+    # Filter out close-proximity matches if requested and dates are available
+    if filter_close_matches and series_dates is not None and matches:
+        matches = filter_overlapping_matches(matches, series_dates, min_separation_days)
+    
     return matches
 
 def resample_ohlc(df, rule='W'):
@@ -733,12 +810,18 @@ if df is not None:
         default_max_multiplier = st.session_state.search_config['max_window_multiplier']
         default_method = st.session_state.search_config['match_method']
         default_inversion = st.session_state.search_config['allow_inversion']
+        default_exclude_self = st.session_state.search_config.get('exclude_self_matches', True)
+        default_filter_close = st.session_state.search_config.get('filter_close_matches', True)
+        default_min_separation = st.session_state.search_config.get('min_separation_days', 30)
     else:
         default_threshold = 0.93
         default_min_window = 8
         default_max_multiplier = 3
         default_method = 'cosine'
         default_inversion = False
+        default_exclude_self = True
+        default_filter_close = True
+        default_min_separation = 30
     
     similarity_threshold = st.sidebar.slider("Similarity threshold", 0.80, 0.99, default_threshold, 0.01)
     min_window_monthly = st.sidebar.slider("Min window size (weeks/days)", 4, 30, default_min_window)
@@ -746,6 +829,16 @@ if df is not None:
     match_method = st.sidebar.selectbox("Similarity method", ['cosine', 'dtw'], index=0 if default_method == 'cosine' else 1)
     use_dtw = (match_method == 'dtw')
     allow_inversion = st.sidebar.checkbox("Enable inverted pattern search", value=default_inversion)
+    exclude_self_matches = st.sidebar.checkbox("Exclude self-matches", value=default_exclude_self, 
+                                             help="Prevents matching patterns to themselves (recommended for Monthly Whole History)")
+    filter_close_matches = st.sidebar.checkbox("Filter close-proximity matches", value=default_filter_close,
+                                              help="Keep only the best match from each time cluster (recommended for cleaner results)")
+    
+    if filter_close_matches:
+        min_separation_days = st.sidebar.slider("Minimum separation (days)", 7, 90, default_min_separation, 7,
+                                               help="Minimum days between matches to consider them separate")
+    else:
+        min_separation_days = 30  # Default value when filtering is disabled
     
     # Search button
     search_button = st.sidebar.button("🔍 Start Pattern Search", type="primary")
@@ -758,7 +851,10 @@ if df is not None:
             'match_method': match_method,
             'allow_inversion': allow_inversion,
             'min_window_monthly': min_window_monthly,
-            'max_window_multiplier': max_window_multiplier
+            'max_window_multiplier': max_window_multiplier,
+            'exclude_self_matches': exclude_self_matches,
+            'filter_close_matches': filter_close_matches,
+            'min_separation_days': min_separation_days
         }
         
         cached_data = load_search_results_cache(st.session_state.data_info, current_config)
@@ -859,12 +955,16 @@ if df is not None:
             matches_weekly = advanced_slide_and_compare(
                 weekly['close'].values, patterns, window_lengths_weekly, 
                 threshold=similarity_threshold, 
-                method=match_method, allow_inversion=allow_inversion, use_dtw=use_dtw
+                method=match_method, allow_inversion=allow_inversion, use_dtw=use_dtw,
+                series_dates=weekly.index, exclude_overlap=exclude_self_matches,
+                filter_close_matches=filter_close_matches, min_separation_days=min_separation_days
             )
             matches_daily = advanced_slide_and_compare(
                 df['close'].values, patterns, window_lengths_daily, 
                 threshold=similarity_threshold, 
-                method=match_method, allow_inversion=allow_inversion, use_dtw=use_dtw
+                method=match_method, allow_inversion=allow_inversion, use_dtw=use_dtw,
+                series_dates=df.index, exclude_overlap=exclude_self_matches,
+                filter_close_matches=filter_close_matches, min_separation_days=min_separation_days
             )
             
             # Store search results and configuration in session state
@@ -880,7 +980,10 @@ if df is not None:
                 'match_method': match_method,
                 'allow_inversion': allow_inversion,
                 'min_window_monthly': min_window_monthly,
-                'max_window_multiplier': max_window_multiplier
+                'max_window_multiplier': max_window_multiplier,
+                'exclude_self_matches': exclude_self_matches,
+                'filter_close_matches': filter_close_matches,
+                'min_separation_days': min_separation_days
             }
             
             # Save results to cache for quick reload
@@ -928,10 +1031,13 @@ if df is not None:
             
             # Show configuration used for these results
             config = st.session_state.search_config
+            proximity_info = f" ({config.get('min_separation_days', 30)}d)" if config.get('filter_close_matches', True) else ""
             st.write(f"**Search config:** Threshold={config['similarity_threshold']:.2f}, "
                     f"Method={config['match_method'].upper()}, "
                     f"Window={config['min_window_monthly']}-{config['max_window_multiplier']}x, "
-                    f"Inversion={'ON' if config['allow_inversion'] else 'OFF'}")
+                    f"Inversion={'ON' if config['allow_inversion'] else 'OFF'}, "
+                    f"Self-match exclusion={'ON' if config.get('exclude_self_matches', True) else 'OFF'}, "
+                    f"Proximity filter={'ON' if config.get('filter_close_matches', True) else 'OFF'}{proximity_info}")
     
     # Only show results section if we have search results
     if st.session_state.search_results is not None:
