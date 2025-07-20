@@ -229,9 +229,40 @@ def load_search_results_cache(data_info, search_config, cache_folder="fractal_ca
         with open(cache_filename, 'r') as f:
             cache_data = json.load(f)
             
-        # Verify the cache matches current config
-        if (cache_data['data_info'] == data_info and 
-            cache_data['search_config'] == search_config):
+        # Verify the cache matches current config (with backward compatibility)
+        cached_config = cache_data['search_config']
+        
+        # Add default values for missing parameters in older cache files
+        # Use the old default behavior to maintain compatibility
+        default_params = {
+            'exclude_self_matches': False,  # Old default was False
+            'filter_close_matches': False,  # Old default was False
+            'min_separation_days': 30,
+            'save_results_to_folder': False
+        }
+        
+        # Fill in missing parameters in cached config
+        for param, default_value in default_params.items():
+            if param not in cached_config:
+                cached_config[param] = default_value
+        
+        # Compare only the core search parameters that actually affect results
+        # Ignore UI-only parameters like save_results_to_folder, exclude_self_matches, filter_close_matches
+        core_search_params = ['similarity_threshold', 'match_method', 'allow_inversion', 'min_window_monthly', 'max_window_multiplier']
+        
+        core_current_config = {k: v for k, v in search_config.items() if k in core_search_params}
+        core_cached_config = {k: v for k, v in cached_config.items() if k in core_search_params}
+        
+        # More flexible data_info matching - ignore "(cached)" vs "(fetched)" differences
+        cached_data_info = cache_data['data_info']
+        current_data_info = data_info
+        
+        # Normalize data info strings for comparison
+        cached_data_normalized = cached_data_info.replace(' (cached)', '').replace(' (fetched)', '')
+        current_data_normalized = current_data_info.replace(' (cached)', '').replace(' (fetched)', '')
+        
+        if (cached_data_normalized == current_data_normalized and 
+            core_cached_config == core_current_config):
             
             # Reconstruct search results
             cached_results = cache_data['search_results']
@@ -248,10 +279,16 @@ def load_search_results_cache(data_info, search_config, cache_folder="fractal_ca
             
             return {
                 'search_results': cached_results,
-                'search_config': cache_data['search_config'],
+                'search_config': cached_config,  # Use the updated config with defaults filled in
                 'timestamp': cache_data['timestamp']
             }
         else:
+            # Debug info for cache mismatch
+            print(f"Cache mismatch - Data info: cached='{cached_data_normalized}' vs current='{current_data_normalized}'")
+            print(f"Config match: {core_cached_config == core_current_config}")
+            if core_cached_config != core_current_config:
+                print(f"Cached config: {core_cached_config}")
+                print(f"Current config: {core_current_config}")
             return None
             
     except Exception as e:
@@ -803,7 +840,44 @@ if df is not None:
     # --- Pattern Mining Params ---
     st.sidebar.header("Pattern Mining Parameters")
     
-    # Initialize search parameters from session state if available
+    # First, try to find any compatible cache to determine better defaults
+    potential_cache_defaults = None
+    if st.session_state.data_info is not None:
+        # Quick check for any cache file that matches this data
+        cache_folder = "fractal_cache"
+        if os.path.exists(cache_folder):
+            cache_files = [f for f in os.listdir(cache_folder) if f.endswith('.json')]
+            for cache_file in cache_files:
+                try:
+                    with open(os.path.join(cache_folder, cache_file), 'r') as f:
+                        cache_data = json.load(f)
+                    
+                    # Check if this cache file matches our data
+                    cached_data_info = cache_data['data_info']
+                    current_data_info = st.session_state.data_info
+                    
+                    cached_data_normalized = cached_data_info.replace(' (cached)', '').replace(' (fetched)', '')
+                    current_data_normalized = current_data_info.replace(' (cached)', '').replace(' (fetched)', '')
+                    
+                    if cached_data_normalized == current_data_normalized:
+                        # Found a matching cache file, use its config as defaults
+                        cached_config = cache_data['search_config']
+                        potential_cache_defaults = {
+                            'similarity_threshold': cached_config.get('similarity_threshold', 0.93),
+                            'match_method': cached_config.get('match_method', 'cosine'),
+                            'allow_inversion': cached_config.get('allow_inversion', False),
+                            'min_window_monthly': cached_config.get('min_window_monthly', 8),
+                            'max_window_multiplier': cached_config.get('max_window_multiplier', 3),
+                            'exclude_self_matches': cached_config.get('exclude_self_matches', False),
+                            'filter_close_matches': cached_config.get('filter_close_matches', False),
+                            'min_separation_days': cached_config.get('min_separation_days', 30),
+                            'save_results_to_folder': False  # Always default to False
+                        }
+                        break  # Use the first matching cache file found
+                except:
+                    continue
+    
+    # Initialize search parameters from session state if available, otherwise use cache defaults or fallback
     if st.session_state.search_config is not None:
         default_threshold = st.session_state.search_config['similarity_threshold']
         default_min_window = st.session_state.search_config['min_window_monthly']
@@ -814,7 +888,19 @@ if df is not None:
         default_filter_close = st.session_state.search_config.get('filter_close_matches', True)
         default_min_separation = st.session_state.search_config.get('min_separation_days', 30)
         default_save_results = st.session_state.search_config.get('save_results_to_folder', False)
+    elif potential_cache_defaults is not None:
+        # Use cache defaults
+        default_threshold = potential_cache_defaults['similarity_threshold']
+        default_min_window = potential_cache_defaults['min_window_monthly']
+        default_max_multiplier = potential_cache_defaults['max_window_multiplier']
+        default_method = potential_cache_defaults['match_method']
+        default_inversion = potential_cache_defaults['allow_inversion']
+        default_exclude_self = potential_cache_defaults['exclude_self_matches']
+        default_filter_close = potential_cache_defaults['filter_close_matches']
+        default_min_separation = potential_cache_defaults['min_separation_days']
+        default_save_results = potential_cache_defaults['save_results_to_folder']
     else:
+        # Fallback defaults
         default_threshold = 0.93
         default_min_window = 8
         default_max_multiplier = 3
@@ -902,24 +988,134 @@ if df is not None:
             cache_files = [f for f in os.listdir(cache_folder) if f.endswith('.json')]
             if cache_files:
                 st.write(f"**Cached searches:** {len(cache_files)}")
+                st.write("Click any cached result to load it:")
                 
-                # Show cache files with timestamps
-                for cache_file in cache_files[:5]:  # Show max 5 recent
+                # Show cache files with clickable buttons
+                cache_info_list = []
+                for cache_file in cache_files:
                     try:
                         with open(os.path.join(cache_folder, cache_file), 'r') as f:
                             cache_data = json.load(f)
                         cache_time = datetime.fromisoformat(cache_data['timestamp'])
-                        data_source = cache_data['data_info'].split(' ')[-1] if cache_data['data_info'] else "unknown"
-                        st.text(f"• {data_source} - {cache_time.strftime('%m/%d %H:%M')}")
-                    except:
-                        pass
+                        
+                        # Extract ticker and data info
+                        data_info = cache_data['data_info']
+                        config = cache_data['search_config']
+                        
+                        # Clean up ticker name for display
+                        if 'for ' in data_info:
+                            ticker = data_info.split('for ')[1].split(' ')[0]
+                        else:
+                            ticker = "unknown"
+                        
+                        # Count matches
+                        weekly_matches = len(cache_data['search_results']['matches_weekly'])
+                        daily_matches = len(cache_data['search_results']['matches_daily'])
+                        total_matches = weekly_matches + daily_matches
+                        
+                        cache_info_list.append({
+                            'file': cache_file,
+                            'ticker': ticker,
+                            'timestamp': cache_time,
+                            'data_info': data_info,
+                            'config': config,
+                            'cache_data': cache_data,
+                            'total_matches': total_matches,
+                            'weekly_matches': weekly_matches,
+                            'daily_matches': daily_matches
+                        })
+                    except Exception as e:
+                        continue
                 
+                # Sort by timestamp (most recent first)
+                cache_info_list.sort(key=lambda x: x['timestamp'], reverse=True)
+                
+                # Display clickable cache entries
+                for i, cache_info in enumerate(cache_info_list[:8]):  # Show max 8 recent
+                    # Create a compact display string
+                    display_text = f"{cache_info['ticker']} ({cache_info['total_matches']} matches)"
+                    time_text = cache_info['timestamp'].strftime('%m/%d %H:%M')
+                    
+                    # Create button for loading this cache
+                    button_key = f"load_cache_{i}_{cache_info['file'][:10]}"
+                    
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        load_button = st.button(
+                            f"📊 {display_text}", 
+                            key=button_key,
+                            help=f"Load cached results from {time_text}\nThreshold: {cache_info['config'].get('similarity_threshold', 'N/A')}, Method: {cache_info['config'].get('match_method', 'N/A').upper()}"
+                        )
+                    with col2:
+                        st.text(time_text)
+                    
+                    # Handle button click
+                    if load_button:
+                        try:
+                            # Load the cached data
+                            cached_config = cache_info['config']
+                            
+                            # Add default values for missing parameters
+                            default_params = {
+                                'exclude_self_matches': False,
+                                'filter_close_matches': False,
+                                'min_separation_days': 30,
+                                'save_results_to_folder': False
+                            }
+                            
+                            for param, default_value in default_params.items():
+                                if param not in cached_config:
+                                    cached_config[param] = default_value
+                            
+                            # Load the search results into session state
+                            cached_results = cache_info['cache_data']['search_results']
+                            cached_results['patterns'] = [(name, np.array(pattern)) for name, pattern in cached_results['patterns']]
+                            
+                            # Convert window arrays back to numpy arrays
+                            for match in cached_results['matches_weekly']:
+                                if 'window' in match and isinstance(match['window'], list):
+                                    match['window'] = np.array(match['window'])
+                            
+                            for match in cached_results['matches_daily']:
+                                if 'window' in match and isinstance(match['window'], list):
+                                    match['window'] = np.array(match['window'])
+                            
+                            # Set the session state
+                            st.session_state.search_results = {
+                                'matches_weekly': cached_results['matches_weekly'],
+                                'matches_daily': cached_results['matches_daily'],
+                                'weekly_data': weekly,
+                                'daily_data': df,
+                                'patterns': cached_results['patterns']
+                            }
+                            st.session_state.search_config = cached_config
+                            
+                            # Store cache timestamp for display
+                            st.session_state.cache_loaded_timestamp = cache_info['timestamp'].strftime('%Y-%m-%d %H:%M')
+                            
+                            # Update data info to match cache if needed
+                            current_data_normalized = st.session_state.data_info.replace(' (cached)', '').replace(' (fetched)', '')
+                            cache_data_normalized = cache_info['data_info'].replace(' (cached)', '').replace(' (fetched)', '')
+                            
+                            if current_data_normalized == cache_data_normalized:
+                                # Data matches, load successful
+                                st.success(f"✅ Loaded cached results for {cache_info['ticker']} from {time_text}")
+                                st.info(f"📊 {cache_info['weekly_matches']} weekly + {cache_info['daily_matches']} daily matches")
+                                st.rerun()
+                            else:
+                                st.warning(f"⚠️ Data mismatch: Current data doesn't match cached data for {cache_info['ticker']}")
+                        
+                        except Exception as e:
+                            st.error(f"Error loading cache: {str(e)}")
+                
+                st.write("---")
                 # Clear cache button
                 if st.button("🗑️ Clear All Cache"):
                     try:
                         for cache_file in cache_files:
                             os.remove(os.path.join(cache_folder, cache_file))
                         st.success("Cache cleared!")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error clearing cache: {str(e)}")
             else:
