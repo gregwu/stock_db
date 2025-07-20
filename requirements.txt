@@ -8,3 +8,7 @@ tqdm
 scipy
 tables
 ta
+fastdtw
+streamlit 
+matplotlib 
+numpy
