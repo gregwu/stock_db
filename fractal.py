@@ -920,7 +920,7 @@ if df is not None:
         days_from_today = st.sidebar.slider(
             "Days from today (lookback)",
             30,
-            min(max_days_available, 2000),
+            max_days_available,
             min(365, max_days_available),
             help=f"How many days back from today to include in pattern (max: {max_days_available} days available)"
         )
