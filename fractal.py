@@ -1405,18 +1405,11 @@ if df is not None:
             st.session_state.date_filter_active = False
             st.rerun()
         
-        # Debug information - show current filter values and status
-        filter_status = "ACTIVE" if st.session_state.date_filter_active else "INACTIVE"
-        st.write(f"**Debug:** Filter {filter_status} | Range: {st.session_state.date_filter_start} to {st.session_state.date_filter_end}")
-        
         # Apply date filtering
         one_year_ago = datetime.now().date() - timedelta(days=365)
         
         # Filter matches based on session state filter settings
         filtered_matches = []
-        debug_excluded_recent = 0
-        debug_excluded_date_range = 0
-        debug_included = 0
         
         for m in all_matches:
             match_start = m['start_date'].date()
@@ -1424,7 +1417,6 @@ if df is not None:
             
             # First exclude matches that end within one year from today
             if match_end > one_year_ago:
-                debug_excluded_recent += 1
                 continue
                 
             # Apply date range filtering if filter is active
@@ -1432,27 +1424,9 @@ if df is not None:
                 # Check if match period is within the filter range
                 if match_start >= st.session_state.date_filter_start and match_end <= st.session_state.date_filter_end:
                     filtered_matches.append(m)
-                    debug_included += 1
-                else:
-                    debug_excluded_date_range += 1
             else:
                 # Show all historical matches when filter is inactive
                 filtered_matches.append(m)
-                debug_included += 1
-        
-        # Show debug info
-        st.write(f"**Debug:** Total matches: {len(all_matches)}, Excluded (recent): {debug_excluded_recent}, "
-                f"Excluded (date range): {debug_excluded_date_range}, Included: {debug_included}")
-        
-        # Additional debug - show date range of filtered matches
-        if filtered_matches:
-            filtered_start_dates = [m['start_date'].date() for m in filtered_matches]
-            filtered_end_dates = [m['end_date'].date() for m in filtered_matches]
-            actual_min_date = min(filtered_start_dates)
-            actual_max_date = max(filtered_end_dates)
-            st.write(f"**Debug:** Filtered matches date range: {actual_min_date} to {actual_max_date}")
-        else:
-            st.write(f"**Debug:** No matches after filtering")
         
         # Create filtered display dataframe
         filtered_match_data = pd.DataFrame([
