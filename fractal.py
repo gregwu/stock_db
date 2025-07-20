@@ -83,6 +83,103 @@ def resample_ohlc(df, rule='W'):
     }
     return df.resample(rule).agg(ohlc_dict).dropna()
 
+def save_search_results_cache(search_results, search_config, data_info, cache_folder="fractal_cache"):
+    """Save search results to cache for quick reload"""
+    try:
+        os.makedirs(cache_folder, exist_ok=True)
+        
+        # Create cache filename based on data source and config
+        cache_key = f"{data_info}_{search_config['similarity_threshold']}_{search_config['match_method']}_{search_config['allow_inversion']}"
+        # Clean filename
+        cache_key = "".join(c for c in cache_key if c.isalnum() or c in (' ', '_')).rstrip()
+        cache_key = cache_key.replace(' ', '_')
+        cache_filename = os.path.join(cache_folder, f"{cache_key}.json")
+        
+        # Prepare data for JSON serialization
+        cache_data = {
+            'search_results': {
+                'matches_weekly': [
+                    {
+                        'pattern': m['pattern'],
+                        'start': m['start'],
+                        'size': m['size'],
+                        'similarity': m['similarity'],
+                        'window': m['window'].tolist() if isinstance(m['window'], np.ndarray) else m['window'],
+                        'inverted': m['inverted']
+                    } for m in search_results['matches_weekly']
+                ],
+                'matches_daily': [
+                    {
+                        'pattern': m['pattern'],
+                        'start': m['start'],
+                        'size': m['size'],
+                        'similarity': m['similarity'],
+                        'window': m['window'].tolist() if isinstance(m['window'], np.ndarray) else m['window'],
+                        'inverted': m['inverted']
+                    } for m in search_results['matches_daily']
+                ],
+                'patterns': [(name, pattern.tolist()) for name, pattern in search_results['patterns']]
+            },
+            'search_config': search_config,
+            'data_info': data_info,
+            'timestamp': datetime.now().isoformat(),
+            'weekly_data_shape': search_results['weekly_data'].shape,
+            'daily_data_shape': search_results['daily_data'].shape
+        }
+        
+        with open(cache_filename, 'w') as f:
+            json.dump(cache_data, f, indent=2, default=str)
+            
+        return cache_filename
+    except Exception as e:
+        return None
+
+def load_search_results_cache(data_info, search_config, cache_folder="fractal_cache"):
+    """Load search results from cache if available and matching"""
+    try:
+        if not os.path.exists(cache_folder):
+            return None
+            
+        # Create cache key to look for
+        cache_key = f"{data_info}_{search_config['similarity_threshold']}_{search_config['match_method']}_{search_config['allow_inversion']}"
+        cache_key = "".join(c for c in cache_key if c.isalnum() or c in (' ', '_')).rstrip()
+        cache_key = cache_key.replace(' ', '_')
+        cache_filename = os.path.join(cache_folder, f"{cache_key}.json")
+        
+        if not os.path.exists(cache_filename):
+            return None
+            
+        with open(cache_filename, 'r') as f:
+            cache_data = json.load(f)
+            
+        # Verify the cache matches current config
+        if (cache_data['data_info'] == data_info and 
+            cache_data['search_config'] == search_config):
+            
+            # Reconstruct search results
+            cached_results = cache_data['search_results']
+            cached_results['patterns'] = [(name, np.array(pattern)) for name, pattern in cached_results['patterns']]
+            
+            # Convert window arrays back to numpy arrays for both weekly and daily matches
+            for match in cached_results['matches_weekly']:
+                if 'window' in match and isinstance(match['window'], list):
+                    match['window'] = np.array(match['window'])
+            
+            for match in cached_results['matches_daily']:
+                if 'window' in match and isinstance(match['window'], list):
+                    match['window'] = np.array(match['window'])
+            
+            return {
+                'search_results': cached_results,
+                'search_config': cache_data['search_config'],
+                'timestamp': cache_data['timestamp']
+            }
+        else:
+            return None
+            
+    except Exception as e:
+        return None
+
 def save_search_results_to_folder(search_results, search_config, data_info, base_folder="fractal_results"):
     """Save search results to organized folder structure"""
     try:
@@ -375,6 +472,7 @@ elif data_source == "Yahoo Finance Ticker":
     with col1:
         ticker_symbol = st.text_input("Enter ticker symbol (e.g., AAPL, MSFT, GOOGL)", value="TKOMY", key="yahoo_ticker")
     with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Natural spacing to align with text input
         fetch_button = st.button("Fetch Data", key="yahoo_fetch")
     
     # Auto-load cached data if available
@@ -652,6 +750,41 @@ if df is not None:
     # Search button
     search_button = st.sidebar.button("🔍 Start Pattern Search", type="primary")
     
+    # Check for cached results if no current results exist
+    if st.session_state.search_results is None and st.session_state.data_info is not None:
+        # Build current search config to check cache
+        current_config = {
+            'similarity_threshold': similarity_threshold,
+            'match_method': match_method,
+            'allow_inversion': allow_inversion,
+            'min_window_monthly': min_window_monthly,
+            'max_window_multiplier': max_window_multiplier
+        }
+        
+        cached_data = load_search_results_cache(st.session_state.data_info, current_config)
+        if cached_data is not None:
+            # Load cached results
+            st.session_state.search_results = {
+                'matches_weekly': cached_data['search_results']['matches_weekly'],
+                'matches_daily': cached_data['search_results']['matches_daily'],
+                'weekly_data': weekly,
+                'daily_data': df,
+                'patterns': cached_data['search_results']['patterns']
+            }
+            st.session_state.search_config = cached_data['search_config']
+            
+            # Store cache timestamp for display
+            cache_time = datetime.fromisoformat(cached_data['timestamp'])
+            st.session_state.cache_loaded_timestamp = cache_time.strftime('%Y-%m-%d %H:%M')
+            
+            # Show cache load message
+            st.sidebar.success(f"📁 Loaded cached results from {cache_time.strftime('%Y-%m-%d %H:%M')}")
+            
+            # Show quick preview in sidebar
+            matches_weekly = cached_data['search_results']['matches_weekly']
+            matches_daily = cached_data['search_results']['matches_daily']
+            st.sidebar.info(f"📊 {len(matches_weekly)} weekly + {len(matches_daily)} daily matches found")
+    
     # Clear results button (only show if we have results)
     if st.session_state.search_results is not None:
         clear_button = st.sidebar.button("🗑️ Clear Results")
@@ -659,6 +792,38 @@ if df is not None:
             st.session_state.search_results = None
             st.session_state.search_config = None
             # No need to rerun - Streamlit will handle the update automatically
+    
+    # Cache management section
+    with st.sidebar.expander("📁 Cache Management", expanded=False):
+        cache_folder = "fractal_cache"
+        if os.path.exists(cache_folder):
+            cache_files = [f for f in os.listdir(cache_folder) if f.endswith('.json')]
+            if cache_files:
+                st.write(f"**Cached searches:** {len(cache_files)}")
+                
+                # Show cache files with timestamps
+                for cache_file in cache_files[:5]:  # Show max 5 recent
+                    try:
+                        with open(os.path.join(cache_folder, cache_file), 'r') as f:
+                            cache_data = json.load(f)
+                        cache_time = datetime.fromisoformat(cache_data['timestamp'])
+                        data_source = cache_data['data_info'].split(' ')[-1] if cache_data['data_info'] else "unknown"
+                        st.text(f"• {data_source} - {cache_time.strftime('%m/%d %H:%M')}")
+                    except:
+                        pass
+                
+                # Clear cache button
+                if st.button("🗑️ Clear All Cache"):
+                    try:
+                        for cache_file in cache_files:
+                            os.remove(os.path.join(cache_folder, cache_file))
+                        st.success("Cache cleared!")
+                    except Exception as e:
+                        st.error(f"Error clearing cache: {str(e)}")
+            else:
+                st.write("No cached searches found")
+        else:
+            st.write("No cache folder found")
     
     # --- Define windows ---
     ref_len = len(patterns[0][1])
@@ -686,6 +851,10 @@ if df is not None:
     
     # --- Run Search only when button is clicked ---
     if search_button:
+        # Clear cache timestamp since this is a new search
+        if hasattr(st.session_state, 'cache_loaded_timestamp'):
+            delattr(st.session_state, 'cache_loaded_timestamp')
+            
         with st.spinner("Finding fractal pattern matches..."):
             matches_weekly = advanced_slide_and_compare(
                 weekly['close'].values, patterns, window_lengths_weekly, 
@@ -713,8 +882,29 @@ if df is not None:
                 'min_window_monthly': min_window_monthly,
                 'max_window_multiplier': max_window_multiplier
             }
-        
-        st.success(f"Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+            
+            # Save results to cache for quick reload
+            cache_file = save_search_results_cache(
+                st.session_state.search_results, 
+                st.session_state.search_config, 
+                st.session_state.data_info
+            )
+            if cache_file:
+                st.sidebar.success("💾 Results cached for quick reload")
+            
+            # Automatically save complete results to folder
+            folder_path, result = save_search_results_to_folder(
+                st.session_state.search_results, 
+                st.session_state.search_config,
+                st.session_state.data_info
+            )
+            if folder_path:
+                st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+                st.info(f"📁 **Results automatically saved to:** `{folder_path}`")
+                st.info(f"📊 **Files saved:** {result} matches + charts + data + config")
+            else:
+                st.success(f"Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+                st.warning(f"⚠️ Could not save results to folder: {result}")
 
     # Check if we have stored search results to display
     if st.session_state.search_results is not None:
@@ -728,11 +918,17 @@ if df is not None:
         if search_button:
             pass  # Already shown above
         else:
-            st.info(f"📊 Displaying previous search results: {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+            # Check if these results came from cache
+            cache_info = ""
+            if hasattr(st.session_state, 'cache_loaded_timestamp'):
+                cache_time = st.session_state.cache_loaded_timestamp
+                cache_info = f" (loaded from cache at {cache_time})"
+            
+            st.info(f"📊 Displaying search results: {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches{cache_info}.")
             
             # Show configuration used for these results
             config = st.session_state.search_config
-            st.write(f"**Previous search config:** Threshold={config['similarity_threshold']:.2f}, "
+            st.write(f"**Search config:** Threshold={config['similarity_threshold']:.2f}, "
                     f"Method={config['match_method'].upper()}, "
                     f"Window={config['min_window_monthly']}-{config['max_window_multiplier']}x, "
                     f"Inversion={'ON' if config['allow_inversion'] else 'OFF'}")
@@ -741,108 +937,383 @@ if df is not None:
     if st.session_state.search_results is not None:
 
         # --- Show Results ---
-        def plot_matches(series, matches, patterns, dates, n=3, title=''):
-            shown = 0
-            by_pattern = {}
-            for m in matches:
-                by_pattern.setdefault(m['pattern'], []).append(m)
-            for pat_name in by_pattern:
-                st.markdown(f"#### {title} - Pattern: **{pat_name}**")
-                sorted_matches = sorted(by_pattern[pat_name], key=lambda x: -x['similarity'])
-                for i, m in enumerate(sorted_matches[:n]):
-                    shown += 1
-                    fig, ax = plt.subplots(figsize=(12,4))
-                    pattern = [p[1] for p in patterns if p[0]==pat_name][0]
-                    ax.plot(range(len(pattern)), pattern, 'k-', lw=3, label='Reference pattern')
-                    if m['inverted']:
-                        ax.plot(range(len(pattern)), -pattern, 'c--', lw=2, label='Inverted reference')
-                        ax.plot(range(len(pattern)), m['window'], 'm-', alpha=0.7, label=f'Inverted Match (sim={m["similarity"]:.2f})')
-                    else:
-                        ax.plot(range(len(pattern)), m['window'], 'r-', alpha=0.7, label=f'Match (sim={m["similarity"]:.2f})')
-                    ax.set_title(f'{title} | {pat_name} | Match {i+1}: {dates[m["start"]]} to {dates[m["start"]+m["size"]-1]}, sim={m["similarity"]:.2f}{" (Inverted)" if m["inverted"] else ""}')
-                    ax.legend()
-                    st.pyplot(fig)
-                    if st.checkbox(f"Show actual chart for {title} {pat_name} Match {i+1}", value=False, key=f"{title}_{pat_name}_{i}"):
-                        actual_fig, ax2 = plt.subplots(figsize=(12,3))
-                        idx_range = range(m["start"], m["start"]+m["size"])
-                        ax2.plot(dates[idx_range], series[idx_range], 'b-')
-                        ax2.set_title(f"{title} actual price, {dates[m['start']]} to {dates[m['start']+m['size']-1]}")
-                        st.pyplot(actual_fig)
-                    if shown >= n * len(by_pattern):
-                        break
-
-        st.subheader("Top Weekly Matches")
-        plot_matches(weekly['close'].values, matches_weekly, patterns, weekly.index, n=5, title="Weekly")
-        st.subheader("Top Daily Matches")
-        plot_matches(daily_data['close'].values, matches_daily, patterns, daily_data.index, n=5, title="Daily")
+        # Create a simplified summary view instead of detailed charts
+        st.subheader("Match Summary")
+        st.write("Click on any row in the table below to view detailed charts for that match.")
 
         # Export matches
-        st.subheader("Download Match Data")
-        match_data = pd.DataFrame([
-            {
-                'tf': 'weekly',
+        st.subheader("Interactive Match Results")
+        
+        # Prepare match data with additional info for display
+        all_matches = []
+        for i, m in enumerate(matches_weekly):
+            all_matches.append({
+                'index': i,
+                'timeframe': 'weekly',
                 'pattern': m['pattern'],
-                'start': m['start'],
-                'size': m['size'],
+                'start_index': m['start'],
+                'window_size': m['size'],
                 'similarity': m['similarity'],
                 'inverted': m['inverted'],
                 'start_date': weekly.index[m['start']],
-                'end_date': weekly.index[m['start']+m['size']-1]
-            }
-            for m in matches_weekly
-        ] + [
-            {
-                'tf': 'daily',
+                'end_date': weekly.index[m['start']+m['size']-1],
+                'match_data': m,
+                'series': weekly['close'].values,
+                'dates': weekly.index
+            })
+        
+        for i, m in enumerate(matches_daily):
+            all_matches.append({
+                'index': i,
+                'timeframe': 'daily',
                 'pattern': m['pattern'],
-                'start': m['start'],
-                'size': m['size'],
+                'start_index': m['start'],
+                'window_size': m['size'],
                 'similarity': m['similarity'],
                 'inverted': m['inverted'],
                 'start_date': daily_data.index[m['start']],
-                'end_date': daily_data.index[m['start']+m['size']-1]
-            }
-            for m in matches_daily
-        ])
-        st.dataframe(match_data.head(10))
-        csv = match_data.to_csv(index=False).encode('utf-8')
-        st.download_button("Download matches as CSV", csv, "fractal_matches.csv", "text/csv")
+                'end_date': daily_data.index[m['start']+m['size']-1],
+                'match_data': m,
+                'series': daily_data['close'].values,
+                'dates': daily_data.index
+            })
         
-        # Save to folder button
-        st.subheader("Save Complete Results")
-        col1, col2 = st.columns(2)
+        # Sort by similarity (highest first)
+        all_matches = sorted(all_matches, key=lambda x: x['similarity'], reverse=True)
+        
+        # Create display dataframe
+        match_data = pd.DataFrame([
+            {
+                'timeframe': m['timeframe'],
+                'pattern': m['pattern'],
+                'start_index': m['start_index'],
+                'window_size': m['window_size'],
+                'similarity': m['similarity'],
+                'inverted': m['inverted'],
+                'start_date': m['start_date'],
+                'end_date': m['end_date']
+            }
+            for m in all_matches
+        ])
+        
+        # Show summary info
+        weekly_count = len(matches_weekly)
+        daily_count = len(matches_daily)
+        total_count = len(match_data)
+        
+        col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("💾 Save Results to Folder", type="secondary"):
-                with st.spinner("Saving complete results to folder..."):
-                    folder_path, result = save_search_results_to_folder(
-                        st.session_state.search_results, 
-                        st.session_state.search_config,
-                        st.session_state.data_info
-                    )
-                    if folder_path:
-                        st.success(f"✅ Results saved successfully!")
-                        st.info(f"📁 **Folder:** `{folder_path}`")
-                        st.info(f"📊 **Files saved:** {result} matches + charts + data + config")
-                        
-                        # Show folder contents
-                        st.write("**Folder contents:**")
-                        st.write("- 📋 `all_matches.csv` - Complete match data")
-                        st.write("- ⚙️ `search_config.json` - Search configuration")
-                        st.write("- 📈 `charts/` - Pattern and price charts")
-                        st.write("- 📊 `data/` - Weekly and daily data")
-                        st.write("- 🧩 `patterns/` - Pattern definitions")
-                        st.write("- 📖 `README.md` - Summary report")
-                    else:
-                        st.error(f"❌ Failed to save: {result}")
+            st.metric("Weekly Matches", weekly_count)
         with col2:
-            st.info("💡 **Saves:**\n- All match data\n- Top pattern charts\n- Raw data\n- Configuration\n- Summary report")
+            st.metric("Daily Matches", daily_count)
+        with col3:
+            st.metric("Total Matches", total_count)
+        
+        # Date range filtering
+        st.subheader("Filter by Date Range")
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            # Get the earliest and latest dates from all matches (excluding recent matches)
+            one_year_ago = datetime.now().date() - timedelta(days=365)
+            historical_matches = [m for m in all_matches if m['end_date'].date() <= one_year_ago]
+            
+            if historical_matches:
+                all_start_dates = [m['start_date'] for m in historical_matches]
+                all_end_dates = [m['end_date'] for m in historical_matches]
+                min_date = min(all_start_dates).date()
+                max_date = max(all_end_dates).date()
+            else:
+                # Fallback if no historical matches
+                min_date = datetime.now().date() - timedelta(days=3650)  # 10 years ago
+                max_date = one_year_ago
+            
+            # Initialize session state variables
+            if 'date_filter_start' not in st.session_state:
+                st.session_state.date_filter_start = min_date
+            if 'date_filter_end' not in st.session_state:
+                st.session_state.date_filter_end = max_date
+            if 'date_filter_active' not in st.session_state:
+                st.session_state.date_filter_active = False
+                
+            start_date_filter = st.date_input(
+                "From date", 
+                value=st.session_state.date_filter_start,
+                min_value=min_date,
+                max_value=max_date,
+                key="start_date_filter"
+            )
+        
+        with col2:
+            end_date_filter = st.date_input(
+                "To date", 
+                value=st.session_state.date_filter_end,
+                min_value=min_date,
+                max_value=max_date,
+                key="end_date_filter"
+            )
+        
+        with col3:
+            st.markdown("<br>", unsafe_allow_html=True)  # Natural spacing to align with date inputs
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                clear_filter = st.button("Clear Filter", key="clear_date_filter")
+            with btn_col2:
+                apply_filter = st.button("Apply Filter", key="apply_date_filter", type="primary")
+            
+        # Handle button clicks
+        if apply_filter:
+            # Update session state with current filter values and activate filter
+            st.session_state.date_filter_start = start_date_filter
+            st.session_state.date_filter_end = end_date_filter
+            st.session_state.date_filter_active = True
+            st.rerun()
+            
+        if clear_filter:
+            # Reset to full historical range and deactivate filter
+            st.session_state.date_filter_start = min_date
+            st.session_state.date_filter_end = max_date
+            st.session_state.date_filter_active = False
+            st.rerun()
+        
+        # Debug information - show current filter values and status
+        filter_status = "ACTIVE" if st.session_state.date_filter_active else "INACTIVE"
+        st.write(f"**Debug:** Filter {filter_status} | Range: {st.session_state.date_filter_start} to {st.session_state.date_filter_end}")
+        
+        # Apply date filtering
+        one_year_ago = datetime.now().date() - timedelta(days=365)
+        
+        # Filter matches based on session state filter settings
+        filtered_matches = []
+        debug_excluded_recent = 0
+        debug_excluded_date_range = 0
+        debug_included = 0
+        
+        for m in all_matches:
+            match_start = m['start_date'].date()
+            match_end = m['end_date'].date()
+            
+            # First exclude matches that end within one year from today
+            if match_end > one_year_ago:
+                debug_excluded_recent += 1
+                continue
+                
+            # Apply date range filtering if filter is active
+            if st.session_state.date_filter_active:
+                # Check if match period is within the filter range
+                if match_start >= st.session_state.date_filter_start and match_end <= st.session_state.date_filter_end:
+                    filtered_matches.append(m)
+                    debug_included += 1
+                else:
+                    debug_excluded_date_range += 1
+            else:
+                # Show all historical matches when filter is inactive
+                filtered_matches.append(m)
+                debug_included += 1
+        
+        # Show debug info
+        st.write(f"**Debug:** Total matches: {len(all_matches)}, Excluded (recent): {debug_excluded_recent}, "
+                f"Excluded (date range): {debug_excluded_date_range}, Included: {debug_included}")
+        
+        # Additional debug - show date range of filtered matches
+        if filtered_matches:
+            filtered_start_dates = [m['start_date'].date() for m in filtered_matches]
+            filtered_end_dates = [m['end_date'].date() for m in filtered_matches]
+            actual_min_date = min(filtered_start_dates)
+            actual_max_date = max(filtered_end_dates)
+            st.write(f"**Debug:** Filtered matches date range: {actual_min_date} to {actual_max_date}")
+        else:
+            st.write(f"**Debug:** No matches after filtering")
+        
+        # Create filtered display dataframe
+        filtered_match_data = pd.DataFrame([
+            {
+                'timeframe': m['timeframe'],
+                'pattern': m['pattern'],
+                'start_index': m['start_index'],
+                'window_size': m['window_size'],
+                'similarity': m['similarity'],
+                'inverted': m['inverted'],
+                'start_date': m['start_date'],
+                'end_date': m['end_date']
+            }
+            for m in filtered_matches
+        ])
+        
+        # Show filtered results summary
+        one_year_ago = datetime.now().date() - timedelta(days=365)
+        total_before_date_filter = len([m for m in all_matches if m['end_date'].date() <= one_year_ago])
+        
+        if st.session_state.date_filter_active:
+            st.info(f"📅 Showing {len(filtered_matches)} matches (of {total_before_date_filter} historical matches) "
+                   f"filtered from {st.session_state.date_filter_start} to {st.session_state.date_filter_end}")
+        else:
+            st.info(f"📅 Showing {len(filtered_matches)} historical matches (excluding matches ending after {one_year_ago})")
+        
+        # Display interactive table with row selection
+        st.write("**Matches sorted by similarity (click on a row to view charts):**")
+        
+        # Use streamlit's dataframe with on_select event
+        event = st.dataframe(
+            filtered_match_data.head(20),
+            column_config={
+                "timeframe": st.column_config.TextColumn("Timeframe"),
+                "pattern": st.column_config.TextColumn("Pattern"),
+                "start_index": st.column_config.NumberColumn("Start Index"),
+                "window_size": st.column_config.NumberColumn("Window Size"),
+                "similarity": st.column_config.NumberColumn("Similarity", format="%.3f"),
+                "inverted": st.column_config.CheckboxColumn("Inverted"),
+                "start_date": st.column_config.DatetimeColumn("Start Date"),
+                "end_date": st.column_config.DatetimeColumn("End Date")
+            },
+            hide_index=True,
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="match_table"
+        )
+        
+        # Check if a row is selected
+        selected_match = None
+        if event.selection.rows:
+            selected_row_idx = event.selection.rows[0]
+            if selected_row_idx < len(filtered_matches):
+                selected_match = filtered_matches[selected_row_idx]
+        # Display charts for selected match
+        if selected_match:
+            st.subheader(f"Charts for Selected Match")
+            st.write(f"**{selected_match['timeframe'].title()}** | **{selected_match['pattern']}** | "
+                    f"Similarity: **{selected_match['similarity']:.3f}** | "
+                    f"Date: **{selected_match['start_date'].strftime('%Y-%m-%d')} to {selected_match['end_date'].strftime('%Y-%m-%d')}**")
+            
+            # Single combined chart
+            fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+            m = selected_match['match_data']
+            pattern = [p[1] for p in patterns if p[0] == selected_match['pattern']][0]
+            
+            # Get price data with context
+            series = selected_match['series']
+            dates = selected_match['dates']
+            window_size = m["size"]
+            past_extension = max(1, int(window_size * 0.1))  # 10% of window size
+            future_extension = max(1, int(window_size * 0.2))  # 20% of window size
+            
+            start_extended = max(0, m["start"] - past_extension)
+            end_extended = min(len(series), m["start"] + m["size"] + future_extension)
+            idx_range_extended = range(start_extended, end_extended)
+            idx_range_match = range(m["start"], m["start"] + m["size"])
+            
+            # Plot the actual price data
+            ax.plot(dates[idx_range_extended], series[idx_range_extended], 'lightblue', alpha=0.6, linewidth=1, label='Price Context')
+            ax.plot(dates[idx_range_match], series[idx_range_match], 'blue', linewidth=1.5, label='Match Period')
+            
+            # Create a twin axis for the normalized pattern overlay
+            ax2 = ax.twinx()
+            
+            # Scale and position the normalized patterns to overlay on the match period
+            match_prices = series[idx_range_match]
+            price_min, price_max = match_prices.min(), match_prices.max()
+            price_range = price_max - price_min
+            
+            # Get the pattern dates for the match period
+            pattern_dates = dates[idx_range_match]
+            match_length = len(pattern_dates)
+            
+            # Resample patterns to match the length of the match period
+            pattern_resampled = np.interp(
+                np.linspace(0, len(pattern)-1, match_length), 
+                np.arange(len(pattern)), 
+                pattern
+            )
+            
+            # Also resample the match window to ensure correct length
+            match_window_resampled = np.interp(
+                np.linspace(0, len(m['window'])-1, match_length), 
+                np.arange(len(m['window'])), 
+                m['window']
+            )
+            
+            # Scale patterns to match price range
+            pattern_scaled = pattern_resampled * price_range * 0.3 + price_min + price_range * 0.1
+            match_scaled = match_window_resampled * price_range * 0.3 + price_min + price_range * 0.1
+            
+            # Plot normalized patterns on the twin axis
+            ax2.plot(pattern_dates, pattern_scaled, 'k-', linewidth=1, alpha=0.8, label='Reference Pattern (scaled)')
+            
+            if m['inverted']:
+                inverted_pattern_resampled = np.interp(
+                    np.linspace(0, len(pattern)-1, match_length), 
+                    np.arange(len(pattern)), 
+                    -pattern
+                )
+                inverted_pattern_scaled = inverted_pattern_resampled * price_range * 0.3 + price_min + price_range * 0.1
+                ax2.plot(pattern_dates, inverted_pattern_scaled, 'orange', linestyle='--', linewidth=1, alpha=0.8, label='Inverted Reference (scaled)')
+                # Match Pattern line removed for clarity
+            
+            # Styling for main axis
+            ax.set_title(f'Price Movement with Pattern Overlay: {selected_match["pattern"]}{" (Inverted)" if m["inverted"] else ""}\n'
+                        f'{dates[start_extended].strftime("%Y-%m-%d")} to {dates[end_extended-1].strftime("%Y-%m-%d")} | '
+                        f'Similarity: {m["similarity"]:.3f}')
+            ax.set_xlabel('Date')
+            ax.set_ylabel('Price', color='blue')
+            ax.tick_params(axis='y', labelcolor='blue')
+            ax.grid(True, alpha=0.3)
+            
+            # Styling for twin axis
+            ax2.set_ylabel('Normalized Pattern (scaled)', color='black')
+            ax2.tick_params(axis='y', labelcolor='black')
+            
+            # Combine legends
+            lines1, labels1 = ax.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+            
+            # Add data point annotations for easier reading
+            # Show a few key data points as text annotations
+            extended_prices = series[idx_range_extended]
+            extended_dates = dates[idx_range_extended]
+            
+            # Add start and end markers for the match period
+            match_start_date = dates[m["start"]]
+            match_end_date = dates[m["start"] + m["size"] - 1]
+            match_start_price = series[m["start"]]
+            match_end_price = series[m["start"] + m["size"] - 1]
+            
+            # Add subtle markers for match boundaries
+            ax.axvline(x=match_start_date, color='green', alpha=0.5, linestyle=':', linewidth=1)
+            ax.axvline(x=match_end_date, color='red', alpha=0.5, linestyle=':', linewidth=1)
+            
+            # Add text annotations for match boundaries
+            ax.annotate(f'Match Start\n{match_start_date.strftime("%Y-%m-%d")}\n${match_start_price:.2f}', 
+                       xy=(match_start_date, match_start_price), 
+                       xytext=(10, 10), textcoords='offset points',
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.7),
+                       fontsize=8, ha='left')
+            
+            ax.annotate(f'Match End\n{match_end_date.strftime("%Y-%m-%d")}\n${match_end_price:.2f}', 
+                       xy=(match_end_date, match_end_price), 
+                       xytext=(-10, 10), textcoords='offset points',
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral", alpha=0.7),
+                       fontsize=8, ha='right')
+            
+            # Rotate x-axis labels for better readability
+            plt.xticks(rotation=45)
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+        else:
+            st.info("👆 Click on any row in the table above to view detailed charts for that match.")
     else:
         st.info("💡 Configure your search parameters in the sidebar and click '🔍 Start Pattern Search' to begin analysis.")
+
 
 st.markdown("""
 ---
 **Tips:**  
 - For your pattern library, upload CSVs with a `close` column, one file per pattern.
-- Try DTW for time-warped/“stretched” pattern matching, or cosine for fast, direct shape matching.
+- Try DTW for time-warped/"stretched" pattern matching, or cosine for fast, direct shape matching.
 - Use a lower similarity threshold for more matches; higher for only the closest.
+- Search results are automatically cached - identical searches will load instantly from cache.
+- Manage cached searches in the sidebar "Cache Management" section.
 - Results show where in your daily/weekly history the reference pattern (or its inverse) recurs in different sizes and positions—true fractal echoes!
 """)
