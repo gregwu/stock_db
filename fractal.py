@@ -92,7 +92,62 @@ def filter_overlapping_matches(matches, series_dates, min_separation_days=30):
     
     return filtered_matches
 
-def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, method='cosine', allow_inversion=False, use_dtw=False, series_dates=None, exclude_overlap=True, filter_close_matches=True, min_separation_days=30):
+def filter_overlapping_matches_cross_timeframe(matches, min_separation_days=30):
+    """
+    Filter out overlapping or close-proximity matches across different timeframes (daily/weekly),
+    keeping only the best similarity from each cluster.
+    
+    Args:
+        matches: List of match dictionaries with timeframe and dates info
+        min_separation_days: Minimum days between matches to consider them separate
+    
+    Returns:
+        Filtered list of matches with cross-timeframe overlaps removed
+    """
+    if not matches:
+        return matches
+    
+    # Sort matches by similarity (highest first)
+    sorted_matches = sorted(matches, key=lambda x: x['similarity'], reverse=True)
+    
+    filtered_matches = []
+    
+    for match in sorted_matches:
+        # Get the date range of the current match
+        match_dates = match['dates']
+        match_start_date = match_dates[match['start']]
+        match_end_date = match_dates[match['start'] + match['size'] - 1]
+        
+        # Check if this match overlaps or is too close to any already accepted match
+        is_too_close = False
+        for accepted_match in filtered_matches:
+            accepted_dates = accepted_match['dates']
+            accepted_start_date = accepted_dates[accepted_match['start']]
+            accepted_end_date = accepted_dates[accepted_match['start'] + accepted_match['size'] - 1]
+            
+            # Calculate the gap between matches
+            if match_end_date < accepted_start_date:
+                # Current match is before accepted match
+                gap_days = (accepted_start_date - match_end_date).days
+            elif accepted_end_date < match_start_date:
+                # Current match is after accepted match
+                gap_days = (match_start_date - accepted_end_date).days
+            else:
+                # Matches overlap
+                gap_days = 0
+            
+            # If gap is less than minimum separation, consider them too close
+            if gap_days < min_separation_days:
+                is_too_close = True
+                break
+        
+        # Only add this match if it's not too close to existing matches
+        if not is_too_close:
+            filtered_matches.append(match)
+    
+    return filtered_matches
+
+def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, method='cosine', allow_inversion=False, use_dtw=False, series_dates=None, exclude_overlap=True, filter_close_matches=True, min_separation_days=30, pattern_date_range=None):
     matches = []
     for pat_name, pattern in patterns:
         pat_len = len(pattern)
@@ -101,23 +156,32 @@ def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, m
                 window = series[start:start+win_size]
                 window_norm = normalize_and_resample(window, pat_len)
                 
-                # Skip self-matches when using "Monthly Whole History" pattern
-                if exclude_overlap and pat_name == "Monthly Whole History" and series_dates is not None:
+                # Skip self-matches using 80% overlap detection
+                if exclude_overlap and pattern_date_range is not None and series_dates is not None:
                     # Get the date range of the current window
                     window_start_date = series_dates[start]
                     window_end_date = series_dates[start + win_size - 1]
                     
-                    # For monthly pattern, exclude matches that significantly overlap with monthly boundaries
-                    # This prevents the system from matching a monthly period to itself
-                    window_start_month = window_start_date.replace(day=1)
-                    window_end_month = (window_end_date.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+                    # Calculate overlap with the reference pattern date range
+                    pattern_start, pattern_end = pattern_date_range
                     
-                    # Skip if this window represents a significant portion of any single month
-                    # (to avoid matching monthly patterns to themselves)
-                    if win_size >= 20:  # For weekly data, 4+ weeks might overlap significantly with monthly
-                        # Calculate overlap with month boundaries
-                        total_days = (window_end_date - window_start_date).days + 1
-                        if total_days >= 25:  # If window covers most of a month, likely a self-match
+                    # Find the overlap period
+                    overlap_start = max(window_start_date, pattern_start)
+                    overlap_end = min(window_end_date, pattern_end)
+                    
+                    # Check if there's any overlap
+                    if overlap_start <= overlap_end:
+                        # Calculate overlap duration in days
+                        overlap_days = (overlap_end - overlap_start).days + 1
+                        window_days = (window_end_date - window_start_date).days + 1
+                        pattern_days = (pattern_end - pattern_start).days + 1
+                        
+                        # Calculate overlap percentage relative to both window and pattern
+                        overlap_pct_window = overlap_days / window_days
+                        overlap_pct_pattern = overlap_days / pattern_days
+                        
+                        # Skip if 80% or more overlap with either the window or pattern
+                        if overlap_pct_window >= 0.8 or overlap_pct_pattern >= 0.8:
                             continue
                 
                 if use_dtw:
@@ -248,7 +312,7 @@ def load_search_results_cache(data_info, search_config, cache_folder="fractal_ca
         
         # Compare only the core search parameters that actually affect results
         # Ignore UI-only parameters like save_results_to_folder, exclude_self_matches, filter_close_matches
-        core_search_params = ['similarity_threshold', 'match_method', 'allow_inversion', 'min_window_monthly', 'max_window_multiplier']
+        core_search_params = ['similarity_threshold', 'match_method', 'allow_inversion', 'min_window_size', 'max_window_size']
         
         core_current_config = {k: v for k, v in search_config.items() if k in core_search_params}
         core_cached_config = {k: v for k, v in cached_config.items() if k in core_search_params}
@@ -810,7 +874,7 @@ if df is not None:
     monthly = resample_ohlc(df, 'M')
     weekly = resample_ohlc(df, 'W')
 
-    # --- Pattern Selection: Whole history or upload pattern library ---
+    # --- Pattern Selection: Configurable reference pattern or upload library ---
     st.sidebar.header("Reference Patterns")
     
     # Preserve pattern library setting if we have stored search config
@@ -818,12 +882,13 @@ if df is not None:
     if st.session_state.search_config is not None:
         # Check if previous search used custom patterns
         stored_patterns = st.session_state.search_results.get('patterns', [])
-        if len(stored_patterns) > 0 and stored_patterns[0][0] != "Monthly Whole History":
+        if len(stored_patterns) > 0 and not stored_patterns[0][0].startswith(("Monthly", "Weekly", "Daily")):
             default_use_library = True
     
     use_library = st.sidebar.checkbox("Use pattern library (upload)", value=default_use_library)
     pattern_files = []
     patterns = []
+    
     if use_library:
         pattern_files = st.sidebar.file_uploader(
             "Upload pattern library CSV(s) (each with 'close' column)", type=['csv'], accept_multiple_files=True)
@@ -832,10 +897,96 @@ if df is not None:
             pat = normalize_and_resample(p_df['close'].values, target_length=len(p_df))
             patterns.append((pf.name, pat))
         if not patterns:
-            st.warning("No pattern files uploaded. Using whole-history monthly as default.")
+            st.warning("No pattern files uploaded. Using configurable reference pattern as default.")
+            use_library = False
+        else:
+            # For uploaded patterns, no specific date range for overlap detection
+            pattern_date_range = None
+    
+    if not use_library:
+        # Configurable reference pattern
+        st.sidebar.subheader("Configure Reference Pattern")
+        
+        # Time scale selection
+        time_scale = st.sidebar.selectbox(
+            "Time scale",
+            ["Monthly", "Weekly", "Daily"],
+            index=2,
+            help="Choose the resampling frequency for the reference pattern"
+        )
+        
+        # Days from today (lookback period)
+        max_days_available = len(df)
+        days_from_today = st.sidebar.slider(
+            "Days from today (lookback)",
+            30,
+            min(max_days_available, 2000),
+            min(365, max_days_available),
+            help=f"How many days back from today to include in pattern (max: {max_days_available} days available)"
+        )
+        
+        # Calculate the cutoff date
+        cutoff_date = df.index[-1] - timedelta(days=days_from_today)
+        pattern_data = df[df.index >= cutoff_date]
+        
+        # Create the pattern based on selected time scale
+        if time_scale == "Monthly":
+            pattern_resampled = resample_ohlc(pattern_data, 'M')
+            pattern_name = f"Monthly Last {days_from_today} Days"
+        elif time_scale == "Weekly":
+            pattern_resampled = resample_ohlc(pattern_data, 'W')
+            pattern_name = f"Weekly Last {days_from_today} Days"
+        else:  # Daily
+            pattern_resampled = pattern_data
+            pattern_name = f"Daily Last {days_from_today} Days"
+        
+        # Normalize the pattern
+        if len(pattern_resampled) > 0:
+            pattern_normalized = normalize_and_resample(pattern_resampled['close'].values, target_length=len(pattern_resampled))
+            patterns = [(pattern_name, pattern_normalized)]
+            
+            # Store pattern date range for overlap detection
+            pattern_date_range = (pattern_resampled.index[0], pattern_resampled.index[-1])
+            
+            # Show pattern info
+            st.sidebar.write(f"**Pattern Created:** {len(pattern_resampled)} {time_scale.lower()} periods")
+            st.sidebar.write(f"**Date Range:** {pattern_resampled.index[0].strftime('%Y-%m-%d')} to {pattern_resampled.index[-1].strftime('%Y-%m-%d')}")
+        else:
+            st.sidebar.error("Not enough data for the selected lookback period")
             patterns = [("Monthly Whole History", normalize_and_resample(monthly['close'].values, target_length=len(monthly)))]
+            pattern_date_range = None
+
+    # --- Calculate reference pattern length in days and weeks (for smart defaults) ---
+    ref_len = len(patterns[0][1])
+    pattern_name = patterns[0][0]
+    
+    # Calculate actual reference pattern lengths based on pattern type
+    if "Monthly" in pattern_name:
+        # Monthly pattern: ref_len is the number of months
+        ref_len_weeks = ref_len * 4  # ~4 weeks per month
+        ref_len_days = ref_len * 22  # ~22 trading days per month
+    elif "Weekly" in pattern_name:
+        # Weekly pattern: ref_len is the number of weeks
+        ref_len_weeks = ref_len
+        ref_len_days = ref_len * 5  # 5 trading days per week
+    elif "Daily" in pattern_name:
+        # Daily pattern: ref_len is the number of days
+        ref_len_weeks = max(1, ref_len // 5)  # Convert days to weeks
+        ref_len_days = ref_len
     else:
-        patterns = [("Monthly Whole History", normalize_and_resample(monthly['close'].values, target_length=len(monthly)))]
+        # For uploaded custom patterns, use a reasonable default conversion
+        ref_len_weeks = max(4, ref_len // 4)  # Assume pattern is weekly-based
+        ref_len_days = ref_len_weeks * 5  # 5 trading days per week
+    
+    # Calculate smart window ranges based on reference pattern length
+    # Search from 75% to 125% of reference pattern length for focused matching
+    min_multiplier = 0.75
+    max_multiplier = 1.25
+    
+    smart_min_weeks = max(1, int(ref_len_weeks * min_multiplier))
+    smart_max_weeks = max(smart_min_weeks + 1, int(ref_len_weeks * max_multiplier))
+    smart_min_days = max(5, int(ref_len_days * min_multiplier))
+    smart_max_days = max(smart_min_days + 1, int(ref_len_days * max_multiplier))
 
     # --- Pattern Mining Params ---
     st.sidebar.header("Pattern Mining Parameters")
@@ -866,8 +1017,8 @@ if df is not None:
                             'similarity_threshold': cached_config.get('similarity_threshold', 0.93),
                             'match_method': cached_config.get('match_method', 'cosine'),
                             'allow_inversion': cached_config.get('allow_inversion', False),
-                            'min_window_monthly': cached_config.get('min_window_monthly', 8),
-                            'max_window_multiplier': cached_config.get('max_window_multiplier', 3),
+                            'min_window_size': cached_config.get('min_window_size', cached_config.get('min_window_monthly', 60)),
+                            'max_window_size': cached_config.get('max_window_size', cached_config.get('max_window_multiplier', 100)),
                             'exclude_self_matches': cached_config.get('exclude_self_matches', False),
                             'filter_close_matches': cached_config.get('filter_close_matches', False),
                             'min_separation_days': cached_config.get('min_separation_days', 30),
@@ -880,8 +1031,8 @@ if df is not None:
     # Initialize search parameters from session state if available, otherwise use cache defaults or fallback
     if st.session_state.search_config is not None:
         default_threshold = st.session_state.search_config['similarity_threshold']
-        default_min_window = st.session_state.search_config['min_window_monthly']
-        default_max_multiplier = st.session_state.search_config['max_window_multiplier']
+        default_min_window = st.session_state.search_config.get('min_window_size', 60)
+        default_max_window = st.session_state.search_config.get('max_window_size', 100)
         default_method = st.session_state.search_config['match_method']
         default_inversion = st.session_state.search_config['allow_inversion']
         default_exclude_self = st.session_state.search_config.get('exclude_self_matches', True)
@@ -891,8 +1042,8 @@ if df is not None:
     elif potential_cache_defaults is not None:
         # Use cache defaults
         default_threshold = potential_cache_defaults['similarity_threshold']
-        default_min_window = potential_cache_defaults['min_window_monthly']
-        default_max_multiplier = potential_cache_defaults['max_window_multiplier']
+        default_min_window = potential_cache_defaults.get('min_window_size', 60)
+        default_max_window = potential_cache_defaults.get('max_window_size', 100)
         default_method = potential_cache_defaults['match_method']
         default_inversion = potential_cache_defaults['allow_inversion']
         default_exclude_self = potential_cache_defaults['exclude_self_matches']
@@ -900,10 +1051,10 @@ if df is not None:
         default_min_separation = potential_cache_defaults['min_separation_days']
         default_save_results = potential_cache_defaults['save_results_to_folder']
     else:
-        # Fallback defaults
+        # Use smart defaults based on reference pattern
         default_threshold = 0.93
-        default_min_window = 8
-        default_max_multiplier = 3
+        default_min_window = smart_min_weeks
+        default_max_window = smart_max_weeks
         default_method = 'cosine'
         default_inversion = False
         default_exclude_self = True
@@ -911,9 +1062,33 @@ if df is not None:
         default_min_separation = 30
         default_save_results = False
     
-    similarity_threshold = st.sidebar.slider("Similarity threshold", 0.80, 0.99, default_threshold, 0.01)
-    min_window_monthly = st.sidebar.slider("Min window size (weeks/days)", 4, 30, default_min_window)
-    max_window_multiplier = st.sidebar.slider("Max window size multiplier (x monthly length)", 1, 5, default_max_multiplier)
+    similarity_threshold = st.sidebar.slider("Similarity threshold", 0.80, 0.99, default_threshold, 0.01,
+                                            help="Minimum similarity score (0.80-0.99) to consider a match. Higher values = fewer, more precise matches. Lower values = more matches but less similar")
+    # Show reference pattern info with correct units
+    st.sidebar.write(f"**Reference Pattern:** {patterns[0][0]}")
+    
+    # Display pattern length in appropriate units based on pattern type
+    if "Monthly" in pattern_name:
+        st.sidebar.write(f"**Pattern Length:** {ref_len} months ≈ {ref_len_weeks} weeks ≈ {ref_len_days} days")
+    elif "Weekly" in pattern_name:
+        st.sidebar.write(f"**Pattern Length:** {ref_len} weeks ≈ {ref_len_days} days")
+    elif "Daily" in pattern_name:
+        st.sidebar.write(f"**Pattern Length:** {ref_len} days ≈ {ref_len_weeks} weeks")
+    else:
+        # For uploaded custom patterns
+        st.sidebar.write(f"**Pattern Length:** {ref_len} periods ≈ {ref_len_weeks} weeks ≈ {ref_len_days} days")
+    
+    st.sidebar.write(f"**Smart Range:** {smart_min_days}-{smart_max_days} days (75%-125%)")
+    
+    # Auto-set sliders with fixed defaults but allow user override (in days)
+    min_window_size_days = st.sidebar.slider("Min window size (days)", 5, smart_min_days, 250,
+                                             help=f"Smart range suggestion: {smart_min_days} days (75% of {ref_len_days}-day pattern)")
+    max_window_size_days = st.sidebar.slider("Max window size (days)", min_window_size_days, smart_max_days, 600,
+                                             help=f"Smart range suggestion: {smart_max_days} days (125% of {ref_len_days}-day pattern)")
+    
+    # Convert days to weeks for internal use (5 trading days per week)
+    min_window_size = max(1, min_window_size_days // 5)
+    max_window_size = max(min_window_size + 1, max_window_size_days // 5)
     match_method = st.sidebar.selectbox("Similarity method", ['cosine', 'dtw'], index=0 if default_method == 'cosine' else 1)
     use_dtw = (match_method == 'dtw')
     allow_inversion = st.sidebar.checkbox("Enable inverted pattern search", value=default_inversion)
@@ -941,8 +1116,8 @@ if df is not None:
             'similarity_threshold': similarity_threshold,
             'match_method': match_method,
             'allow_inversion': allow_inversion,
-            'min_window_monthly': min_window_monthly,
-            'max_window_multiplier': max_window_multiplier,
+            'min_window_size': min_window_size,
+            'max_window_size': max_window_size,
             'exclude_self_matches': exclude_self_matches,
             'filter_close_matches': filter_close_matches,
             'min_separation_days': min_separation_days,
@@ -1123,28 +1298,37 @@ if df is not None:
         else:
             st.write("No cache folder found")
     
-    # --- Define windows ---
-    ref_len = len(patterns[0][1])
-    window_lengths_weekly = range(
-        int(min_window_monthly),
-        int(ref_len*max_window_multiplier)+1
-    )
-    window_lengths_daily = range(
-        int(min_window_monthly*5),
-        int(ref_len*max_window_multiplier*5)+1, max(1, ref_len//2)
-    )
+    # --- Define final window ranges ---
+    # Use the user-selected day ranges directly
+    window_lengths_weekly = range(min_window_size, max_window_size + 1)  # Converted to weeks for weekly search
+    window_lengths_daily = range(min_window_size_days, max_window_size_days + 1)  # Use days directly for daily search
     
     # Show search parameters
     st.subheader("Search Configuration")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Reference Pattern Length", ref_len)
+        # Display pattern length in appropriate units
+        if "Monthly" in pattern_name:
+            st.metric("Reference Pattern", f"{ref_len} months")
+            st.metric("≈ Weeks/Days", f"{ref_len_weeks}w / {ref_len_days}d")
+        elif "Weekly" in pattern_name:
+            st.metric("Reference Pattern", f"{ref_len} weeks")
+            st.metric("≈ Days", f"{ref_len_days} days")
+        elif "Daily" in pattern_name:
+            st.metric("Reference Pattern", f"{ref_len} days")
+            st.metric("≈ Weeks", f"{ref_len_weeks} weeks")
+        else:
+            st.metric("Reference Pattern", f"{ref_len} periods")
+            st.metric("≈ Weeks/Days", f"{ref_len_weeks}w / {ref_len_days}d")
+        
         st.metric("Similarity Method", match_method.upper())
     with col2:
-        st.metric("Weekly Search Window", f"{min(window_lengths_weekly)} - {max(window_lengths_weekly)}")
+        st.metric("User Window Range", f"{min_window_size_days} - {max_window_size_days} days")
+        st.metric("Smart Range", f"{smart_min_days} - {smart_max_days} days")
         st.metric("Similarity Threshold", f"{similarity_threshold:.2f}")
     with col3:
-        st.metric("Daily Search Window", f"{min(window_lengths_daily)} - {max(window_lengths_daily)}")
+        st.metric("Weekly Search", f"{min_window_size} - {max_window_size} weeks")
+        st.metric("Daily Search", f"{min_window_size_days} - {max_window_size_days} days")
         st.metric("Inverted Search", "Enabled" if allow_inversion else "Disabled")
     
     # --- Run Search only when button is clicked ---
@@ -1159,15 +1343,53 @@ if df is not None:
                 threshold=similarity_threshold, 
                 method=match_method, allow_inversion=allow_inversion, use_dtw=use_dtw,
                 series_dates=weekly.index, exclude_overlap=exclude_self_matches,
-                filter_close_matches=filter_close_matches, min_separation_days=min_separation_days
+                filter_close_matches=filter_close_matches, min_separation_days=min_separation_days,
+                pattern_date_range=pattern_date_range
             )
             matches_daily = advanced_slide_and_compare(
                 df['close'].values, patterns, window_lengths_daily, 
                 threshold=similarity_threshold, 
                 method=match_method, allow_inversion=allow_inversion, use_dtw=use_dtw,
                 series_dates=df.index, exclude_overlap=exclude_self_matches,
-                filter_close_matches=filter_close_matches, min_separation_days=min_separation_days
+                filter_close_matches=filter_close_matches, min_separation_days=min_separation_days,
+                pattern_date_range=pattern_date_range
             )
+            
+            # Filter close-proximity matches between daily and weekly results
+            if filter_close_matches:
+                # Combine both weekly and daily matches for cross-timeframe filtering
+                combined_matches = []
+                
+                # Add weekly matches with timeframe info
+                for match in matches_weekly:
+                    match_with_timeframe = match.copy()
+                    match_with_timeframe['timeframe'] = 'weekly'
+                    match_with_timeframe['dates'] = weekly.index
+                    combined_matches.append(match_with_timeframe)
+                
+                # Add daily matches with timeframe info
+                for match in matches_daily:
+                    match_with_timeframe = match.copy()
+                    match_with_timeframe['timeframe'] = 'daily'
+                    match_with_timeframe['dates'] = df.index
+                    combined_matches.append(match_with_timeframe)
+                
+                # Apply cross-timeframe proximity filtering
+                filtered_combined = filter_overlapping_matches_cross_timeframe(
+                    combined_matches, min_separation_days
+                )
+                
+                # Separate back into weekly and daily
+                matches_weekly = [m for m in filtered_combined if m['timeframe'] == 'weekly']
+                matches_daily = [m for m in filtered_combined if m['timeframe'] == 'daily']
+                
+                # Clean up the added fields
+                for match in matches_weekly:
+                    del match['timeframe']
+                    del match['dates']
+                for match in matches_daily:
+                    del match['timeframe']
+                    del match['dates']
             
             # Store search results and configuration in session state
             st.session_state.search_results = {
@@ -1181,8 +1403,8 @@ if df is not None:
                 'similarity_threshold': similarity_threshold,
                 'match_method': match_method,
                 'allow_inversion': allow_inversion,
-                'min_window_monthly': min_window_monthly,
-                'max_window_multiplier': max_window_multiplier,
+                'min_window_size': min_window_size,
+                'max_window_size': max_window_size,
                 'exclude_self_matches': exclude_self_matches,
                 'filter_close_matches': filter_close_matches,
                 'min_separation_days': min_separation_days,
@@ -1241,7 +1463,7 @@ if df is not None:
             proximity_info = f" ({config.get('min_separation_days', 30)}d)" if config.get('filter_close_matches', True) else ""
             st.write(f"**Search config:** Threshold={config['similarity_threshold']:.2f}, "
                     f"Method={config['match_method'].upper()}, "
-                    f"Window={config['min_window_monthly']}-{config['max_window_multiplier']}x, "
+                    f"Window={config.get('min_window_size', 60)}-{config.get('max_window_size', 100)} bars, "
                     f"Inversion={'ON' if config['allow_inversion'] else 'OFF'}, "
                     f"Self-match exclusion={'ON' if config.get('exclude_self_matches', True) else 'OFF'}, "
                     f"Proximity filter={'ON' if config.get('filter_close_matches', True) else 'OFF'}{proximity_info}")
@@ -1327,19 +1549,16 @@ if df is not None:
         col1, col2, col3 = st.columns([1, 1, 1])
         
         with col1:
-            # Get the earliest and latest dates from all matches (excluding recent matches)
-            one_year_ago = datetime.now().date() - timedelta(days=365)
-            historical_matches = [m for m in all_matches if m['end_date'].date() <= one_year_ago]
-            
-            if historical_matches:
-                all_start_dates = [m['start_date'] for m in historical_matches]
-                all_end_dates = [m['end_date'] for m in historical_matches]
+            # Get the earliest and latest dates from all matches
+            if all_matches:
+                all_start_dates = [m['start_date'] for m in all_matches]
+                all_end_dates = [m['end_date'] for m in all_matches]
                 min_date = min(all_start_dates).date()
                 max_date = max(all_end_dates).date()
             else:
-                # Fallback if no historical matches
+                # Fallback if no matches
                 min_date = datetime.now().date() - timedelta(days=3650)  # 10 years ago
-                max_date = one_year_ago
+                max_date = datetime.now().date()
             
             # Initialize session state variables with proper bounds checking
             if 'date_filter_start' not in st.session_state:
@@ -1405,19 +1624,12 @@ if df is not None:
             st.session_state.date_filter_active = False
             st.rerun()
         
-        # Apply date filtering
-        one_year_ago = datetime.now().date() - timedelta(days=365)
-        
-        # Filter matches based on session state filter settings
+        # Apply date filtering based on user settings only
         filtered_matches = []
         
         for m in all_matches:
             match_start = m['start_date'].date()
             match_end = m['end_date'].date()
-            
-            # First exclude matches that end within one year from today
-            if match_end > one_year_ago:
-                continue
                 
             # Apply date range filtering if filter is active
             if st.session_state.date_filter_active:
@@ -1425,7 +1637,7 @@ if df is not None:
                 if match_start >= st.session_state.date_filter_start and match_end <= st.session_state.date_filter_end:
                     filtered_matches.append(m)
             else:
-                # Show all historical matches when filter is inactive
+                # Show all matches when filter is inactive
                 filtered_matches.append(m)
         
         # Create filtered display dataframe
@@ -1443,15 +1655,12 @@ if df is not None:
             for m in filtered_matches
         ])
         
-        # Show filtered results summary
-        one_year_ago = datetime.now().date() - timedelta(days=365)
-        total_before_date_filter = len([m for m in all_matches if m['end_date'].date() <= one_year_ago])
-        
+        # Show filtered results summary        
         if st.session_state.date_filter_active:
-            st.info(f"📅 Showing {len(filtered_matches)} matches (of {total_before_date_filter} historical matches) "
+            st.info(f"📅 Showing {len(filtered_matches)} matches (of {len(all_matches)} total matches) "
                    f"filtered from {st.session_state.date_filter_start} to {st.session_state.date_filter_end}")
         else:
-            st.info(f"📅 Showing {len(filtered_matches)} historical matches (excluding matches ending after {one_year_ago})")
+            st.info(f"📅 Showing all {len(filtered_matches)} matches found")
         
         # Display interactive table with row selection
         st.write("**Matches sorted by similarity (click on a row to view charts):**")
@@ -1499,7 +1708,7 @@ if df is not None:
             dates = selected_match['dates']
             window_size = m["size"]
             past_extension = max(1, int(window_size * 0.1))  # 10% of window size
-            future_extension = max(1, int(window_size * 0.2))  # 20% of window size
+            future_extension = max(1, int(window_size * 0.4))  # 40% of window size
             
             start_extended = max(0, m["start"] - past_extension)
             end_extended = min(len(series), m["start"] + m["size"] + future_extension)
@@ -1586,18 +1795,33 @@ if df is not None:
             ax.axvline(x=match_start_date, color='green', alpha=0.5, linestyle=':', linewidth=1)
             ax.axvline(x=match_end_date, color='red', alpha=0.5, linestyle=':', linewidth=1)
             
-            # Add text annotations for match boundaries
+            # Calculate chart bounds for positioning annotations in empty space
+            extended_prices = series[idx_range_extended]
+            price_min = extended_prices.min()
+            price_max = extended_prices.max()
+            price_range = price_max - price_min
+            
+            # Position annotations left and right, middle vertically
+            # Calculate positions
+            left_date = extended_dates[int(len(extended_dates)*0.02)]  # 2% from left
+            right_date = extended_dates[int(len(extended_dates)*0.95)]  # 5% from right (95% from left)
+            middle_y = price_min + (price_range * 0.5)  # Middle vertically
+            
+            # Start annotation on left middle
             ax.annotate(f'Match Start\n{match_start_date.strftime("%Y-%m-%d")}\n${match_start_price:.2f}', 
                        xy=(match_start_date, match_start_price), 
-                       xytext=(10, 10), textcoords='offset points',
-                       bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.7),
-                       fontsize=8, ha='left')
+                       xytext=(left_date, middle_y),
+                       arrowprops=dict(arrowstyle='->', color='green', alpha=0.6),
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.8),
+                       fontsize=8, ha='center', va='center')
             
+            # End annotation on right middle
             ax.annotate(f'Match End\n{match_end_date.strftime("%Y-%m-%d")}\n${match_end_price:.2f}', 
                        xy=(match_end_date, match_end_price), 
-                       xytext=(-10, 10), textcoords='offset points',
-                       bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral", alpha=0.7),
-                       fontsize=8, ha='right')
+                       xytext=(right_date, middle_y),
+                       arrowprops=dict(arrowstyle='->', color='red', alpha=0.6),
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral", alpha=0.8),
+                       fontsize=8, ha='center', va='center')
             
             # Add price markers at regular intervals for easier reading
             extended_length = len(idx_range_extended)
