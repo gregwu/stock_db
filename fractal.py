@@ -1028,13 +1028,23 @@ if df is not None:
                 min_date = datetime.now().date() - timedelta(days=3650)  # 10 years ago
                 max_date = one_year_ago
             
-            # Initialize session state variables
+            # Initialize session state variables with proper bounds checking
             if 'date_filter_start' not in st.session_state:
                 st.session_state.date_filter_start = min_date
             if 'date_filter_end' not in st.session_state:
                 st.session_state.date_filter_end = max_date
             if 'date_filter_active' not in st.session_state:
                 st.session_state.date_filter_active = False
+            
+            # Ensure session state values are within bounds
+            if st.session_state.date_filter_start < min_date:
+                st.session_state.date_filter_start = min_date
+            if st.session_state.date_filter_start > max_date:
+                st.session_state.date_filter_start = max_date
+            if st.session_state.date_filter_end < min_date:
+                st.session_state.date_filter_end = min_date
+            if st.session_state.date_filter_end > max_date:
+                st.session_state.date_filter_end = max_date
                 
             start_date_filter = st.date_input(
                 "From date", 
@@ -1045,6 +1055,12 @@ if df is not None:
             )
         
         with col2:
+            # Ensure end date filter is also within bounds
+            if st.session_state.date_filter_end < min_date:
+                st.session_state.date_filter_end = min_date
+            if st.session_state.date_filter_end > max_date:
+                st.session_state.date_filter_end = max_date
+                
             end_date_filter = st.date_input(
                 "To date", 
                 value=st.session_state.date_filter_end,
@@ -1296,11 +1312,73 @@ if df is not None:
                        bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral", alpha=0.7),
                        fontsize=8, ha='right')
             
+            # Add price markers at regular intervals for easier reading
+            extended_length = len(idx_range_extended)
+            if extended_length > 3:
+                # Show 3-5 evenly spaced price points
+                step = max(1, extended_length // 4)
+                for i in range(0, extended_length, step):
+                    if i < len(extended_dates) and i < len(extended_prices):
+                        date_point = extended_dates[i]
+                        price_point = extended_prices[i]
+                        # Add small dot markers
+                        ax.plot(date_point, price_point, 'o', color='darkblue', markersize=3, alpha=0.7)
+                        # Add small text labels
+                        if i % (step * 2) == 0:  # Show text every other marker to avoid crowding
+                            ax.annotate(f'${price_point:.2f}', 
+                                       xy=(date_point, price_point), 
+                                       xytext=(0, 15), textcoords='offset points',
+                                       fontsize=7, ha='center', alpha=0.8,
+                                       bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6))
+            
             # Rotate x-axis labels for better readability
             plt.xticks(rotation=45)
             
             plt.tight_layout()
             st.pyplot(fig)
+            
+            # Add detailed data table for precise reading
+            with st.expander("📊 Detailed Price Data for This Match", expanded=False):
+                # Create a detailed dataframe with all the data points in the chart
+                chart_data = []
+                for i in idx_range_extended:
+                    is_match_period = i >= m["start"] and i < (m["start"] + m["size"])
+                    chart_data.append({
+                        'Date': dates[i].strftime('%Y-%m-%d'),
+                        'Price': f"${series[i]:.2f}",
+                        'Period': 'Match Period' if is_match_period else 'Context',
+                        'Day_of_Week': dates[i].strftime('%A'),
+                        'Price_Change': f"{((series[i] / series[i-1] - 1) * 100):.1f}%" if i > 0 and i-1 in idx_range_extended else "N/A"
+                    })
+                
+                chart_df = pd.DataFrame(chart_data)
+                
+                # Display summary statistics
+                match_prices = [series[i] for i in idx_range_match]
+                st.write(f"**Match Period Statistics:**")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Start Price", f"${match_prices[0]:.2f}")
+                with col2:
+                    st.metric("End Price", f"${match_prices[-1]:.2f}")
+                with col3:
+                    st.metric("Min Price", f"${min(match_prices):.2f}")
+                with col4:
+                    st.metric("Max Price", f"${max(match_prices):.2f}")
+                
+                # Show the detailed data table
+                st.dataframe(
+                    chart_df,
+                    column_config={
+                        "Date": st.column_config.TextColumn("Date"),
+                        "Price": st.column_config.TextColumn("Price"),
+                        "Period": st.column_config.TextColumn("Period"),
+                        "Day_of_Week": st.column_config.TextColumn("Day"),
+                        "Price_Change": st.column_config.TextColumn("% Change")
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
         else:
             st.info("👆 Click on any row in the table above to view detailed charts for that match.")
     else:
