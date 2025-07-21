@@ -362,9 +362,14 @@ def advanced_slide_and_compare(series, patterns, window_sizes, threshold=0.95, m
                         'start': start,
                         'size': win_size,
                         'similarity': sim,
-                        'window': window_norm,
+                        'window': window_norm.tolist() if len(matches) < 1000 else None,  # Limit stored windows
                         'inverted': found_inversion
                     })
+        
+        # Memory cleanup after each pattern
+        import gc
+        if len(matches) % 100 == 0:  # Every 100 matches
+            gc.collect()
     
     # Filter out close-proximity matches if requested and dates are available
     if filter_close_matches and series_dates is not None and matches:
