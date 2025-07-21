@@ -1515,6 +1515,17 @@ if df is not None:
             delattr(st.session_state, 'cache_loaded_timestamp')
             
         with st.spinner("Finding fractal pattern matches..."):
+            import time
+            start_time = time.time()
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            time_text = st.empty()
+            
+            # Phase 1: Weekly search
+            phase_start = time.time()
+            status_text.text("🔍 Searching weekly patterns...")
+            time_text.text("⏱️ Starting search...")
             matches_weekly = advanced_slide_and_compare(
                 weekly['close'].values, patterns, window_lengths_weekly, 
                 threshold=similarity_threshold, 
@@ -1523,6 +1534,18 @@ if df is not None:
                 filter_close_matches=filter_close_matches, min_separation_days=min_separation_days,
                 pattern_date_range=pattern_date_range
             )
+            
+            # Update progress and time after weekly search
+            weekly_time = time.time() - phase_start
+            elapsed = time.time() - start_time
+            progress_bar.progress(0.4)
+            estimated_total = elapsed / 0.4  # Estimate based on 40% completion
+            remaining = max(0, estimated_total - elapsed)
+            time_text.text(f"⏱️ Elapsed: {elapsed:.1f}s | Est. remaining: {remaining:.1f}s")
+            
+            # Phase 2: Daily search
+            phase_start = time.time()
+            status_text.text(f"📊 Searching daily patterns... (weekly took {weekly_time:.1f}s)")
             matches_daily = advanced_slide_and_compare(
                 df['close'].values, patterns, window_lengths_daily, 
                 threshold=similarity_threshold, 
@@ -1532,8 +1555,20 @@ if df is not None:
                 pattern_date_range=pattern_date_range
             )
             
-            # Filter close-proximity matches between daily and weekly results
+            # Update progress and time after daily search
+            daily_time = time.time() - phase_start
+            elapsed = time.time() - start_time
+            progress_bar.progress(0.8)
+            estimated_total = elapsed / 0.8  # Better estimate based on 80% completion
+            remaining = max(0, estimated_total - elapsed)
+            time_text.text(f"⏱️ Elapsed: {elapsed:.1f}s | Est. remaining: {remaining:.1f}s")
+            
+            # Phase 3: Filter close-proximity matches between daily and weekly results
+            filter_start_time = None
             if filter_close_matches:
+                filter_start_time = time.time()
+                status_text.text(f"🔄 Filtering matches... (daily took {daily_time:.1f}s)")
+                progress_bar.progress(0.9)
                 # Combine both weekly and daily matches for cross-timeframe filtering
                 combined_matches = []
                 
@@ -1568,52 +1603,65 @@ if df is not None:
                     del match['timeframe']
                     del match['dates']
             
-            # Store search results and configuration in session state
-            st.session_state.search_results = {
-                'matches_weekly': matches_weekly,
-                'matches_daily': matches_daily,
-                'weekly_data': weekly,
-                'daily_data': df,
-                'patterns': patterns
-            }
-            st.session_state.search_config = {
-                'similarity_threshold': similarity_threshold,
-                'match_method': match_method,
-                'allow_inversion': allow_inversion,
-                'min_window_size': min_window_size,
-                'max_window_size': max_window_size,
-                'exclude_self_matches': exclude_self_matches,
-                'filter_close_matches': filter_close_matches,
-                'min_separation_days': min_separation_days,
-                'save_results_to_folder': save_results_to_folder
-            }
-            
-            # Save results to cache for quick reload
-            cache_file = save_search_results_cache(
+            # Final completion
+            total_time = time.time() - start_time
+            status_text.text(f"✅ Pattern search complete! ({len(matches_weekly)} weekly + {len(matches_daily)} daily matches)")
+            progress_bar.progress(1.0)
+            filter_time_text = f" | Filtering: {time.time() - filter_start_time:.1f}s" if filter_start_time else ""
+            time_text.text(f"⏱️ Total time: {total_time:.1f}s | Weekly: {weekly_time:.1f}s | Daily: {daily_time:.1f}s{filter_time_text}")
+        
+        # Clear progress indicators after showing final results briefly
+        time.sleep(2)
+        status_text.empty()
+        progress_bar.empty()
+        time_text.empty()
+        
+        # Store search results and configuration in session state
+        st.session_state.search_results = {
+            'matches_weekly': matches_weekly,
+            'matches_daily': matches_daily,
+            'weekly_data': weekly,
+            'daily_data': df,
+            'patterns': patterns
+        }
+        st.session_state.search_config = {
+            'similarity_threshold': similarity_threshold,
+            'match_method': match_method,
+            'allow_inversion': allow_inversion,
+            'min_window_size': min_window_size,
+            'max_window_size': max_window_size,
+            'exclude_self_matches': exclude_self_matches,
+            'filter_close_matches': filter_close_matches,
+            'min_separation_days': min_separation_days,
+            'save_results_to_folder': save_results_to_folder
+        }
+        
+        # Save results to cache for quick reload
+        cache_file = save_search_results_cache(
+            st.session_state.search_results, 
+            st.session_state.search_config, 
+            st.session_state.data_info
+        )
+        if cache_file:
+            st.sidebar.success("💾 Results cached for quick reload")
+        
+        # Save complete results to folder if enabled
+        if save_results_to_folder:
+            folder_path, result = save_search_results_to_folder(
                 st.session_state.search_results, 
-                st.session_state.search_config, 
+                st.session_state.search_config,
                 st.session_state.data_info
             )
-            if cache_file:
-                st.sidebar.success("💾 Results cached for quick reload")
-            
-            # Save complete results to folder if enabled
-            if save_results_to_folder:
-                folder_path, result = save_search_results_to_folder(
-                    st.session_state.search_results, 
-                    st.session_state.search_config,
-                    st.session_state.data_info
-                )
-                if folder_path:
-                    st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
-                    st.info(f"📁 **Results saved to:** `{folder_path}`")
-                    st.info(f"📊 **Files saved:** {result} matches + charts + data + config")
-                else:
-                    st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
-                    st.warning(f"⚠️ Could not save results to folder: {result}")
+            if folder_path:
+                st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+                st.info(f"📁 **Results saved to:** `{folder_path}`")
+                st.info(f"📊 **Files saved:** {result} matches + charts + data + config")
             else:
                 st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
-                st.info("💾 Results cached for quick access. Enable 'Save detailed results to folder' to export complete analysis.")
+                st.warning(f"⚠️ Could not save results to folder: {result}")
+        else:
+            st.success(f"✅ Found {len(matches_weekly)} weekly matches and {len(matches_daily)} daily matches.")
+            st.info("💾 Results cached for quick access. Enable 'Save detailed results to folder' to export complete analysis.")
 
     # Check if we have stored search results to display
     if st.session_state.search_results is not None:
