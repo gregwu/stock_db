@@ -1607,7 +1607,6 @@ if df is not None:
                 for match in matches_daily:
                     del match['timeframe']
                     del match['dates']
-            
             # Final completion
             total_time = time.time() - start_time
             status_text.text(f"✅ Pattern search complete! ({len(matches_weekly)} weekly + {len(matches_daily)} daily matches)")
@@ -1969,15 +1968,17 @@ if df is not None:
             )
             
             # Also resample the match window to ensure correct length
-            match_window_resampled = np.interp(
-                np.linspace(0, len(m['window'])-1, match_length), 
-                np.arange(len(m['window'])), 
-                m['window']
-            )
+            #if 'window' in m and m['window'] is not None:
+            #    match_window_resampled = np.interp(
+            #        np.linspace(0, len(m['window'])-1, match_length), 
+            #        np.arange(len(m['window'])), 
+            #        m['window']
+            #    )
+            #    match_scaled = match_window_resampled * price_range * 0.3 + price_min + price_range * 0.1
+            #    ax2.plot(pattern_dates, match_scaled, 'purple', linewidth=1, alpha=0.7, label='Match Window (scaled)')
             
             # Scale patterns to match price range
             pattern_scaled = pattern_resampled * price_range * 0.3 + price_min + price_range * 0.1
-            match_scaled = match_window_resampled * price_range * 0.3 + price_min + price_range * 0.1
             
             # Plot normalized patterns on the twin axis
             ax2.plot(pattern_dates, pattern_scaled, 'k-', linewidth=1, alpha=0.8, label='Reference Pattern (scaled)')
