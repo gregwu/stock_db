@@ -74,7 +74,7 @@ def main():
 
     result_file = get_result_file(ref_ticker, ref_start, ref_end)
 
-    # Load from file if exists
+    # Load from file if exists and parameters match
     if not scan_button:
         try:
             with open(result_file, "rb") as f:
@@ -82,7 +82,8 @@ def main():
                 st.session_state['results_df'] = data['results_df']
                 st.session_state['tickers_db'] = data['tickers_db']
         except Exception:
-            pass
+            st.session_state['results_df'] = None
+            st.session_state['tickers_db'] = None
     if ref_start > ref_end:
         st.error("Start date must be before end date.")
         return
@@ -134,7 +135,12 @@ def main():
             })
             progress_bar.progress((idx + 1) / len(tickers_db))
         progress_bar.empty()
-        results_df = pd.DataFrame(results).sort_values('similarity', ascending=False)
+        results_df = pd.DataFrame(results)
+        # Filter: match_end within 6 days of today
+        if not results_df.empty:
+            results_df = results_df[results_df['match_end'].notnull()]
+            results_df = results_df[results_df['match_end'].apply(lambda d: abs((d.date() - today).days) <= 6)]
+            results_df = results_df.sort_values('similarity', ascending=False)
         st.session_state['results_df'] = results_df
         st.session_state['tickers_db'] = tickers_db
         # Save to file with meta info
