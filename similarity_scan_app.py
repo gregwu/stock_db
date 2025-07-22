@@ -121,7 +121,8 @@ def main():
         yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         bargap=0,
-        xaxis_rangeslider_visible=False
+        xaxis_rangeslider_visible=False,
+        xaxis=dict(rangebreaks=[dict(bounds=["sat", "mon"])])
     )
     st.plotly_chart(ref_fig, use_container_width=True)
 
@@ -239,7 +240,8 @@ def main():
                     yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
                     legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
                     bargap=0,
-                    xaxis_rangeslider_visible=False
+                    xaxis_rangeslider_visible=False,
+                    xaxis=dict(rangebreaks=[dict(bounds=["sat", "mon"])])
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
