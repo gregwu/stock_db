@@ -33,7 +33,8 @@ def fetch_tickers_with_latest_date(engine, current_date):
 
 def fetch_ticker_data(engine, ticker, start_date, end_date):
     query = f"""
-        SELECT date, close_price as close FROM stock_data
+        SELECT date, open_price as open, high_price as high, low_price as low, close_price as close, volume
+        FROM stock_data
         WHERE ticker = '{ticker}' AND date >= '{start_date}' AND date <= '{end_date}'
         ORDER BY date
     """
@@ -91,7 +92,38 @@ def main():
     ref_ticker_db = ref_ticker + '.US' if (ref_ticker + '.US') in all_tickers_db else ref_ticker
     ref_df = fetch_ticker_data(engine, ref_ticker_db, ref_start, ref_end)
     st.write(f"Reference pattern: {ref_ticker} ({ref_start} to {ref_end})")
-    st.line_chart(ref_df['close'])
+    # Reference chart: candlestick + BB + volume (no duplicate subplot)
+    close = ref_df['close']
+    sma = close.rolling(window=20, min_periods=1).mean()
+    std = close.rolling(window=20, min_periods=1).std()
+    upper_bb = sma + 2 * std
+    lower_bb = sma - 2 * std
+    import plotly.graph_objs as go
+    from plotly.subplots import make_subplots
+    ref_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    ref_fig.add_trace(go.Candlestick(
+        x=ref_df.index,
+        open=ref_df['open'], high=ref_df['high'], low=ref_df['low'], close=ref_df['close'],
+        name='Candlestick',
+        increasing_line_color='green', decreasing_line_color='red',
+        showlegend=False
+    ), secondary_y=False)
+    ref_fig.add_trace(go.Scatter(x=ref_df.index, y=upper_bb, mode='lines', name='BB Upper', line=dict(color='rgba(200,0,0,0.4)', dash='dot')),
+                      secondary_y=False)
+    ref_fig.add_trace(go.Scatter(x=ref_df.index, y=lower_bb, mode='lines', name='BB Lower', line=dict(color='rgba(0,0,200,0.4)', dash='dot')),
+                      secondary_y=False)
+    ref_fig.add_trace(go.Scatter(x=ref_df.index, y=sma, mode='lines', name='SMA20', line=dict(color='gray', dash='dash')),
+                      secondary_y=False)
+    if 'volume' in ref_df.columns:
+        ref_fig.add_trace(go.Bar(x=ref_df.index, y=ref_df['volume'], name='Volume', marker_color='rgba(100,100,100,0.3)'), secondary_y=True)
+    ref_fig.update_layout(
+        yaxis=dict(title='Price', rangemode='tozero'),
+        yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        bargap=0,
+        xaxis_rangeslider_visible=False
+    )
+    st.plotly_chart(ref_fig, use_container_width=True)
 
     # 2. Scan all tickers with latest date = today
     st.header("Cosine Similarity Scan")
@@ -127,11 +159,13 @@ def main():
                     best_sim = sim
                     best_start = df.index[i]
                     best_end = df.index[i + len(ref_pattern) - 1]
+            latest_close = df['close'].iloc[-1] if not df.empty else None
             results.append({
                 'ticker': ticker_display,
                 'similarity': best_sim,
                 'match_start': best_start,
-                'match_end': best_end if best_start is not None else None
+                'match_end': best_end if best_start is not None else None,
+                'latest_close': latest_close
             })
             progress_bar.progress((idx + 1) / len(tickers_db))
         progress_bar.empty()
@@ -176,7 +210,38 @@ def main():
             if pd.notnull(match_start) and pd.notnull(match_end):
                 df = fetch_ticker_data(engine, ticker_db, match_start, match_end)
                 st.write(f"**{ticker_display}**: {match_start.date()} to {match_end.date()} (match window)")
-                st.line_chart(df['close'])
+                # Compute Bollinger Bands
+                close = df['close']
+                sma = close.rolling(window=20, min_periods=1).mean()
+                std = close.rolling(window=20, min_periods=1).std()
+                upper_bb = sma + 2 * std
+                lower_bb = sma - 2 * std
+                import plotly.graph_objs as go
+                from plotly.subplots import make_subplots
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                fig.add_trace(go.Candlestick(
+                    x=df.index,
+                    open=df['open'], high=df['high'], low=df['low'], close=df['close'],
+                    name='Candlestick',
+                    increasing_line_color='green', decreasing_line_color='red',
+                    showlegend=False
+                ), secondary_y=False)
+                fig.add_trace(go.Scatter(x=df.index, y=upper_bb, mode='lines', name='BB Upper', line=dict(color='rgba(200,0,0,0.4)', dash='dot')),
+                              secondary_y=False)
+                fig.add_trace(go.Scatter(x=df.index, y=lower_bb, mode='lines', name='BB Lower', line=dict(color='rgba(0,0,200,0.4)', dash='dot')),
+                              secondary_y=False)
+                fig.add_trace(go.Scatter(x=df.index, y=sma, mode='lines', name='SMA20', line=dict(color='gray', dash='dash')),
+                              secondary_y=False)
+                if 'volume' in df.columns:
+                    fig.add_trace(go.Bar(x=df.index, y=df['volume'], name='Volume', marker_color='rgba(100,100,100,0.3)'), secondary_y=True)
+                fig.update_layout(
+                    yaxis=dict(title='Price', rangemode='tozero'),
+                    yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                    bargap=0,
+                    xaxis_rangeslider_visible=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
