@@ -117,7 +117,7 @@ def main():
     if 'volume' in ref_df.columns:
         ref_fig.add_trace(go.Bar(x=ref_df.index, y=ref_df['volume'], name='Volume', marker_color='rgba(100,100,100,0.3)'), secondary_y=True)
     ref_fig.update_layout(
-        yaxis=dict(title='Price', rangemode='tozero'),
+        yaxis=dict(title='Price'),
         yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         bargap=0,
@@ -236,7 +236,7 @@ def main():
                 if 'volume' in df.columns:
                     fig.add_trace(go.Bar(x=df.index, y=df['volume'], name='Volume', marker_color='rgba(100,100,100,0.3)'), secondary_y=True)
                 fig.update_layout(
-                    yaxis=dict(title='Price', rangemode='tozero'),
+                    yaxis=dict(title='Price'),
                     yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
                     legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
                     bargap=0,
