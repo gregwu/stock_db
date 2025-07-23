@@ -1083,9 +1083,9 @@ if df is not None:
         days_from_today = st.sidebar.slider(
             "Days from today (lookback)",
             30,
-            max_days_available,
-            min(365, max_days_available),
-            help=f"How many days back from today to include in pattern (max: {max_days_available} days available)"
+            1000,
+            100,
+            help="How many days back from today to include in pattern"
         )
         
         # Calculate the cutoff date
@@ -1177,7 +1177,7 @@ if df is not None:
                         # Found a matching cache file, use its config as defaults
                         cached_config = cache_data['search_config']
                         potential_cache_defaults = {
-                            'similarity_threshold': cached_config.get('similarity_threshold', 0.93),
+                            'similarity_threshold': cached_config.get('similarity_threshold', 0.85),
                             'match_method': cached_config.get('match_method', 'cosine'),
                             'allow_inversion': cached_config.get('allow_inversion', False),
                             'min_window_size': cached_config.get('min_window_size', cached_config.get('min_window_monthly', 60)),
@@ -1215,7 +1215,7 @@ if df is not None:
         default_save_results = potential_cache_defaults['save_results_to_folder']
     else:
         # Use smart defaults based on reference pattern
-        default_threshold = 0.93
+        default_threshold = 0.85
         default_min_window = smart_min_weeks
         default_max_window = smart_max_weeks
         default_method = 'cosine'
@@ -1244,9 +1244,9 @@ if df is not None:
     st.sidebar.write(f"**Smart Range:** {smart_min_days}-{smart_max_days} days (75%-125%)")
     
     # Auto-set sliders with fixed defaults but allow user override (in days)
-    min_window_size_days = st.sidebar.slider("Min window size (days)", 5, smart_min_days, 250,
+    min_window_size_days = st.sidebar.slider("Min window size (days)", 5, smart_min_days, smart_min_days,
                                              help=f"Smart range suggestion: {smart_min_days} days (75% of {ref_len_days}-day pattern)")
-    max_window_size_days = st.sidebar.slider("Max window size (days)", min_window_size_days, smart_max_days, 600,
+    max_window_size_days = st.sidebar.slider("Max window size (days)", min_window_size_days, smart_max_days + 300, smart_max_days,
                                              help=f"Smart range suggestion: {smart_max_days} days (125% of {ref_len_days}-day pattern)")
     
     # Convert days to weeks for internal use (5 trading days per week)
