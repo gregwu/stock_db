@@ -585,239 +585,341 @@ def main():
         
         st.markdown("---")
         # Single unified button
-        run_analysis = st.button("🚀 Run ", type="primary", use_container_width=True)
+        run_analysis = st.button("🚀 Run Prediction", type="primary", use_container_width=True)
     
     # Create tabs for different views
     tab1, tab2 = st.tabs(["📈 Stock Prediction Results", "🔍 Fractal Pattern Results"])
     
-    if run_analysis:
+    # Initialize session state for persisting results
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = None
+    if 'analysis_config' not in st.session_state:
+        st.session_state.analysis_config = None
+    
+    # Check if we should run analysis (either button clicked or results exist)
+    should_run_analysis = run_analysis or st.session_state.analysis_results is not None
+    
+    if should_run_analysis:
         if not ticker:
             st.error("Please enter a ticker symbol")
             return
         
-        # Progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        # Check if we need to run new analysis or use cached results
+        current_config = {
+            'ticker': ticker,
+            'similarity_threshold': similarity_threshold,
+            'timeframe': timeframe,
+            'pattern_length': pattern_length
+        }
         
-        # ========== SHARED DATA LOADING ==========
-        status_text.text("📊 Fetching stock data...")
-        progress_bar.progress(10)
-        
-        base_ticker = ticker.replace('.US', '')
-        df, error = load_stock_data(ticker)
-        
-        if error:
-            st.error(f"Error loading data: {error}")
-            return
-        
-        if len(df) < max(pattern_length * 2, 100):
-            st.error(f"Insufficient data. Need at least {max(pattern_length * 2, 100)} days of data.")
-            return
-        
-        # Get current market data for both analyses
-        current_price = float(df['close'].iloc[-1])
-        previous_price = float(df['close'].iloc[-2])
-        price_change = current_price - previous_price
-        price_change_pct = (price_change / previous_price) * 100
-        
-        progress_bar.progress(20)
+        # Run new analysis if button clicked or config changed
+        if run_analysis or st.session_state.analysis_config != current_config:
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # ========== SHARED DATA LOADING ==========
+            status_text.text("📊 Fetching stock data...")
+            progress_bar.progress(10)
+            
+            base_ticker = ticker.replace('.US', '')
+            df, error = load_stock_data(ticker)
+            
+            if error:
+                st.error(f"Error loading data: {error}")
+                return
+            
+            if len(df) < max(pattern_length * 2, 100):
+                st.error(f"Insufficient data. Need at least {max(pattern_length * 2, 100)} days of data.")
+                return
+            
+            # Get current market data for both analyses
+            current_price = float(df['close'].iloc[-1])
+            previous_price = float(df['close'].iloc[-2])
+            price_change = current_price - previous_price
+            price_change_pct = (price_change / previous_price) * 100
+            
+            progress_bar.progress(20)
+        else:
+            # Use cached results
+            results = st.session_state.analysis_results
+            ticker = results['ticker']
+            base_ticker = ticker.replace('.US', '')
+            current_price = results['current_price']
+            previous_price = results['previous_price']
+            price_change = results['price_change']
+            price_change_pct = results['price_change_pct']
+            current_volume = results['current_volume']
+            high_today = results['high_today']
+            low_today = results['low_today']
+            open_today = results['open_today']
+            model = results['model']
+            proba = results['proba']
+            matches = results['matches']
+            matches_sorted = results['matches_sorted']
+            price_series = results['price_series']
+            series_dates = results['series_dates']
+            reference_pattern = results['reference_pattern']
+            reference_pattern_norm = results['reference_pattern_norm']
+            timeframe = results['timeframe']
+            timeframe_label = results['timeframe_label']
+            similarity_threshold = results['similarity_threshold']
+            pattern_length = results['pattern_length']
+            analysis_df = results['analysis_df']
+            
+            # Load additional variables from cached results
+            X_live = results.get('X_live', None)
+            training_features = results.get('training_features', [])
+            df = results.get('df', None)
+            pattern_start_date = results.get('pattern_start_date', None)
+            pattern_end_date = results.get('pattern_end_date', None)
+            
+            # Skip to display results
+            goto_display = True
         
         # ========== STOCK PREDICTION ANALYSIS ==========
-        status_text.text("🔧 Processing technical indicators...")
-        progress_bar.progress(30)
-        
-        # Get additional market data for prediction
-        current_volume = int(df['vol'].iloc[-1])
-        high_today = float(df['high'].iloc[-1])
-        low_today = float(df['low'].iloc[-1])
-        open_today = float(df['open'].iloc[-1])
-        
-        df_clean = df.dropna()
-        if df_clean.empty:
-            st.error("Insufficient data for technical indicators calculation")
-            return
-        
-        df_latest = df_clean.iloc[[-1]]
-        
-        # Load model and features
-        status_text.text("📥 Loading model and features...")
-        progress_bar.progress(40)
-        
-        # Load features used during training - check multiple locations
-        features_path = f"models/{base_ticker}_yahoo/features_used_yahoo.json"
-        predictor_features_path = f"predictor/models/{base_ticker}_yahoo/features_used_yahoo.json"
-        fallback_features_path = f"predictor/models/{base_ticker}/features_used.json"
-        
-        if os.path.exists(features_path):
-            with open(features_path, 'r') as f:
-                training_features = json.load(f)
-        elif os.path.exists(predictor_features_path):
-            with open(predictor_features_path, 'r') as f:
-                training_features = json.load(f)
-        elif os.path.exists(fallback_features_path):
-            with open(fallback_features_path, 'r') as f:
-                training_features = json.load(f)
+        # Skip analysis if using cached results
+        if 'goto_display' in locals() and goto_display:
+            # Skip to display results
+            pass
         else:
-            training_features = features
+            status_text.text("🔧 Processing technical indicators...")
+            progress_bar.progress(30)
+            
+            # Get additional market data for prediction
+            current_volume = int(df['vol'].iloc[-1])
+            high_today = float(df['high'].iloc[-1])
+            low_today = float(df['low'].iloc[-1])
+            open_today = float(df['open'].iloc[-1])
+            
+            df_clean = df.dropna()
+            if df_clean.empty:
+                st.error("Insufficient data for technical indicators calculation")
+                return
+            
+            df_latest = df_clean.iloc[[-1]]
         
-        # Create missing derived features
-        missing_features = [f for f in training_features if f not in df_latest.columns]
-        if missing_features:
-            df_latest = create_derived_features(df_latest)
+            # Load model and features
+            status_text.text("📥 Loading model and features...")
+            progress_bar.progress(40)
+            
+            # Load features used during training - check multiple locations
+            features_path = f"models/{base_ticker}_yahoo/features_used_yahoo.json"
+            predictor_features_path = f"predictor/models/{base_ticker}_yahoo/features_used_yahoo.json"
+            fallback_features_path = f"predictor/models/{base_ticker}/features_used.json"
+            
+            if os.path.exists(features_path):
+                with open(features_path, 'r') as f:
+                    training_features = json.load(f)
+            elif os.path.exists(predictor_features_path):
+                with open(predictor_features_path, 'r') as f:
+                    training_features = json.load(f)
+            elif os.path.exists(fallback_features_path):
+                with open(fallback_features_path, 'r') as f:
+                    training_features = json.load(f)
+            else:
+                training_features = features
+            
+            # Create missing derived features
             missing_features = [f for f in training_features if f not in df_latest.columns]
             if missing_features:
-                available_features = [f for f in training_features if f in df_latest.columns]
-                training_features = available_features
-        
-        # Prepare model input
-        X_live = df_latest[training_features].values.reshape(1, -1)
-        
-        # Load or train model - check both current directory and predictor directory
-        model_path = f"models/{base_ticker}_yahoo/lightgbm_model_yahoo.pkl"
-        fallback_model_path = f"models/{base_ticker}/vstm_lightgbm_model.pkl"
-        predictor_model_path = f"predictor/models/{base_ticker}_yahoo/lightgbm_model_yahoo.pkl"
-        predictor_fallback_path = f"predictor/models/{base_ticker}/vstm_lightgbm_model.pkl"
-        
-        model = None
-        proba = None
-        
-        # Check if we need to train a new model
-        # Set default if force_retrain not defined (in case of UI changes)
-        try:
-            force_retrain
-        except NameError:
-            force_retrain = False
+                df_latest = create_derived_features(df_latest)
+                missing_features = [f for f in training_features if f not in df_latest.columns]
+                if missing_features:
+                    available_features = [f for f in training_features if f in df_latest.columns]
+                    training_features = available_features
             
-        if not os.path.exists(model_path) or force_retrain:
-            status_text.text("🚀 Training model (this may take a moment)...")
-            progress_bar.progress(50)
+            # Prepare model input
+            X_live = df_latest[training_features].values.reshape(1, -1)
             
+            # Load or train model - check both current directory and predictor directory
+            model_path = f"models/{base_ticker}_yahoo/lightgbm_model_yahoo.pkl"
+            fallback_model_path = f"models/{base_ticker}/vstm_lightgbm_model.pkl"
+            predictor_model_path = f"predictor/models/{base_ticker}_yahoo/lightgbm_model_yahoo.pkl"
+            predictor_fallback_path = f"predictor/models/{base_ticker}/vstm_lightgbm_model.pkl"
+            
+            model = None
+            proba = None
+            
+            # Check if we need to train a new model
+            # Set default if force_retrain not defined (in case of UI changes)
             try:
-                result = subprocess.run([sys.executable, "train_wrapper.py", base_ticker], 
-                                      capture_output=True, text=True, timeout=600)
-                if result.returncode == 0:
-                    st.success("✅ Model training completed successfully!")
-                    if os.path.exists(model_path):
-                        model = joblib.load(model_path)
+                force_retrain
+            except NameError:
+                force_retrain = False
+                
+            if not os.path.exists(model_path) or force_retrain:
+                status_text.text("🚀 Training model (this may take a moment)...")
+                progress_bar.progress(50)
+                
+                try:
+                    result = subprocess.run([sys.executable, "train_wrapper.py", base_ticker], 
+                                          capture_output=True, text=True, timeout=600)
+                    if result.returncode == 0:
+                        st.success("✅ Model training completed successfully!")
+                        if os.path.exists(model_path):
+                            model = joblib.load(model_path)
+                        else:
+                            st.warning("Model training completed but model file not found. Checking fallback location...")
+                            if os.path.exists(fallback_model_path):
+                                model = joblib.load(fallback_model_path)
                     else:
-                        st.warning("Model training completed but model file not found. Checking fallback location...")
-                        if os.path.exists(fallback_model_path):
-                            model = joblib.load(fallback_model_path)
+                        st.error(f"❌ Model training failed with return code {result.returncode}")
+                        
+                        # Show both stdout and stderr if available
+                        if result.stdout:
+                            st.subheader("Training Output:")
+                            st.code(result.stdout, language="text")
+                        
+                        if result.stderr:
+                            st.subheader("Error Output:")
+                            st.code(result.stderr, language="text")
+                        
+                        # Continue with pattern analysis only
+                        st.info("📊 Continuing with pattern analysis only...")
+                        st.markdown("""
+                        **Note:** Model training failed likely due to:
+                        - Data format incompatibility between the app and training script
+                        - Missing required data columns
+                        - Insufficient historical data
+                        
+                        **Recommendations:**
+                        - Use the Pattern Analysis tab which works independently
+                        - Contact administrator to pre-train models for this ticker
+                        - Use a different ticker that may have existing models
+                        """)
+                except subprocess.TimeoutExpired:
+                    st.error("❌ Model training timed out (>10 minutes)")
+                except Exception as e:
+                    st.error(f"❌ Training error: {str(e)}")
+            
+            # Try to load existing model if not already loaded
+            if model is None:
+                if os.path.exists(model_path):
+                    status_text.text("📥 Loading existing model...")
+                    progress_bar.progress(50)
+                    model = joblib.load(model_path)
+                elif os.path.exists(fallback_model_path):
+                    status_text.text("📥 Loading fallback model...")
+                    progress_bar.progress(50)
+                    model = joblib.load(fallback_model_path)
+                elif os.path.exists(predictor_model_path):
+                    status_text.text("📥 Loading predictor model...")
+                    progress_bar.progress(50)
+                    model = joblib.load(predictor_model_path)
+                elif os.path.exists(predictor_fallback_path):
+                    status_text.text("📥 Loading predictor fallback model...")
+                    progress_bar.progress(50)
+                    model = joblib.load(predictor_fallback_path)
                 else:
-                    st.error(f"❌ Model training failed with return code {result.returncode}")
-                    
-                    # Show both stdout and stderr if available
-                    if result.stdout:
-                        st.subheader("Training Output:")
-                        st.code(result.stdout, language="text")
-                    
-                    if result.stderr:
-                        st.subheader("Error Output:")
-                        st.code(result.stderr, language="text")
-                    
-                    # Continue with pattern analysis only
-                    st.info("📊 Continuing with pattern analysis only...")
-                    st.markdown("""
-                    **Note:** Model training failed likely due to:
-                    - Data format incompatibility between the app and training script
-                    - Missing required data columns
-                    - Insufficient historical data
-                    
-                    **Recommendations:**
-                    - Use the Pattern Analysis tab which works independently
-                    - Contact administrator to pre-train models for this ticker
-                    - Use a different ticker that may have existing models
-                    """)
-            except subprocess.TimeoutExpired:
-                st.error("❌ Model training timed out (>10 minutes)")
-            except Exception as e:
-                st.error(f"❌ Training error: {str(e)}")
-        
-        # Try to load existing model if not already loaded
-        if model is None:
-            if os.path.exists(model_path):
-                status_text.text("📥 Loading existing model...")
-                progress_bar.progress(50)
-                model = joblib.load(model_path)
-            elif os.path.exists(fallback_model_path):
-                status_text.text("📥 Loading fallback model...")
-                progress_bar.progress(50)
-                model = joblib.load(fallback_model_path)
-            elif os.path.exists(predictor_model_path):
-                status_text.text("📥 Loading predictor model...")
-                progress_bar.progress(50)
-                model = joblib.load(predictor_model_path)
-            elif os.path.exists(predictor_fallback_path):
-                status_text.text("📥 Loading predictor fallback model...")
-                progress_bar.progress(50)
-                model = joblib.load(predictor_fallback_path)
-            else:
-                status_text.text("⚠️ No trained model found...")
-                progress_bar.progress(50)
-                st.warning(f"No trained model found for {ticker}. Only pattern analysis will be available.")
-        
-        # Make prediction if model is available
-        if model is not None:
-            status_text.text("🎯 Making prediction...")
-            progress_bar.progress(60)
-            try:
-                proba = model.predict_proba(X_live)[0]
-            except Exception as e:
-                st.warning(f"Prediction failed: {str(e)}. Only pattern analysis will be available.")
-                proba = None
+                    status_text.text("⚠️ No trained model found...")
+                    progress_bar.progress(50)
+                    st.warning(f"No trained model found for {ticker}. Only pattern analysis will be available.")
+            
+            # Make prediction if model is available
+            if model is not None:
+                status_text.text("🎯 Making prediction...")
+                progress_bar.progress(60)
+                try:
+                    proba = model.predict_proba(X_live)[0]
+                except Exception as e:
+                    st.warning(f"Prediction failed: {str(e)}. Only pattern analysis will be available.")
+                    proba = None
         
         # ========== FRACTAL PATTERN ANALYSIS ==========
-        status_text.text("🔍 Analyzing fractal patterns...")
-        progress_bar.progress(70)
-        
-        # Prepare data based on timeframe
-        if timeframe == "Weekly":
-            status_text.text("🔍 Resampling to weekly data...")
-            df_resampled = resample_ohlc(df, rule='W')
-            analysis_df = df_resampled
-            timeframe_label = "weeks"
+        # Skip analysis if using cached results
+        if 'goto_display' in locals() and goto_display:
+            # Skip to display results
+            pass
         else:
-            analysis_df = df
-            timeframe_label = "days"
-        
-        # Create reference pattern from most recent data
-        reference_pattern = analysis_df['close'].tail(pattern_length).values
-        reference_pattern_norm = normalize_and_resample(reference_pattern, pattern_length)
-        
-        # Define pattern date range
-        try:
-            pattern_start_date = pd.to_datetime(analysis_df.index[-pattern_length])
-            pattern_end_date = pd.to_datetime(analysis_df.index[-1])
-            pattern_date_range = (pattern_start_date, pattern_end_date)
-        except Exception:
-            # If date conversion fails, disable overlap detection
-            pattern_date_range = None
-        
-        # Prepare series for comparison
-        price_series = analysis_df['close'].values
-        series_dates = analysis_df.index
-        
-        # Define window sizes for pattern matching
-        window_sizes = [pattern_length - 5, pattern_length, pattern_length + 5]
-        window_sizes = [w for w in window_sizes if w > 0]
-        
-        # Perform pattern matching
-        patterns = [("Reference", reference_pattern_norm)]
-        
-        matches = advanced_slide_and_compare(
-            price_series, 
-            patterns, 
-            window_sizes,
-            threshold=similarity_threshold,
-            series_dates=series_dates,
-            exclude_overlap=True,
-            filter_close_matches=True,
-            min_separation_days=30,
-            pattern_date_range=pattern_date_range
-        )
-        
-        progress_bar.progress(90)
-        status_text.text("✅ Analysis completed!")
+            status_text.text("🔍 Analyzing fractal patterns...")
+            progress_bar.progress(70)
+            
+            # Prepare data based on timeframe
+            if timeframe == "Weekly":
+                status_text.text("🔍 Resampling to weekly data...")
+                df_resampled = resample_ohlc(df, rule='W')
+                analysis_df = df_resampled
+                timeframe_label = "weeks"
+            else:
+                analysis_df = df
+                timeframe_label = "days"
+            
+            # Create reference pattern from most recent data
+            reference_pattern = analysis_df['close'].tail(pattern_length).values
+            reference_pattern_norm = normalize_and_resample(reference_pattern, pattern_length)
+            
+            # Define pattern date range
+            try:
+                pattern_start_date = pd.to_datetime(analysis_df.index[-pattern_length])
+                pattern_end_date = pd.to_datetime(analysis_df.index[-1])
+                pattern_date_range = (pattern_start_date, pattern_end_date)
+            except Exception:
+                # If date conversion fails, disable overlap detection
+                pattern_date_range = None
+            
+            # Prepare series for comparison
+            price_series = analysis_df['close'].values
+            series_dates = analysis_df.index
+            
+            # Define window sizes for pattern matching
+            window_sizes = [pattern_length - 5, pattern_length, pattern_length + 5]
+            window_sizes = [w for w in window_sizes if w > 0]
+            
+            # Perform pattern matching
+            patterns = [("Reference", reference_pattern_norm)]
+            
+            matches = advanced_slide_and_compare(
+                price_series, 
+                patterns, 
+                window_sizes,
+                threshold=similarity_threshold,
+                series_dates=series_dates,
+                exclude_overlap=True,
+                filter_close_matches=True,
+                min_separation_days=30,
+                pattern_date_range=pattern_date_range
+            )
+            
+            progress_bar.progress(90)
+            status_text.text("✅ Analysis completed!")
+            
+            # Clear progress indicators
+            progress_bar.progress(100)
+            progress_bar.empty()
+            status_text.empty()
+            
+            # Store results in session state for persistence
+            st.session_state.analysis_results = {
+                'ticker': ticker,
+                'current_price': current_price,
+                'previous_price': previous_price,
+                'price_change': price_change,
+                'price_change_pct': price_change_pct,
+                'current_volume': current_volume,
+                'high_today': high_today,
+                'low_today': low_today,
+                'open_today': open_today,
+                'model': model,
+                'proba': proba,
+                'matches': matches,
+                'matches_sorted': sorted(matches, key=lambda x: x['similarity'], reverse=True) if matches else [],
+                'price_series': price_series,
+                'series_dates': series_dates,
+                'reference_pattern': reference_pattern,
+                'reference_pattern_norm': reference_pattern_norm,
+                'timeframe': timeframe,
+                'timeframe_label': timeframe_label,
+                'similarity_threshold': similarity_threshold,
+                'pattern_length': pattern_length,
+                'analysis_df': analysis_df,
+                'X_live': X_live,
+                'training_features': training_features,
+                'df': df,
+                'pattern_start_date': pattern_start_date,
+                'pattern_end_date': pattern_end_date
+            }
+            st.session_state.analysis_config = current_config
         
         # Define class labels for prediction
         class_labels = {
@@ -828,11 +930,6 @@ def main():
             4: "📈 Gain 5-10%",
             5: "🚀 Gain >10%"
         }
-        
-        # Clear progress indicators
-        progress_bar.progress(100)
-        progress_bar.empty()
-        status_text.empty()
         
         # ========== DISPLAY RESULTS IN TABS ==========
         with tab1:
@@ -1080,7 +1177,7 @@ def main():
                         st.plotly_chart(fig_bubble, use_container_width=True)
             
             # Add Professional Analysis Criteria
-            if model is not None:
+            if model is not None and df is not None:
                 st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Professional Analysis Criteria</div>', unsafe_allow_html=True)
                 
                 # Calculate professional metrics from current data
@@ -1402,20 +1499,81 @@ def main():
                 
                 price_context_df = pd.DataFrame(price_context_data)
                 
-                # Display table
-                st.dataframe(price_context_df, use_container_width=True)
+                # Display interactive table with row selection
+                st.write("**Click on a row to view detailed charts:**")
                 
-                # Always show top match chart by default
-                st.markdown("### 📈 Pattern Match Detail Chart")
-                st.write("**Showing Top Match** | "
-                        f"**Similarity:** {matches_sorted[0]['similarity']:.3f} | "
-                        f"**Date Range:** {series_dates[matches_sorted[0]['start']].strftime('%Y-%m-%d')} to "
-                        f"{series_dates[matches_sorted[0]['start'] + matches_sorted[0]['size'] - 1].strftime('%Y-%m-%d')}")
+                # Use streamlit's dataframe with on_select event
+                event = st.dataframe(
+                    price_context_df,
+                    column_config={
+                        "Pattern": st.column_config.TextColumn("Pattern"),
+                        "Date Range": st.column_config.TextColumn("Date Range"),
+                        "Start Price": st.column_config.TextColumn("Start Price"),
+                        "End Price": st.column_config.TextColumn("End Price"),
+                        "Min/Max": st.column_config.TextColumn("Min/Max"),
+                        "Change": st.column_config.TextColumn("Change"),
+                        "Similarity": st.column_config.TextColumn("Similarity")
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key="pattern_table"
+                )
                 
-                # Use top match for chart
-                selected_match = matches_sorted[0]
+                # Check if a row is selected
+                selected_match = None
+                selected_row_idx = None
+                
+                if event.selection.rows:
+                    selected_row_idx = event.selection.rows[0]
+                    
+                    # Adjust for reference pattern row (row 0 is reference, actual matches start from row 1)
+                    if selected_row_idx == 0:
+                        # Reference pattern selected - use first match for display
+                        if matches_sorted:
+                            selected_match = matches_sorted[0]
+                    elif 1 <= selected_row_idx <= len(matches_sorted):
+                        # Similar pattern selected - adjust index
+                        match_idx = selected_row_idx - 1
+                        selected_match = matches_sorted[match_idx]
+                    else:
+                        # Fallback to first match
+                        if matches_sorted:
+                            selected_match = matches_sorted[0]
+                else:
+                    # Default to top match if no selection
+                    if matches_sorted:
+                        selected_match = matches_sorted[0]
+                
+                # Display chart for selected match
+                if selected_match is not None:
+                    st.markdown("### 📈 Pattern Match Detail Chart")
+                    if event.selection.rows and selected_row_idx is not None:
+                        if selected_row_idx == 0:
+                            st.write(f"**Reference Pattern (using first match)** | "
+                                    f"**Similarity:** {selected_match['similarity']:.3f} | "
+                                    f"**Date Range:** {series_dates[selected_match['start']].strftime('%Y-%m-%d')} to "
+                                    f"{series_dates[selected_match['start'] + selected_match['size'] - 1].strftime('%Y-%m-%d')}")
+                        else:
+                            st.write(f"**Selected Match #{selected_row_idx}** | "
+                                    f"**Similarity:** {selected_match['similarity']:.3f} | "
+                                    f"**Date Range:** {series_dates[selected_match['start']].strftime('%Y-%m-%d')} to "
+                                    f"{series_dates[selected_match['start'] + selected_match['size'] - 1].strftime('%Y-%m-%d')}")
+                    else:
+                        st.write("**Showing Top Match** | "
+                                f"**Similarity:** {selected_match['similarity']:.3f} | "
+                                f"**Date Range:** {series_dates[selected_match['start']].strftime('%Y-%m-%d')} to "
+                                f"{series_dates[selected_match['start'] + selected_match['size'] - 1].strftime('%Y-%m-%d')}")
+                else:
+                    st.warning("No matches available to display.")
+                    return
                 
                 # Create the similarity overlay chart (similar to fractal.py)
+                if selected_match is None:
+                    st.warning("No matches available to display.")
+                    return
+                
                 import matplotlib.pyplot as plt
                 import matplotlib.dates as mdates
                 
@@ -1491,6 +1649,57 @@ def main():
                 ax.axvline(x=match_start_date, color='green', alpha=0.5, linestyle=':', linewidth=2, label='Match Start')
                 ax.axvline(x=match_end_date, color='red', alpha=0.5, linestyle=':', linewidth=2, label='Match End')
                 
+                # Add data point annotations for easier reading
+                extended_prices = price_series[idx_range_extended]
+                extended_dates = series_dates[idx_range_extended]
+                
+                # Calculate chart bounds for positioning annotations
+                price_min_extended = extended_prices.min()
+                price_max_extended = extended_prices.max()
+                price_range_extended = price_max_extended - price_min_extended
+                
+                # Position annotations left and right, middle vertically
+                left_date = extended_dates[int(len(extended_dates)*0.02)]  # 2% from left
+                right_date = extended_dates[int(len(extended_dates)*0.95)]  # 5% from right
+                middle_y = price_min_extended + (price_range_extended * 0.5)  # Middle vertically
+                
+                # Start annotation on left middle
+                match_start_price = price_series[m_start]
+                ax.annotate(f'Match Start\n{match_start_date.strftime("%Y-%m-%d")}\n${match_start_price:.2f}', 
+                           xy=(match_start_date, match_start_price), 
+                           xytext=(left_date, middle_y),
+                           arrowprops=dict(arrowstyle='->', color='green', alpha=0.6),
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.8),
+                           fontsize=8, ha='center', va='center')
+                
+                # End annotation on right middle
+                match_end_price = price_series[m_start + m_size - 1]
+                ax.annotate(f'Match End\n{match_end_date.strftime("%Y-%m-%d")}\n${match_end_price:.2f}', 
+                           xy=(match_end_date, match_end_price), 
+                           xytext=(right_date, middle_y),
+                           arrowprops=dict(arrowstyle='->', color='red', alpha=0.6),
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral", alpha=0.8),
+                           fontsize=8, ha='center', va='center')
+                
+                # Add price markers at regular intervals for easier reading
+                extended_length = len(idx_range_extended)
+                if extended_length > 3:
+                    # Show 3-5 evenly spaced price points
+                    step = max(1, extended_length // 4)
+                    for i in range(0, extended_length, step):
+                        if i < len(extended_dates) and i < len(extended_prices):
+                            date_point = extended_dates[i]
+                            price_point = extended_prices[i]
+                            # Add small dot markers
+                            ax.plot(date_point, price_point, 'o', color='darkblue', markersize=3, alpha=0.7)
+                            # Add small text labels
+                            if i % (step * 2) == 0:  # Show text every other marker to avoid crowding
+                                ax.annotate(f'${price_point:.2f}', 
+                                           xy=(date_point, price_point), 
+                                           xytext=(0, 15), textcoords='offset points',
+                                           fontsize=7, ha='center', alpha=0.8,
+                                           bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6))
+                
                 # Combine legends
                 lines1, labels1 = ax.get_legend_handles_labels()
                 lines2, labels2 = ax2.get_legend_handles_labels()
@@ -1509,6 +1718,44 @@ def main():
                     st.metric("Duration", f"{m_size} {timeframe_label}")
                 with col4:
                     st.metric("Similarity Score", f"{m_similarity:.3f}")
+                
+                # Add detailed data table for precise reading
+                with st.expander("📊 Detailed Price Data for This Match", expanded=False):
+                    # Create a detailed dataframe with all the data points in the chart
+                    chart_data = []
+                    for i in idx_range_extended:
+                        is_match_period = i >= m_start and i < (m_start + m_size)
+                        chart_data.append({
+                            'Date': series_dates[i].strftime('%Y-%m-%d'),
+                            'Price': f"${price_series[i]:.2f}",
+                            'Period': 'Match Period' if is_match_period else 'Context',
+                            'Day_of_Week': series_dates[i].strftime('%A'),
+                            'Price_Change': f"{((price_series[i] / price_series[i-1] - 1) * 100):.1f}%" if i > 0 and i-1 in idx_range_extended else "N/A"
+                        })
+                    
+                    chart_df = pd.DataFrame(chart_data)
+                    
+                    # Display summary statistics
+                    match_prices = [price_series[i] for i in idx_range_match]
+                    st.write(f"**Match Period Statistics:**")
+                    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                    with col_stat1:
+                        st.metric("Start Price", f"${match_prices[0]:.2f}")
+                        st.metric("End Price", f"${match_prices[-1]:.2f}")
+                    with col_stat2:
+                        st.metric("Min Price", f"${min(match_prices):.2f}")
+                        st.metric("Max Price", f"${max(match_prices):.2f}")
+                    with col_stat3:
+                        total_change = ((match_prices[-1] - match_prices[0]) / match_prices[0]) * 100
+                        st.metric("Total Change", f"{total_change:+.1f}%")
+                        st.metric("Avg Daily Change", f"{total_change / len(match_prices):.1f}%")
+                    with col_stat4:
+                        volatility = np.std(match_prices) / np.mean(match_prices) * 100
+                        st.metric("Volatility", f"{volatility:.1f}%")
+                        st.metric("Price Range", f"${max(match_prices) - min(match_prices):.2f}")
+                    
+                    # Display the detailed data table
+                    st.dataframe(chart_df, use_container_width=True)
                 
             else:
                 st.warning(f"No similar patterns found with similarity threshold {similarity_threshold:.2f}")
