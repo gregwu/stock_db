@@ -23,7 +23,7 @@ from io import StringIO
 import yfinance as yf
 from datetime import timedelta
 import datetime as dt
-import psycopg2
+#import psycopg2
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 

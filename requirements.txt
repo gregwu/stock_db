@@ -1,12 +1,12 @@
 yfinance 
 pandas 
 pandas-ta 
-psycopg2-binary
+#psycopg2-binary
 python-dotenv
 sqlalchemy
 tqdm
 scipy
-tables
+#tables
 ta
 streamlit 
 matplotlib 
