@@ -569,17 +569,21 @@ def main():
         )
         
         if timeframe == "Daily":
-            pattern_length = st.selectbox(
+            pattern_length = st.slider(
                 "Pattern Length (days)",
-                options=[10, 15, 20, 30, 45, 60],
-                index=2,
+                min_value=5,
+                max_value=100,
+                value=20,
+                step=1,
                 help="Length of the reference pattern in days"
             )
         else:  # Weekly
-            pattern_length = st.selectbox(
+            pattern_length = st.slider(
                 "Pattern Length (weeks)",
-                options=[4, 6, 8, 12, 20, 26],
-                index=2,
+                min_value=2,
+                max_value=52,
+                value=8,
+                step=2,
                 help="Length of the reference pattern in weeks"
             )
         
@@ -862,9 +866,20 @@ def main():
             price_series = analysis_df['close'].values
             series_dates = analysis_df.index
             
-            # Define window sizes for pattern matching
-            window_sizes = [pattern_length - 5, pattern_length, pattern_length + 5]
-            window_sizes = [w for w in window_sizes if w > 0]
+            # Calculate smart window ranges based on reference pattern length
+            # Search from 74% to 124% of reference pattern length for focused matching
+            # This gives 40-67 range for 54-day pattern
+            min_multiplier = 0.74
+            max_multiplier = 1.24
+            
+            smart_min_days = max(5, int(pattern_length * min_multiplier))
+            smart_max_days = max(smart_min_days + 1, int(pattern_length * max_multiplier))
+            
+            # Define window sizes for pattern matching using smart range (same as fractal.py defaults)
+            window_sizes = list(range(smart_min_days, smart_max_days + 1))
+            
+            # Debug: Show the smart range being used
+            st.info(f"🔍 Smart Range: {smart_min_days}-{smart_max_days} days (74%-124% of {pattern_length}-day pattern)")
             
             # Perform pattern matching
             patterns = [("Reference", reference_pattern_norm)]
@@ -1439,7 +1454,10 @@ def main():
             with col2:
                 st.metric("Pattern Length", f"{pattern_length} periods")
                 st.metric("Similarity Threshold", f"{similarity_threshold:.2f}")
-                st.metric("Window Sizes", f"{pattern_length-5} to {pattern_length+5}")
+                # Calculate smart range for display
+                smart_min = max(5, int(pattern_length * 0.74))
+                smart_max = max(smart_min + 1, int(pattern_length * 1.24))
+                st.metric("Window Sizes", f"{smart_min} to {smart_max}")
             
             with col3:
                 st.metric("Analysis Period", f"{len(analysis_df)} {timeframe_label}")
