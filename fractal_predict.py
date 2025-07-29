@@ -43,16 +43,16 @@ from util import calculate_all_technical_indicators
 from config import features
 
 # Load environment variables
-load_dotenv()
+#load_dotenv()
 
 # Database configuration
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'port': int(os.getenv('DB_PORT', 5433)),
-    'database': os.getenv('DB_NAME', 'database'),
-    'user': os.getenv('DB_USER', 'user'),
-    'password': os.getenv('DB_PASSWORD', 'password')
-}
+#DB_CONFIG = {
+#    'host': os.getenv('DB_HOST', 'localhost'),
+#    'port': int(os.getenv('DB_PORT', 5433)),
+#    'database': os.getenv('DB_NAME', 'database'),
+#    'user': os.getenv('DB_USER', 'user'),
+#    'password': os.getenv('DB_PASSWORD', 'password')
+#}
 
 # Set page config
 st.set_page_config(
@@ -573,7 +573,7 @@ def main():
                 "Pattern Length (days)",
                 min_value=5,
                 max_value=100,
-                value=20,
+                value=60,
                 step=1,
                 help="Length of the reference pattern in days"
             )
@@ -747,9 +747,7 @@ def main():
             
             # Check if we need to train a new model
             # Set default if force_retrain not defined (in case of UI changes)
-            try:
-                force_retrain
-            except NameError:
+            if 'force_retrain' not in locals():
                 force_retrain = False
                 
             if not os.path.exists(model_path) or force_retrain:
@@ -879,7 +877,7 @@ def main():
             window_sizes = list(range(smart_min_days, smart_max_days + 1))
             
             # Debug: Show the smart range being used
-            st.info(f"🔍 Smart Range: {smart_min_days}-{smart_max_days} days (74%-124% of {pattern_length}-day pattern)")
+            #st.info(f"🔍 Smart Range: {smart_min_days}-{smart_max_days} days (74%-124% of {pattern_length}-day pattern)")
             
             # Perform pattern matching
             patterns = [("Reference", reference_pattern_norm)]
@@ -1189,7 +1187,7 @@ def main():
                             customdata=bubble_df[['Probability']].values
                         )
                         
-                        st.plotly_chart(fig_bubble, use_container_width=True)
+                        _ = st.plotly_chart(fig_bubble, use_container_width=True)
             
             # Add Professional Analysis Criteria
             if model is not None and df is not None:
@@ -1724,7 +1722,7 @@ def main():
                 ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
                 
                 plt.tight_layout()
-                st.pyplot(fig)
+                _ = st.pyplot(fig)
                 
                 # Add match details
                 col1, col2, col3, col4 = st.columns(4)
@@ -1773,7 +1771,7 @@ def main():
                         st.metric("Price Range", f"${max(match_prices) - min(match_prices):.2f}")
                     
                     # Display the detailed data table
-                    st.dataframe(chart_df, use_container_width=True)
+                    _ = st.dataframe(chart_df, use_container_width=True)
                 
             else:
                 st.warning(f"No similar patterns found with similarity threshold {similarity_threshold:.2f}")
@@ -1783,11 +1781,11 @@ def main():
         # Show placeholders when no analysis has been run
         with tab1:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction</div>', unsafe_allow_html=True)
-            st.info("👆 Click 'Run Complete Analysis' in the sidebar to see stock prediction results.")
+            st.info("👆 Click 'Run Prediction' in the sidebar to see stock prediction results.")
         
         with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-search"></i> Fractal Pattern Analysis</div>', unsafe_allow_html=True)
-            st.info("👆 Click 'Run Complete Analysis' in the sidebar to see fractal pattern analysis results.")
+            st.info("👆 Click 'Run Prediction' in the sidebar to see fractal pattern analysis results.")
 
     # Footer
     st.markdown("---")
@@ -1798,6 +1796,9 @@ def main():
         Always consult with a financial advisor before making investment decisions.
     </div>
     """, unsafe_allow_html=True)
+    
+    # Explicitly return None to prevent any value from being displayed
+    return None
 
 if __name__ == "__main__":
-    main()
+    _ = main()
