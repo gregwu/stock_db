@@ -556,7 +556,7 @@ def main():
             "Similarity Threshold",
             min_value=0.7,
             max_value=0.99,
-            value=0.85,
+            value=0.7,
             step=0.01,
             help="Minimum cosine similarity score for pattern matches"
         )
