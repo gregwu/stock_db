@@ -5,6 +5,15 @@ Combines fractal pattern matching with AI-powered stock predictions
 """
 
 import streamlit as st
+
+# Set page config FIRST - before any other Streamlit commands
+st.set_page_config(
+    page_title="Fractal Pattern Analysis & Stock Prediction",
+    page_icon="🔮",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,6 +24,7 @@ import os
 import warnings
 import json
 import plotly.express as px
+import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import sys
 import subprocess
@@ -54,13 +64,401 @@ from config import features
 #    'password': os.getenv('DB_PASSWORD', 'password')
 #}
 
-# Set page config
-st.set_page_config(
-    page_title="Fractal Pattern Analysis & Stock Prediction",
-    page_icon="🔮",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Technical Analysis Indicators Class
+class TechnicalIndicators:
+    """Calculate various technical indicators"""
+    
+    @staticmethod
+    def bollinger_bands(data, window=20, std_dev=2):
+        """Calculate Bollinger Bands"""
+        sma = data.rolling(window=window).mean()
+        std = data.rolling(window=window).std()
+        upper_band = sma + (std * std_dev)
+        lower_band = sma - (std * std_dev)
+        return sma, upper_band, lower_band
+    
+    @staticmethod
+    def sma(data, window):
+        """Simple Moving Average"""
+        return data.rolling(window=window).mean()
+    
+    @staticmethod
+    def ema(data, window):
+        """Exponential Moving Average"""
+        return data.ewm(span=window).mean()
+    
+    @staticmethod
+    def price_distance_to_ma(price, ma_length=20, signal_length=9, exponential=False):
+        """
+        Price Distance to Moving Average indicator
+        
+        Args:
+            price: Price series (typically close price)
+            ma_length: Moving average length (default 20)
+            signal_length: Signal line length (default 9)
+            exponential: Use EMA instead of SMA (default False)
+        
+        Returns:
+            pma: Price/MA ratio as percentage
+            signal: Signal line (MA of PMA)
+            cycle: Cycle histogram (PMA - Signal)
+        """
+        # Calculate moving average
+        if exponential:
+            ma = TechnicalIndicators.ema(price, ma_length)
+            signal_ma_func = TechnicalIndicators.ema
+        else:
+            ma = TechnicalIndicators.sma(price, ma_length)
+            signal_ma_func = TechnicalIndicators.sma
+        
+        # Calculate price distance to MA as percentage
+        pma = ((price / ma) - 1) * 100
+        
+        # Calculate signal line (MA of PMA)
+        signal = signal_ma_func(pma, signal_length)
+        
+        # Calculate cycle (difference between PMA and signal)
+        cycle = pma - signal
+        
+        return pma, signal, cycle
+    
+    @staticmethod
+    def pma_threshold_bands(pma, bb_length=200, std_dev_low=1.5, std_dev_high=2.25):
+        """
+        Calculate threshold bands for PMA using Bollinger Bands methodology
+        
+        Args:
+            pma: Price/MA ratio series
+            bb_length: Bollinger Bands calculation length
+            std_dev_low: Lower standard deviation multiplier
+            std_dev_high: Higher standard deviation multiplier
+        
+        Returns:
+            Dictionary with upper and lower threshold bands
+        """
+        # Calculate Bollinger Bands components
+        bb_sma = pma.rolling(window=bb_length).mean()
+        bb_std = pma.rolling(window=bb_length).std()
+        
+        # Calculate threshold bands
+        upper_low = bb_sma + (bb_std * std_dev_low)
+        lower_low = bb_sma - (bb_std * std_dev_low)
+        upper_high = bb_sma + (bb_std * std_dev_high)
+        lower_high = bb_sma - (bb_std * std_dev_high)
+        
+        return {
+            'upper_low': upper_low,
+            'lower_low': lower_low,
+            'upper_high': upper_high,
+            'lower_high': lower_high
+        }
+
+def create_technical_analysis_chart(df, symbol):
+    """Create comprehensive technical analysis chart"""
+    if df is None or len(df) == 0:
+        st.error("No data available for technical analysis")
+        return None
+    
+    # Use last 200 days of data for the chart
+    if len(df) > 200:
+        df_chart = df.tail(200)
+    else:
+        df_chart = df
+    
+    # Calculate indicators using the chart data
+    close = df_chart['close']
+    
+    # Bollinger Bands (20-period, 2 std dev)
+    bb_sma, bb_upper, bb_lower = TechnicalIndicators.bollinger_bands(close, 20, 2)
+    
+    # SMA 144 - calculated on full dataset
+    sma_144 = TechnicalIndicators.sma(close, 144)
+    
+    # Price Distance to MA (Fast: 20-period)
+    pma_fast, pma_fast_signal, pma_fast_cycle = TechnicalIndicators.price_distance_to_ma(
+        close, ma_length=20, signal_length=9, exponential=False
+    )
+    
+    # PMA Threshold Bands
+    pma_bands = TechnicalIndicators.pma_threshold_bands(pma_fast)
+    
+    # Create indicators dataframe
+    indicators = pd.DataFrame({
+        'bb_sma': bb_sma,
+        'bb_upper': bb_upper,
+        'bb_lower': bb_lower,
+        'sma_144': sma_144,
+        'pma_fast': pma_fast,
+        'pma_fast_signal': pma_fast_signal,
+        'pma_fast_cycle': pma_fast_cycle,
+        'pma_upper_low': pma_bands['upper_low'],
+        'pma_lower_low': pma_bands['lower_low'],
+        'pma_upper_high': pma_bands['upper_high'],
+        'pma_lower_high': pma_bands['lower_high']
+    }, index=df_chart.index)
+    
+    # Create the chart
+    fig = go.Figure()
+    
+    # 1. Main price chart with candlesticks
+    daily_changes_pct = df_chart['close'].pct_change() * 100
+    daily_changes_dollar = df_chart['close'].diff()
+    
+    # Create custom hover text
+    hover_text = []
+    for i, (date, row) in enumerate(df_chart.iterrows()):
+        if i == 0:
+            change_text = "N/A"
+        else:
+            pct_change = daily_changes_pct.iloc[i]
+            dollar_change = daily_changes_dollar.iloc[i]
+            change_text = f"{pct_change:+.2f}% (${dollar_change:+.2f})"
+        
+        volume_text = f"Volume: {row['volume']:,.0f}<br>" if 'volume' in row else ""
+        hover_text.append(
+            f"Date: {date.strftime('%Y-%m-%d')}<br>"
+            f"Open: ${row['open']:.2f}<br>"
+            f"High: ${row['high']:.2f}<br>"
+            f"Low: ${row['low']:.2f}<br>"
+            f"Close: ${row['close']:.2f}<br>"
+            f"{volume_text}"
+            f"Daily Change: {change_text}"
+        )
+    
+    fig.add_trace(
+        go.Candlestick(
+            x=df_chart.index,
+            open=df_chart['open'],
+            high=df_chart['high'],
+            low=df_chart['low'],
+            close=df_chart['close'],
+            name='Price',
+            increasing_line_color='#00ff88',
+            decreasing_line_color='#ff4444',
+            hovertext=hover_text,
+            hoverinfo='text'
+        )
+    )
+    
+    # 2. Bollinger Bands
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['bb_upper'],
+            mode='lines',
+            name='BB Upper',
+            line=dict(color='rgba(173, 216, 230, 0.8)', width=1),
+            hovertemplate='BB Upper: $%{y:.2f}<extra></extra>'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['bb_sma'],
+            mode='lines',
+            name='BB Middle (SMA 20)',
+            line=dict(color='orange', width=2),
+            hovertemplate='BB Middle: $%{y:.2f}<extra></extra>'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['bb_lower'],
+            mode='lines',
+            name='BB Lower',
+            line=dict(color='rgba(173, 216, 230, 0.8)', width=1),
+            fill='tonexty',
+            fillcolor='rgba(173, 216, 230, 0.1)',
+            hovertemplate='BB Lower: $%{y:.2f}<extra></extra>'
+        )
+    )
+    
+    # 3. SMA 144 trend line
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['sma_144'],
+            mode='lines',
+            name='SMA 144 (Trend)',
+            line=dict(color='purple', width=3),
+            hovertemplate='SMA 144: $%{y:.2f}<extra></extra>'
+        )
+    )
+    
+    # 4. Volume chart (using secondary y-axis) - only if volume data exists
+    if 'volume' in df_chart.columns:
+        colors = ['red' if close < open else 'green' 
+                 for close, open in zip(df_chart['close'], df_chart['open'])]
+        
+        fig.add_trace(
+            go.Bar(
+                x=df_chart.index,
+                y=df_chart['volume'],
+                name='Volume',
+                marker_color=colors,
+                opacity=0.3,
+                yaxis='y2',
+                hovertemplate='Volume: %{y:,.0f}<extra></extra>'
+            )
+        )
+    
+    # 5. Price Distance to MA indicator
+    # PMA threshold bands (background fills)
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['pma_upper_high'],
+            mode='lines',
+            name='Overbought High',
+            line=dict(color='rgba(255, 0, 0, 0.3)', width=1),
+            showlegend=False,
+            yaxis='y3'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['pma_upper_low'],
+            mode='lines',
+            name='Overbought Low',
+            line=dict(color='rgba(255, 0, 0, 0.3)', width=1),
+            fill='tonexty',
+            fillcolor='rgba(255, 0, 0, 0.15)',
+            showlegend=False,
+            yaxis='y3'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['pma_lower_low'],
+            mode='lines',
+            name='Oversold High',
+            line=dict(color='rgba(0, 255, 0, 0.3)', width=1),
+            showlegend=False,
+            yaxis='y3'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['pma_lower_high'],
+            mode='lines',
+            name='Oversold Low',
+            line=dict(color='rgba(0, 255, 0, 0.3)', width=1),
+            fill='tonexty',
+            fillcolor='rgba(0, 255, 0, 0.15)',
+            showlegend=False,
+            yaxis='y3'
+        )
+    )
+    
+    # PMA Fast line
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['pma_fast'],
+            mode='lines',
+            name='Price/MA %',
+            line=dict(color='red', width=2),
+            hovertemplate='Price/MA: %{y:.2f}%<extra></extra>',
+            yaxis='y3'
+        )
+    )
+    
+    # PMA Signal line
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['pma_fast_signal'],
+            mode='lines',
+            name='Signal Line',
+            line=dict(color='blue', width=2),
+            hovertemplate='Signal: %{y:.2f}%<extra></extra>',
+            yaxis='y3'
+        )
+    )
+    
+    # Cycle histogram (as bar chart)
+    cycle_colors = ['green' if x > 0 else 'red' for x in indicators['pma_fast_cycle']]
+    fig.add_trace(
+        go.Bar(
+            x=df_chart.index,
+            y=indicators['pma_fast_cycle'],
+            name='Cycle Histogram',
+            marker_color=cycle_colors,
+            opacity=0.6,
+            hovertemplate='Cycle: %{y:.2f}%<extra></extra>',
+            yaxis='y3'
+        )
+    )
+    
+    # Update layout
+    fig.update_layout(
+        title=f'{symbol} - Comprehensive Technical Analysis',
+        template='plotly_dark',
+        height=1000,
+        showlegend=True,
+        hovermode='x unified',
+        hoverdistance=100,
+        spikedistance=1000,
+        xaxis=dict(
+            showspikes=True,
+            spikecolor="rgba(255,255,255,0.8)",
+            spikesnap="cursor",
+            spikemode="across",
+            spikethickness=2,
+            spikedash="solid",
+            domain=[0.0, 1.0],
+            anchor='y'
+        ),
+        yaxis=dict(
+            title='Price ($)',
+            side='right',
+            domain=[0.4, 1.0] if 'volume' in df_chart.columns else [0.2, 1.0]
+        ),
+        yaxis2=dict(
+            title='Volume',
+            side='left',
+            showgrid=False,
+            domain=[0.28, 0.38]
+        ) if 'volume' in df_chart.columns else None,
+        yaxis3=dict(
+            title='Price/MA (%)',
+            side='right',
+            showgrid=True,
+            domain=[0.0, 0.25] if 'volume' in df_chart.columns else [0.0, 0.15],
+            zeroline=True,
+            zerolinecolor='gray',
+            zerolinewidth=1
+        )
+    )
+    
+    # Apply enhanced crosshair settings
+    fig.update_xaxes(
+        showspikes=True,
+        spikecolor="rgba(255,255,255,0.8)",
+        spikesnap="cursor",
+        spikemode="across",
+        spikethickness=2,
+        spikedash="solid"
+    )
+    
+    # Remove rangeslider and hide weekends
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    fig.update_xaxes(
+        rangebreaks=[
+            dict(bounds=["sat", "mon"])
+        ]
+    )
+    
+    return fig
 
 # Enhanced CSS styling
 st.markdown("""
@@ -592,7 +990,7 @@ def main():
         run_analysis = st.button("🚀 Run Prediction", type="primary", use_container_width=True)
     
     # Create tabs for different views
-    tab1, tab2 = st.tabs(["📈 Stock Prediction Results", "🔍 Fractal Pattern Results"])
+    tab1, tab2, tab3 = st.tabs(["📈 Stock Prediction Results", "🔍 Fractal Pattern Results", "📊 Technical Analysis"])
     
     # Initialize session state for persisting results
     if 'analysis_results' not in st.session_state:
@@ -1776,6 +2174,234 @@ def main():
             else:
                 st.warning(f"No similar patterns found with similarity threshold {similarity_threshold:.2f}")
                 st.info("Try lowering the similarity threshold or using a different pattern length.")
+        
+        # ========== TECHNICAL ANALYSIS TAB ==========
+        with tab3:
+            st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis Chart</div>', unsafe_allow_html=True)
+            
+            if df is not None and len(df) > 0:
+                st.subheader(f"📊 {ticker} Technical Analysis")
+                
+                # Create technical analysis chart
+                tech_chart = create_technical_analysis_chart(df, ticker)
+                
+                if tech_chart is not None:
+                    st.plotly_chart(tech_chart, use_container_width=True)
+                    
+                    # Add technical analysis insights
+                    st.subheader("🔍 Technical Analysis Insights")
+                    
+                    # Calculate current technical indicators
+                    close = df['close']
+                    current_price = close.iloc[-1]
+                    
+                    # Bollinger Bands analysis
+                    bb_sma, bb_upper, bb_lower = TechnicalIndicators.bollinger_bands(close, 20, 2)
+                    current_bb_upper = bb_upper.iloc[-1]
+                    current_bb_lower = bb_lower.iloc[-1]
+                    current_bb_sma = bb_sma.iloc[-1]
+                    
+                    # SMA analysis
+                    sma_20 = TechnicalIndicators.sma(close, 20)
+                    sma_50 = TechnicalIndicators.sma(close, 50)
+                    sma_144 = TechnicalIndicators.sma(close, 144)
+                    
+                    current_sma_20 = sma_20.iloc[-1]
+                    current_sma_50 = sma_50.iloc[-1]
+                    current_sma_144 = sma_144.iloc[-1]
+                    
+                    # Price Distance to MA analysis
+                    pma_fast, pma_fast_signal, pma_fast_cycle = TechnicalIndicators.price_distance_to_ma(
+                        close, ma_length=20, signal_length=9, exponential=False
+                    )
+                    current_pma = pma_fast.iloc[-1]
+                    current_signal = pma_fast_signal.iloc[-1]
+                    current_cycle = pma_fast_cycle.iloc[-1]
+                    
+                    # Display technical insights
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.markdown("### 📈 Moving Averages")
+                        
+                        # SMA 20 analysis
+                        sma_20_status = "🟢 Above" if current_price > current_sma_20 else "🔴 Below"
+                        st.metric("SMA 20", f"${current_sma_20:.2f}", 
+                                f"{sma_20_status} (${current_price - current_sma_20:+.2f})")
+                        
+                        # SMA 50 analysis
+                        sma_50_status = "🟢 Above" if current_price > current_sma_50 else "🔴 Below"
+                        st.metric("SMA 50", f"${current_sma_50:.2f}", 
+                                f"{sma_50_status} (${current_price - current_sma_50:+.2f})")
+                        
+                        # SMA 144 analysis
+                        sma_144_status = "🟢 Above" if current_price > current_sma_144 else "🔴 Below"
+                        st.metric("SMA 144", f"${current_sma_144:.2f}", 
+                                f"{sma_144_status} (${current_price - current_sma_144:+.2f})")
+                        
+                        # Trend analysis
+                        if current_sma_20 > current_sma_50 > current_sma_144:
+                            trend_status = "🟢 Bullish"
+                        elif current_sma_20 < current_sma_50 < current_sma_144:
+                            trend_status = "🔴 Bearish"
+                        else:
+                            trend_status = "🟡 Mixed"
+                        
+                        st.metric("Trend", trend_status)
+                    
+                    with col2:
+                        st.markdown("### 📊 Bollinger Bands")
+                        
+                        # Bollinger Bands analysis
+                        bb_position = ((current_price - current_bb_lower) / (current_bb_upper - current_bb_lower)) * 100
+                        
+                        if current_price > current_bb_upper:
+                            bb_status = "🔴 Overbought"
+                        elif current_price < current_bb_lower:
+                            bb_status = "🟢 Oversold"
+                        else:
+                            bb_status = "🟡 Neutral"
+                        
+                        st.metric("BB Position", f"{bb_position:.1f}%", bb_status)
+                        st.metric("BB Upper", f"${current_bb_upper:.2f}")
+                        st.metric("BB Lower", f"${current_bb_lower:.2f}")
+                        st.metric("BB Width", f"${current_bb_upper - current_bb_lower:.2f}")
+                    
+                    with col3:
+                        st.markdown("### 📉 Price/MA Analysis")
+                        
+                        # PMA analysis
+                        if current_pma > 0:
+                            pma_status = "🟢 Above MA"
+                        else:
+                            pma_status = "🔴 Below MA"
+                        
+                        st.metric("Price/MA %", f"{current_pma:.2f}%", pma_status)
+                        st.metric("Signal Line", f"{current_signal:.2f}%")
+                        st.metric("Cycle", f"{current_cycle:.2f}%")
+                        
+                        # Cycle analysis
+                        if current_cycle > 0:
+                            cycle_status = "🟢 Positive"
+                        else:
+                            cycle_status = "🔴 Negative"
+                        
+                        st.metric("Cycle Status", cycle_status)
+                    
+                    # Add volume analysis (only if volume data exists)
+                    if 'volume' in df.columns:
+                        st.subheader("📊 Volume Analysis")
+                        col_vol1, col_vol2, col_vol3 = st.columns(3)
+                        
+                        with col_vol1:
+                            current_volume = df['volume'].iloc[-1]
+                            avg_volume = df['volume'].rolling(20).mean().iloc[-1]
+                            volume_ratio = current_volume / avg_volume
+                            
+                            if volume_ratio > 1.5:
+                                volume_status = "🔴 High Volume"
+                            elif volume_ratio < 0.5:
+                                volume_status = "🟢 Low Volume"
+                            else:
+                                volume_status = "🟡 Normal Volume"
+                            
+                            st.metric("Current Volume", f"{current_volume:,.0f}")
+                            st.metric("Avg Volume (20d)", f"{avg_volume:,.0f}")
+                            st.metric("Volume Ratio", f"{volume_ratio:.2f}x", volume_status)
+                        
+                        with col_vol2:
+                            # Price change analysis
+                            price_change_1d = ((current_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
+                            price_change_5d = ((current_price - df['close'].iloc[-6]) / df['close'].iloc[-6]) * 100
+                            price_change_20d = ((current_price - df['close'].iloc[-21]) / df['close'].iloc[-21]) * 100
+                            
+                            st.metric("1-Day Change", f"{price_change_1d:+.2f}%")
+                            st.metric("5-Day Change", f"{price_change_5d:+.2f}%")
+                            st.metric("20-Day Change", f"{price_change_20d:+.2f}%")
+                        
+                        with col_vol3:
+                            # Volatility analysis
+                            returns = df['close'].pct_change().dropna()
+                            volatility_20d = returns.rolling(20).std().iloc[-1] * 100
+                            volatility_60d = returns.rolling(60).std().iloc[-1] * 100
+                            
+                            st.metric("20-Day Volatility", f"{volatility_20d:.2f}%")
+                            st.metric("60-Day Volatility", f"{volatility_60d:.2f}%")
+                            
+                            if volatility_20d > volatility_60d:
+                                vol_status = "🔴 Increasing"
+                            else:
+                                vol_status = "🟢 Decreasing"
+                            
+                            st.metric("Volatility Trend", vol_status)
+                    else:
+                        # Show price change and volatility analysis without volume
+                        st.subheader("📊 Price & Volatility Analysis")
+                        col_price, col_vol = st.columns(2)
+                        
+                        with col_price:
+                            # Price change analysis
+                            price_change_1d = ((current_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
+                            price_change_5d = ((current_price - df['close'].iloc[-6]) / df['close'].iloc[-6]) * 100
+                            price_change_20d = ((current_price - df['close'].iloc[-21]) / df['close'].iloc[-21]) * 100
+                            
+                            st.metric("1-Day Change", f"{price_change_1d:+.2f}%")
+                            st.metric("5-Day Change", f"{price_change_5d:+.2f}%")
+                            st.metric("20-Day Change", f"{price_change_20d:+.2f}%")
+                        
+                        with col_vol:
+                            # Volatility analysis
+                            returns = df['close'].pct_change().dropna()
+                            volatility_20d = returns.rolling(20).std().iloc[-1] * 100
+                            volatility_60d = returns.rolling(60).std().iloc[-1] * 100
+                            
+                            st.metric("20-Day Volatility", f"{volatility_20d:.2f}%")
+                            st.metric("60-Day Volatility", f"{volatility_60d:.2f}%")
+                            
+                            if volatility_20d > volatility_60d:
+                                vol_status = "🔴 Increasing"
+                            else:
+                                vol_status = "🟢 Decreasing"
+                            
+                            st.metric("Volatility Trend", vol_status)
+                    
+                    # Add support and resistance levels
+                    st.subheader("🎯 Support & Resistance Levels")
+                    
+                    # Calculate recent highs and lows
+                    recent_high = df['high'].tail(20).max()
+                    recent_low = df['low'].tail(20).min()
+                    current_high = df['high'].iloc[-1]
+                    current_low = df['low'].iloc[-1]
+                    
+                    col_sr1, col_sr2, col_sr3 = st.columns(3)
+                    
+                    with col_sr1:
+                        st.metric("Recent High (20d)", f"${recent_high:.2f}")
+                        st.metric("Current High", f"${current_high:.2f}")
+                        resistance_distance = ((recent_high - current_price) / current_price) * 100
+                        st.metric("Distance to Resistance", f"{resistance_distance:+.2f}%")
+                    
+                    with col_sr2:
+                        st.metric("Recent Low (20d)", f"${recent_low:.2f}")
+                        st.metric("Current Low", f"${current_low:.2f}")
+                        support_distance = ((current_price - recent_low) / current_price) * 100
+                        st.metric("Distance to Support", f"{support_distance:+.2f}%")
+                    
+                    with col_sr3:
+                        # Risk/Reward ratio
+                        risk = current_price - recent_low
+                        reward = recent_high - current_price
+                        risk_reward_ratio = reward / risk if risk > 0 else 0
+                        
+                        st.metric("Risk", f"${risk:.2f}")
+                        st.metric("Reward", f"${reward:.2f}")
+                        st.metric("Risk/Reward Ratio", f"{risk_reward_ratio:.2f}")
+                
+                else:
+                    st.error("Failed to create technical analysis chart")
+            else:
+                st.info("👆 Run analysis first to see technical analysis chart")
     
     else:
         # Show placeholders when no analysis has been run
@@ -1786,6 +2412,10 @@ def main():
         with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-search"></i> Fractal Pattern Analysis</div>', unsafe_allow_html=True)
             st.info("👆 Click 'Run Prediction' in the sidebar to see fractal pattern analysis results.")
+        
+        with tab3:
+            st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis</div>', unsafe_allow_html=True)
+            st.info("👆 Click 'Run Prediction' in the sidebar to see technical analysis chart.")
 
     # Footer
     st.markdown("---")
