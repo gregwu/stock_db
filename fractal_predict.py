@@ -1142,7 +1142,7 @@ def main():
             
             # Check data requirements with more flexible options
             min_required = max(pattern_length * 2, 60)  # Reduced from 100 to 60
-            st.info(f"🔍 Debug: Data length: {len(df)}, Pattern length: {pattern_length}, Min required: {min_required}")
+            #st.info(f"🔍 Debug: Data length: {len(df)}, Pattern length: {pattern_length}, Min required: {min_required}")
             if len(df) < min_required:
                 st.warning(f"⚠️ Limited data available ({len(df)} days). Recommended: {min_required} days.")
                 st.info("📊 Some features may be limited with less data, but analysis will continue.")
