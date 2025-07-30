@@ -1142,14 +1142,15 @@ def main():
             
             # Check data requirements with more flexible options
             min_required = max(pattern_length * 2, 60)  # Reduced from 100 to 60
+            st.info(f"🔍 Debug: Data length: {len(df)}, Pattern length: {pattern_length}, Min required: {min_required}")
             if len(df) < min_required:
                 st.warning(f"⚠️ Limited data available ({len(df)} days). Recommended: {min_required} days.")
                 st.info("📊 Some features may be limited with less data, but analysis will continue.")
                 
-                            # Ask user if they want to continue with limited data
-            continue_with_limited = st.checkbox("Continue with limited data?", value=True)
-            if not continue_with_limited:
-                return
+                # Ask user if they want to continue with limited data
+                continue_with_limited = st.sidebar.checkbox("Continue with limited data?", value=True)
+                if not continue_with_limited:
+                    return
             
             # Auto-adjust pattern length if data is very limited
             if len(df) < pattern_length:
@@ -1530,9 +1531,6 @@ def main():
         # ========== DISPLAY RESULTS IN TABS ==========
         with tab1:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction Results</div>', unsafe_allow_html=True)
-            
-            # Show feature count information
-            st.info(f"📊 Loaded {len(training_features)} features for prediction")
             
             # Display basic results
             col1, col2 = st.columns([1, 1])
@@ -2092,6 +2090,9 @@ def main():
                     Trend: {trend_score}/4 | Safety: {safety_score}/6 | Strength: {relative_strength_score}/6
                 </div>
                 ''', unsafe_allow_html=True)
+            
+            # Show feature count information at the bottom
+            st.info(f"📊 Loaded {len(training_features)} features for prediction")
         
         with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-search"></i> Fractal Pattern Analysis Results</div>', unsafe_allow_html=True)
