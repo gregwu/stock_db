@@ -23,6 +23,7 @@ import joblib
 import os
 import warnings
 import json
+import tempfile
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -1194,6 +1195,7 @@ def main():
             X_live = results.get('X_live', None)
             training_features = results.get('training_features', [])
             df = results.get('df', None)
+            df_clean = results.get('df_clean', None)  # Added df_clean to loading
             pattern_start_date = results.get('pattern_start_date', None)
             pattern_end_date = results.get('pattern_end_date', None)
             
@@ -1253,6 +1255,35 @@ def main():
                     available_features = [f for f in training_features if f in df_latest.columns]
                     training_features = available_features
             
+            # Debug: Show feature count and ensure exact match
+            st.info(f"📊 Loaded {len(training_features)} features for prediction")
+            
+            # If we don't have enough features, try to use the full 42-feature set from config
+            if len(training_features) < 20:  # If we have less than 20 features, try to get all 42
+                st.info("🔄 Attempting to load full 42-feature set...")
+                try:
+                    from config import features as full_features
+                    # Check which features are available in the DataFrame
+                    available_full_features = [f for f in full_features if f in df_latest.columns]
+                    if len(available_full_features) > len(training_features):
+                        training_features = available_full_features
+                        st.info(f"✅ Successfully loaded {len(training_features)} features from full feature set")
+                    else:
+                        st.warning(f"⚠️ Full feature set only provides {len(available_full_features)} features")
+                except ImportError:
+                    st.warning("⚠️ Could not import full feature set from config")
+            
+            # Final fallback to basic features only if we still have very few features
+            if len(training_features) < 10:
+                st.warning("⚠️ Very few features available. Using basic features only.")
+                # Fallback to basic features
+                basic_features = ['close', 'open', 'high', 'low', 'vol', 'price_change', 'price_change_abs', 'high_low_ratio', 'open_close_ratio']
+                training_features = [f for f in basic_features if f in df_latest.columns]
+                st.info(f"📊 Using {len(training_features)} basic features: {training_features}")
+            
+            # Store the selected features for consistency
+            selected_features = training_features.copy()
+            
             # Prepare model input
             X_live = df_latest[training_features].values.reshape(1, -1)
             
@@ -1275,8 +1306,20 @@ def main():
                 progress_bar.progress(50)
                 
                 try:
-                    result = subprocess.run([sys.executable, "train_wrapper.py", base_ticker], 
+                    # Create a temporary file with the selected features
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                        json.dump(selected_features, f)
+                        features_file = f.name
+                    
+                    # Pass the features file to the training script
+                    result = subprocess.run([sys.executable, "train_wrapper.py", base_ticker, "--features", features_file], 
                                           capture_output=True, text=True, timeout=600)
+                    
+                    # Clean up the temporary file
+                    try:
+                        os.unlink(features_file)
+                    except:
+                        pass
                     if result.returncode == 0:
                         st.success("✅ Model training completed successfully!")
                         if os.path.exists(model_path):
@@ -1343,9 +1386,19 @@ def main():
                 status_text.text("🎯 Making prediction...")
                 progress_bar.progress(60)
                 try:
+                    # Debug: Show feature count mismatch if it occurs
+                    if hasattr(model, 'n_features_in_'):
+                        expected_features = model.n_features_in_
+                        actual_features = X_live.shape[1]
+                        if expected_features != actual_features:
+                            st.warning(f"⚠️ Feature count mismatch: Model expects {expected_features} features, but got {actual_features} features.")
+                            st.info(f"📊 Model was trained with {expected_features} features, but current data has {actual_features} features.")
+                            st.info("🔄 This usually happens when the model was trained with limited data and basic features.")
+                    
                     proba = model.predict_proba(X_live)[0]
                 except Exception as e:
                     st.warning(f"Prediction failed: {str(e)}. Only pattern analysis will be available.")
+                    st.info("💡 This usually happens when the model was trained with different features than what's currently available.")
                     proba = None
         
         # ========== FRACTAL PATTERN ANALYSIS ==========
@@ -1458,6 +1511,7 @@ def main():
                 'X_live': X_live,
                 'training_features': training_features,
                 'df': df,
+                'df_clean': df_clean,  # Added df_clean to session state
                 'pattern_start_date': pattern_start_date,
                 'pattern_end_date': pattern_end_date
             }
@@ -1575,9 +1629,40 @@ def main():
                         if os.path.exists(model_file):
                             try:
                                 day_model = joblib.load(model_file)
-                                day_models[day_ahead] = day_model
-                                continue
-                            except:
+                                # Check if the loaded model has the same number of features as current training_features
+                                if hasattr(day_model, 'n_features_in_'):
+                                    if day_model.n_features_in_ == len(training_features):
+                                        # Test if the model can actually make predictions
+                                        try:
+                                            # Create a dummy prediction to test the model
+                                            dummy_X = np.zeros((1, len(training_features)))
+                                            day_model.predict(dummy_X)
+                                            day_models[day_ahead] = day_model
+                                            continue
+                                        except Exception as pred_error:
+                                            st.info(f"🔄 Multi-day model {day_ahead} loaded but prediction test failed: {str(pred_error)}. Retraining...")
+                                            # Remove the invalid model from day_models if it was added
+                                            if day_ahead in day_models:
+                                                del day_models[day_ahead]
+                                    else:
+                                        st.info(f"🔄 Multi-day model {day_ahead} has {day_model.n_features_in_} features, but current data has {len(training_features)} features. Retraining...")
+                                        # Remove the invalid model from day_models if it was added
+                                        if day_ahead in day_models:
+                                            del day_models[day_ahead]
+                                else:
+                                    # For models without n_features_in_, test prediction capability
+                                    try:
+                                        dummy_X = np.zeros((1, len(training_features)))
+                                        day_model.predict(dummy_X)
+                                        day_models[day_ahead] = day_model
+                                        continue
+                                    except Exception as pred_error:
+                                        st.info(f"🔄 Multi-day model {day_ahead} loaded but prediction test failed: {str(pred_error)}. Retraining...")
+                                        # Remove the invalid model from day_models if it was added
+                                        if day_ahead in day_models:
+                                            del day_models[day_ahead]
+                            except Exception as e:
+                                st.info(f"🔄 Failed to load multi-day model {day_ahead}: {str(e)}. Will retrain.")
                                 pass
                         
                         # Train new model if not found
@@ -1616,8 +1701,15 @@ def main():
                                 feature_data.append(features_row)
                                 target_data.append(target_class)
                         
-                        # Train model if enough data
-                        if len(feature_data) > 100:
+                        # Train model if enough data OR if we need to retrain due to validation failure
+                        should_train = len(feature_data) > 50 or day_ahead not in day_models
+                        
+                        if should_train:
+                            # if len(feature_data) > 50:
+                            #     st.info(f"📊 Training multi-day model {day_ahead} with {len(feature_data)} samples and {len(training_features)} features")
+                            # else:
+                            #     st.warning(f"⚠️ Retraining multi-day model {day_ahead} with limited data: {len(feature_data)} samples (need at least 50)")
+                            
                             X = np.array(feature_data)
                             y = np.array(target_data)
                             
@@ -1644,12 +1736,39 @@ def main():
                             # Save model
                             os.makedirs(models_dir, exist_ok=True)
                             joblib.dump(day_model, model_file)
+                            # st.success(f"✅ Multi-day model {day_ahead} trained and saved successfully!")
+                        else:
+                            st.warning(f"⚠️ Insufficient data for multi-day model {day_ahead}: {len(feature_data)} samples (need at least 50)")
+                            continue
                     
                     # Generate predictions for bubble chart
+                    successful_predictions = 0
                     for day_ahead in range(1, 8):
+                        day_proba = None
+                        
                         if day_ahead in day_models:
-                            day_proba = day_models[day_ahead].predict(X_live)[0]
-                            
+                            try:
+                                # Check feature count compatibility
+                                if hasattr(day_models[day_ahead], 'n_features_in_'):
+                                    expected_features = day_models[day_ahead].n_features_in_
+                                    actual_features = X_live.shape[1]
+                                    if expected_features != actual_features:
+                                        st.warning(f"⚠️ Multi-day model {day_ahead} expects {expected_features} features, but got {actual_features} features.")
+                                        st.info("🔄 Skipping multi-day prediction due to feature mismatch.")
+                                        continue
+                                
+                                day_proba = day_models[day_ahead].predict(X_live)[0]
+                                successful_predictions += 1
+                            except Exception as e:
+                                st.warning(f"⚠️ Multi-day model {day_ahead} prediction failed: {str(e)}")
+                                st.info("🔄 Skipping this multi-day model.")
+                                continue
+                        else:
+                            st.info(f"🔄 Multi-day model {day_ahead} was not available (likely due to validation failure during loading).")
+                            continue
+                        
+                        # Process prediction results (only if we have a valid prediction)
+                        if day_proba is not None:
                             # Update main prediction with day-1 model
                             if day_ahead == 1:
                                 best_class_idx = np.argmax(day_proba)
@@ -1686,6 +1805,11 @@ def main():
                     multiday_progress.empty()
                     
                     # Create bubble chart
+                    if bubble_data:
+                        st.success(f"✅ Generated predictions for {successful_predictions} out of 7 days")
+                    else:
+                        st.warning("⚠️ No valid multi-day predictions available. This may be due to feature count mismatches or insufficient data.")
+                    
                     if bubble_data:
                         bubble_df = pd.DataFrame(bubble_data)
                         
