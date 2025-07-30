@@ -1256,7 +1256,7 @@ def main():
                     training_features = available_features
             
             # Debug: Show feature count and ensure exact match
-            st.info(f"📊 Loaded {len(training_features)} features for prediction")
+            # st.info(f"📊 Loaded {len(training_features)} features for prediction")
             
             # If we don't have enough features, try to use the full 42-feature set from config
             if len(training_features) < 20:  # If we have less than 20 features, try to get all 42
@@ -1530,6 +1530,9 @@ def main():
         # ========== DISPLAY RESULTS IN TABS ==========
         with tab1:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction Results</div>', unsafe_allow_html=True)
+            
+            # Show feature count information
+            st.info(f"📊 Loaded {len(training_features)} features for prediction")
             
             # Display basic results
             col1, col2 = st.columns([1, 1])
