@@ -159,11 +159,17 @@ def create_technical_analysis_chart(df, symbol):
         st.error("No data available for technical analysis")
         return None
     
-    # Use last 200 days of data for the chart
+    # Use last 200 days of data for the chart, or all available data if less than 200
     if len(df) > 200:
         df_chart = df.tail(200)
     else:
         df_chart = df
+    
+    # Check if we have enough data for technical indicators
+    if len(df_chart) < 20:
+        st.warning(f"⚠️ Limited data ({len(df_chart)} days) for technical analysis. Some indicators may not be available.")
+        # Create a basic price chart without technical indicators
+        return create_basic_price_chart(df_chart, symbol)
     
     # Calculate indicators using the chart data
     close = df_chart['close']
@@ -448,6 +454,108 @@ def create_technical_analysis_chart(df, symbol):
         spikemode="across",
         spikethickness=2,
         spikedash="solid"
+    )
+    
+    # Remove rangeslider and hide weekends
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    fig.update_xaxes(
+        rangebreaks=[
+            dict(bounds=["sat", "mon"])
+        ]
+    )
+    
+    return fig
+
+def create_basic_price_chart(df, symbol):
+    """Create a basic price chart when limited data is available"""
+    if df is None or len(df) == 0:
+        return None
+    
+    fig = go.Figure()
+    
+    # Create basic candlestick chart
+    daily_changes_pct = df['close'].pct_change() * 100
+    daily_changes_dollar = df['close'].diff()
+    
+    # Create custom hover text
+    hover_text = []
+    for i, (date, row) in enumerate(df.iterrows()):
+        if i == 0:
+            change_text = "N/A"
+        else:
+            pct_change = daily_changes_pct.iloc[i]
+            dollar_change = daily_changes_dollar.iloc[i]
+            change_text = f"{pct_change:+.2f}% (${dollar_change:+.2f})"
+        
+        volume_text = f"Volume: {row['volume']:,.0f}<br>" if 'volume' in row else ""
+        hover_text.append(
+            f"Date: {date.strftime('%Y-%m-%d')}<br>"
+            f"Open: ${row['open']:.2f}<br>"
+            f"High: ${row['high']:.2f}<br>"
+            f"Low: ${row['low']:.2f}<br>"
+            f"Close: ${row['close']:.2f}<br>"
+            f"{volume_text}"
+            f"Daily Change: {change_text}"
+        )
+    
+    fig.add_trace(
+        go.Candlestick(
+            x=df.index,
+            open=df['open'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            name='Price',
+            increasing_line_color='#00ff88',
+            decreasing_line_color='#ff4444',
+            hovertext=hover_text,
+            hoverinfo='text'
+        )
+    )
+    
+    # Add volume if available
+    if 'volume' in df.columns:
+        colors = ['red' if close < open else 'green' 
+                 for close, open in zip(df['close'], df['open'])]
+        
+        fig.add_trace(
+            go.Bar(
+                x=df.index,
+                y=df['volume'],
+                name='Volume',
+                marker_color=colors,
+                opacity=0.3,
+                yaxis='y2',
+                hovertemplate='Volume: %{y:,.0f}<extra></extra>'
+            )
+        )
+    
+    # Update layout
+    fig.update_layout(
+        title=f'{symbol} - Basic Price Chart ({len(df)} days)',
+        template='plotly_dark',
+        height=600,
+        showlegend=True,
+        hovermode='x unified',
+        xaxis=dict(
+            showspikes=True,
+            spikecolor="rgba(255,255,255,0.8)",
+            spikesnap="cursor",
+            spikemode="across",
+            spikethickness=2,
+            spikedash="solid"
+        ),
+        yaxis=dict(
+            title='Price ($)',
+            side='right',
+            domain=[0.4, 1.0] if 'volume' in df.columns else [0.0, 1.0]
+        ),
+        yaxis2=dict(
+            title='Volume',
+            side='left',
+            showgrid=False,
+            domain=[0.0, 0.35]
+        ) if 'volume' in df.columns else None
     )
     
     # Remove rangeslider and hide weekends
@@ -1031,9 +1139,22 @@ def main():
                 st.error(f"Error loading data: {error}")
                 return
             
-            if len(df) < max(pattern_length * 2, 100):
-                st.error(f"Insufficient data. Need at least {max(pattern_length * 2, 100)} days of data.")
+            # Check data requirements with more flexible options
+            min_required = max(pattern_length * 2, 60)  # Reduced from 100 to 60
+            if len(df) < min_required:
+                st.warning(f"⚠️ Limited data available ({len(df)} days). Recommended: {min_required} days.")
+                st.info("📊 Some features may be limited with less data, but analysis will continue.")
+                
+                            # Ask user if they want to continue with limited data
+            continue_with_limited = st.checkbox("Continue with limited data?", value=True)
+            if not continue_with_limited:
                 return
+            
+            # Auto-adjust pattern length if data is very limited
+            if len(df) < pattern_length:
+                adjusted_pattern_length = max(10, len(df) // 3)  # Use 1/3 of available data
+                st.info(f"📏 Auto-adjusting pattern length from {pattern_length} to {adjusted_pattern_length} days due to limited data.")
+                pattern_length = adjusted_pattern_length
             
             # Get current market data for both analyses
             current_price = float(df['close'].iloc[-1])
@@ -1096,8 +1217,9 @@ def main():
             
             df_clean = df.dropna()
             if df_clean.empty:
-                st.error("Insufficient data for technical indicators calculation")
-                return
+                st.warning("⚠️ Limited data for technical indicators. Some features may be unavailable.")
+                # Continue with basic analysis
+                df_clean = df  # Use original data even with NaN values
             
             df_latest = df_clean.iloc[[-1]]
         
@@ -1235,6 +1357,11 @@ def main():
             status_text.text("🔍 Analyzing fractal patterns...")
             progress_bar.progress(70)
             
+            # Check if we have enough data for fractal analysis
+            if len(df) < pattern_length * 2:
+                st.warning(f"⚠️ Limited data for fractal analysis. Pattern length: {pattern_length}, Available data: {len(df)} days")
+                st.info("📊 Fractal analysis may be limited, but basic pattern matching will continue.")
+            
             # Prepare data based on timeframe
             if timeframe == "Weekly":
                 status_text.text("🔍 Resampling to weekly data...")
@@ -1280,17 +1407,21 @@ def main():
             # Perform pattern matching
             patterns = [("Reference", reference_pattern_norm)]
             
-            matches = advanced_slide_and_compare(
-                price_series, 
-                patterns, 
-                window_sizes,
-                threshold=similarity_threshold,
-                series_dates=series_dates,
-                exclude_overlap=True,
-                filter_close_matches=True,
-                min_separation_days=30,
-                pattern_date_range=pattern_date_range
-            )
+            try:
+                matches = advanced_slide_and_compare(
+                    price_series, 
+                    patterns, 
+                    window_sizes,
+                    threshold=similarity_threshold,
+                    series_dates=series_dates,
+                    exclude_overlap=True,
+                    filter_close_matches=True,
+                    min_separation_days=30,
+                    pattern_date_range=pattern_date_range
+                )
+            except Exception as e:
+                st.warning(f"⚠️ Pattern matching failed: {str(e)}. Limited data may be the cause.")
+                matches = []  # Empty matches list
             
             progress_bar.progress(90)
             status_text.text("✅ Analysis completed!")

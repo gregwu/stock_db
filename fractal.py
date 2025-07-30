@@ -816,13 +816,19 @@ elif data_source == "Yahoo Finance Ticker":
         st.markdown("<br>", unsafe_allow_html=True)  # Natural spacing to align with text input
         fetch_button = st.button("Fetch Data", key="yahoo_fetch")
     
+    # Add cache option
+    use_cached = st.checkbox("💾 Use cached data (if available)", key="use_cached", help="Check this to use cached data instead of fetching fresh data")
+    
+    if not use_cached:
+        st.info("🔄 Will automatically fetch fresh data when ticker is entered")
+    
     # Auto-load cached data if available
     if ticker_symbol:
         yahoo_data_dir = "yahoo_data"
         csv_filename = os.path.join(yahoo_data_dir, f"{ticker_symbol.upper()}.csv")
         
-        if os.path.exists(csv_filename):
-            # Load from local file automatically
+        if os.path.exists(csv_filename) and use_cached:
+            # Load from local file when user explicitly chooses to use cache
             df = pd.read_csv(csv_filename, parse_dates=['date'], index_col='date')
             st.info(f"📁 Using cached data: {len(df)} days for {ticker_symbol.upper()}")
             
@@ -832,15 +838,17 @@ elif data_source == "Yahoo Finance Ticker":
             st.session_state.data_info = f"{len(df)} days for {ticker_symbol.upper()} (cached)"
             
             # Don't clear search results for cached data - it's the same data
-        elif fetch_button:
+        elif fetch_button or (not use_cached and ticker_symbol):
             # Only fetch new data when button is clicked
             with st.spinner(f"Fetching all available data for {ticker_symbol}..."):
                 try:
                     # Create yahoo_data folder if it doesn't exist
                     os.makedirs(yahoo_data_dir, exist_ok=True)
                     
-                    # Fetch all available data from Yahoo Finance
-                    ticker_data = yf.download(ticker_symbol, period="max", progress=False)
+                    # Fetch all available data from Yahoo Finance with explicit start date to ensure recent data
+                    # Use a start date of 5 years ago to get comprehensive data
+                    start_date = (pd.Timestamp.now() - pd.Timedelta(days=5*365)).strftime('%Y-%m-%d')
+                    ticker_data = yf.download(ticker_symbol, start=start_date, progress=False)
                     
                     if ticker_data.empty or len(ticker_data) == 0:
                         st.error(f"No data found for ticker {ticker_symbol}. Please check the symbol and try again.")
@@ -885,6 +893,25 @@ elif data_source == "Yahoo Finance Ticker":
                                     st.session_state.loaded_data = df
                                     st.session_state.data_source_type = "Yahoo Finance Ticker"
                                     st.session_state.data_info = f"{len(df)} days for {ticker_symbol.upper()} (fetched)"
+                                    
+                                    # Show data range info
+                                    data_start = df.index[0].strftime('%Y-%m-%d')
+                                    data_end = df.index[-1].strftime('%Y-%m-%d')
+                                    st.info(f"📊 Data range: {data_start} to {data_end}")
+                                    
+                                    # Show data freshness details
+                                    today = pd.Timestamp.now().date()
+                                    last_data_date = df.index[-1].date()
+                                    days_old = (today - last_data_date).days
+                                    
+                                    if days_old <= 1:
+                                        st.success(f"✅ Data is fresh (last update: {last_data_date})")
+                                    elif days_old <= 7:
+                                        st.warning(f"⚠️ Data is {days_old} days old (last update: {last_data_date})")
+                                        st.info("💡 This might be due to weekends, holidays, or market closures")
+                                    else:
+                                        st.error(f"❌ Data is {days_old} days old (last update: {last_data_date})")
+                                        st.info("💡 Try refreshing the data or check if the ticker is still active")
                                     
                                     # Clear search results when new data is fetched
                                     st.session_state.search_results = None
@@ -1114,6 +1141,17 @@ if df is not None:
             # Show pattern info
             st.sidebar.write(f"**Pattern Created:** {len(pattern_resampled)} {time_scale.lower()} periods")
             st.sidebar.write(f"**Date Range:** {pattern_resampled.index[0].strftime('%Y-%m-%d')} to {pattern_resampled.index[-1].strftime('%Y-%m-%d')}")
+            
+            # Debug: Show data freshness info
+            today = pd.Timestamp.now().date()
+            last_data_date = pattern_resampled.index[-1].date()
+            days_old = (today - last_data_date).days
+            if days_old <= 1:
+                st.sidebar.success(f"✅ Data is fresh (last update: {last_data_date})")
+            elif days_old <= 7:
+                st.sidebar.warning(f"⚠️ Data is {days_old} days old (last update: {last_data_date})")
+            else:
+                st.sidebar.error(f"❌ Data is {days_old} days old (last update: {last_data_date})")
         else:
             st.sidebar.error("Not enough data for the selected lookback period")
             patterns = [("Monthly Whole History", normalize_and_resample(monthly['close'].values, target_length=len(monthly)))]
@@ -1869,9 +1907,38 @@ if df is not None:
                 # Show all matches when filter is inactive
                 filtered_matches.append(m)
         
-        # Create filtered display dataframe
-        filtered_match_data = pd.DataFrame([
-            {
+        # Create filtered display dataframe with reference pattern as first row
+        table_data = []
+        
+        # Add reference pattern as first row
+        if pattern_date_range is not None:
+            pattern_start, pattern_end = pattern_date_range
+            # Determine timeframe from pattern name
+            pattern_name = patterns[0][0]
+            if "Monthly" in pattern_name:
+                ref_timeframe = "monthly"
+            elif "Weekly" in pattern_name:
+                ref_timeframe = "weekly"
+            elif "Daily" in pattern_name:
+                ref_timeframe = "daily"
+            else:
+                ref_timeframe = "custom"
+            
+            reference_row = {
+                'timeframe': ref_timeframe,
+                'pattern': 'Reference Pattern',
+                'start_index': 0,
+                'window_size': len(patterns[0][1]),
+                'similarity': 1.000,
+                'inverted': False,
+                'start_date': pattern_start,
+                'end_date': pattern_end
+            }
+            table_data.append(reference_row)
+        
+        # Add filtered matches
+        for m in filtered_matches:
+            table_data.append({
                 'timeframe': m['timeframe'],
                 'pattern': m['pattern'],
                 'start_index': m['start_index'],
@@ -1880,9 +1947,9 @@ if df is not None:
                 'inverted': m['inverted'],
                 'start_date': m['start_date'],
                 'end_date': m['end_date']
-            }
-            for m in filtered_matches
-        ])
+            })
+        
+        filtered_match_data = pd.DataFrame(table_data)
         
         # Show filtered results summary        
         if st.session_state.date_filter_active:
@@ -1916,16 +1983,49 @@ if df is not None:
         
         # Check if a row is selected
         selected_match = None
+        selected_row_idx = None
+        
         if event.selection.rows:
             selected_row_idx = event.selection.rows[0]
-            if selected_row_idx < len(filtered_matches):
-                selected_match = filtered_matches[selected_row_idx]
+            
+            # Handle reference pattern row (row 0)
+            if selected_row_idx == 0 and pattern_date_range is not None:
+                # Reference pattern selected - use first match for display
+                if filtered_matches:
+                    selected_match = filtered_matches[0]
+            elif selected_row_idx > 0 and selected_row_idx <= len(filtered_matches):
+                # Similar pattern selected - adjust index
+                match_idx = selected_row_idx - 1
+                selected_match = filtered_matches[match_idx]
+            else:
+                # Invalid row index - use first match
+                if filtered_matches:
+                    selected_match = filtered_matches[0]
         # Display charts for selected match
         if selected_match:
             st.subheader(f"Charts for Selected Match")
-            st.write(f"**{selected_match['timeframe'].title()}** | **{selected_match['pattern']}** | "
-                    f"Similarity: **{selected_match['similarity']:.3f}** | "
-                    f"Date: **{selected_match['start_date'].strftime('%Y-%m-%d')} to {selected_match['end_date'].strftime('%Y-%m-%d')}**")
+            
+            if selected_row_idx == 0 and pattern_date_range is not None:
+                # Reference pattern selected
+                pattern_start, pattern_end = pattern_date_range
+                # Determine timeframe from pattern name
+                pattern_name = patterns[0][0]
+                if "Monthly" in pattern_name:
+                    ref_timeframe = "monthly"
+                elif "Weekly" in pattern_name:
+                    ref_timeframe = "weekly"
+                elif "Daily" in pattern_name:
+                    ref_timeframe = "daily"
+                else:
+                    ref_timeframe = "custom"
+                st.write(f"**Reference Pattern** | **{ref_timeframe}** | "
+                        f"Similarity: **1.000** | "
+                        f"Date: **{pattern_start.strftime('%Y-%m-%d')} to {pattern_end.strftime('%Y-%m-%d')}**")
+            else:
+                # Similar pattern selected
+                st.write(f"**{selected_match['timeframe'].title()}** | **{selected_match['pattern']}** | "
+                        f"Similarity: **{selected_match['similarity']:.3f}** | "
+                        f"Date: **{selected_match['start_date'].strftime('%Y-%m-%d')} to {selected_match['end_date'].strftime('%Y-%m-%d')}**")
             
             # Single combined chart
             fig, ax = plt.subplots(1, 1, figsize=(12, 6))
