@@ -211,6 +211,13 @@ def create_technical_analysis_chart(df, symbol):
     daily_changes_pct = df_chart['close'].pct_change() * 100
     daily_changes_dollar = df_chart['close'].diff()
     
+    # Determine volume column name
+    volume_col = None
+    if 'volume' in df_chart.columns:
+        volume_col = 'volume'
+    elif 'vol' in df_chart.columns:
+        volume_col = 'vol'
+    
     # Create custom hover text
     hover_text = []
     for i, (date, row) in enumerate(df_chart.iterrows()):
@@ -221,7 +228,7 @@ def create_technical_analysis_chart(df, symbol):
             dollar_change = daily_changes_dollar.iloc[i]
             change_text = f"{pct_change:+.2f}% (${dollar_change:+.2f})"
         
-        volume_text = f"Volume: {row['volume']:,.0f}<br>" if 'volume' in row else ""
+        volume_text = f"Volume: {row[volume_col]:,.0f}<br>" if volume_col and volume_col in row else ""
         hover_text.append(
             f"Date: {date.strftime('%Y-%m-%d')}<br>"
             f"Open: ${row['open']:.2f}<br>"
@@ -296,14 +303,14 @@ def create_technical_analysis_chart(df, symbol):
     )
     
     # 4. Volume chart (using secondary y-axis) - only if volume data exists
-    if 'volume' in df_chart.columns:
+    if volume_col:
         colors = ['red' if close < open else 'green' 
                  for close, open in zip(df_chart['close'], df_chart['open'])]
         
         fig.add_trace(
             go.Bar(
                 x=df_chart.index,
-                y=df_chart['volume'],
+                y=df_chart[volume_col],
                 name='Volume',
                 marker_color=colors,
                 opacity=0.3,
@@ -423,24 +430,30 @@ def create_technical_analysis_chart(df, symbol):
             spikethickness=2,
             spikedash="solid",
             domain=[0.0, 1.0],
-            anchor='y'
+            anchor='y',
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),  # Hide weekends (Saturday and Sunday)
+                dict(values=["2023-01-02", "2023-01-16", "2023-02-20", "2023-04-07", "2023-05-29", "2023-06-19", "2023-07-04", "2023-09-04", "2023-10-09", "2023-11-23", "2023-12-25"]),  # US holidays 2023
+                dict(values=["2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-10-14", "2024-11-28", "2024-12-25"]),  # US holidays 2024
+                dict(values=["2025-01-01", "2025-01-20", "2025-02-17", "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-10-13", "2025-11-27", "2025-12-25"]),  # US holidays 2025
+            ]
         ),
         yaxis=dict(
             title='Price ($)',
             side='right',
-            domain=[0.4, 1.0] if 'volume' in df_chart.columns else [0.2, 1.0]
+            domain=[0.4, 1.0] if volume_col else [0.2, 1.0]
         ),
         yaxis2=dict(
             title='Volume',
             side='left',
             showgrid=False,
             domain=[0.28, 0.38]
-        ) if 'volume' in df_chart.columns else None,
+        ) if volume_col else None,
         yaxis3=dict(
             title='Price/MA (%)',
             side='right',
             showgrid=True,
-            domain=[0.0, 0.25] if 'volume' in df_chart.columns else [0.0, 0.15],
+            domain=[0.0, 0.25] if volume_col else [0.0, 0.15],
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
@@ -457,13 +470,8 @@ def create_technical_analysis_chart(df, symbol):
         spikedash="solid"
     )
     
-    # Remove rangeslider and hide weekends
+    # Remove rangeslider
     fig.update_layout(xaxis_rangeslider_visible=False)
-    fig.update_xaxes(
-        rangebreaks=[
-            dict(bounds=["sat", "mon"])
-        ]
-    )
     
     return fig
 
@@ -544,7 +552,13 @@ def create_basic_price_chart(df, symbol):
             spikesnap="cursor",
             spikemode="across",
             spikethickness=2,
-            spikedash="solid"
+            spikedash="solid",
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),  # Hide weekends (Saturday and Sunday)
+                dict(values=["2023-01-02", "2023-01-16", "2023-02-20", "2023-04-07", "2023-05-29", "2023-06-19", "2023-07-04", "2023-09-04", "2023-10-09", "2023-11-23", "2023-12-25"]),  # US holidays 2023
+                dict(values=["2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-10-14", "2024-11-28", "2024-12-25"]),  # US holidays 2024
+                dict(values=["2025-01-01", "2025-01-20", "2025-02-17", "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-10-13", "2025-11-27", "2025-12-25"]),  # US holidays 2025
+            ]
         ),
         yaxis=dict(
             title='Price ($)',
@@ -559,13 +573,8 @@ def create_basic_price_chart(df, symbol):
         ) if 'volume' in df.columns else None
     )
     
-    # Remove rangeslider and hide weekends
+    # Remove rangeslider
     fig.update_layout(xaxis_rangeslider_visible=False)
-    fig.update_xaxes(
-        rangebreaks=[
-            dict(bounds=["sat", "mon"])
-        ]
-    )
     
     return fig
 

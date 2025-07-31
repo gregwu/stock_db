@@ -472,24 +472,22 @@ class StockChartPlotter:
             ]
         )
         
-        # Apply enhanced crosshair settings to x-axis
+        # Remove rangeslider and hide weekends/non-trading days
+        fig.update_layout(xaxis_rangeslider_visible=False)
+        
+        # Apply enhanced crosshair settings and remove weekends/non-trading days
         fig.update_xaxes(
             showspikes=True,
             spikecolor="rgba(255,255,255,0.8)",
             spikesnap="cursor",
             spikemode="across",
             spikethickness=2,
-            spikedash="solid"
-        )
-        
-        # Remove rangeslider and hide weekends/non-trading days
-        fig.update_layout(xaxis_rangeslider_visible=False)
-        
-        # Remove weekends and non-trading days
-        fig.update_xaxes(
+            spikedash="solid",
             rangebreaks=[
                 dict(bounds=["sat", "mon"]),  # Hide weekends (Saturday and Sunday)
-                # You can add other market holidays here if needed
+                dict(values=["2023-01-02", "2023-01-16", "2023-02-20", "2023-04-07", "2023-05-29", "2023-06-19", "2023-07-04", "2023-09-04", "2023-10-09", "2023-11-23", "2023-12-25"]),  # US holidays 2023
+                dict(values=["2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-10-14", "2024-11-28", "2024-12-25"]),  # US holidays 2024
+                dict(values=["2025-01-01", "2025-01-20", "2025-02-17", "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-10-13", "2025-11-27", "2025-12-25"]),  # US holidays 2025
             ]
         )
         
