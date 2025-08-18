@@ -1108,7 +1108,7 @@ def main():
         run_analysis = st.button("🚀 Run Prediction", type="primary", use_container_width=True)
     
     # Create tabs for different views
-    tab1, tab2, tab3 = st.tabs(["📈 Stock Prediction Results", "🔍 Fractal Pattern Results", "📊 Technical Analysis"])
+    tab1, tab2, tab3 = st.tabs(["📊 Technical Analysis", "📈 Stock Prediction Results", "🔍 Fractal Pattern Results"])
     
     # Initialize session state for persisting results
     if 'analysis_results' not in st.session_state:
@@ -1141,6 +1141,9 @@ def main():
             # ========== SHARED DATA LOADING ==========
             status_text.text("📊 Fetching stock data...")
             progress_bar.progress(10)
+            
+            # Initialize training error variable
+            training_error = None
             
             base_ticker = ticker.replace('.US', '')
             df, error = load_stock_data(ticker)
@@ -1339,34 +1342,25 @@ def main():
                             if os.path.exists(fallback_model_path):
                                 model = joblib.load(fallback_model_path)
                     else:
-                        st.error(f"❌ Model training failed with return code {result.returncode}")
-                        
-                        # Show both stdout and stderr if available
-                        if result.stdout:
-                            st.subheader("Training Output:")
-                            st.code(result.stdout, language="text")
-                        
-                        if result.stderr:
-                            st.subheader("Error Output:")
-                            st.code(result.stderr, language="text")
-                        
-                        # Continue with pattern analysis only
-                        st.info("📊 Continuing with pattern analysis only...")
-                        st.markdown("""
-                        **Note:** Model training failed likely due to:
-                        - Data format incompatibility between the app and training script
-                        - Missing required data columns
-                        - Insufficient historical data
-                        
-                        **Recommendations:**
-                        - Use the Pattern Analysis tab which works independently
-                        - Contact administrator to pre-train models for this ticker
-                        - Use a different ticker that may have existing models
-                        """)
+                        # Store training error for display in Stock Prediction tab
+                        training_error = {
+                            'type': 'training_failed',
+                            'return_code': result.returncode,
+                            'stdout': result.stdout,
+                            'stderr': result.stderr
+                        }
                 except subprocess.TimeoutExpired:
-                    st.error("❌ Model training timed out (>10 minutes)")
+                    # Store timeout error for display in Stock Prediction tab
+                    training_error = {
+                        'type': 'timeout',
+                        'message': "Model training timed out (>10 minutes)"
+                    }
                 except Exception as e:
-                    st.error(f"❌ Training error: {str(e)}")
+                    # Store general error for display in Stock Prediction tab
+                    training_error = {
+                        'type': 'general_error',
+                        'message': str(e)
+                    }
             
             # Try to load existing model if not already loaded
             if model is None:
@@ -1538,67 +1532,819 @@ def main():
         }
         
         # ========== DISPLAY RESULTS IN TABS ==========
+        # ========== TECHNICAL ANALYSIS TAB ==========
         with tab1:
+            st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis Chart</div>', unsafe_allow_html=True)
+            
+            if df is not None and len(df) > 0:
+                st.subheader(f"📊 {ticker} Technical Analysis")
+                
+                # Create technical analysis chart
+                tech_chart = create_technical_analysis_chart(df, ticker)
+                
+                if tech_chart is not None:
+                    st.plotly_chart(tech_chart, use_container_width=True)
+                    
+                    # Add Professional Analysis Criteria
+                    if df is not None and len(df) > 0:
+                        st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Professional Analysis Criteria</div>', unsafe_allow_html=True)
+                        
+                        # Calculate professional metrics from current data
+                        current_data = df.iloc[-1]
+                        current_price_val = current_data['close']
+                        
+                        # Calculate metrics
+                        sma_144 = current_data.get('sma_144', 0)
+                        sma_50 = current_data.get('sma_50', 0)
+                        macd = current_data.get('macd', 0)
+                        macd_hist = current_data.get('macd_histogram', 0)
+                        rsi = current_data.get('rsi_14', 0)
+                        volume_sma = current_data.get('volume_sma', 0)
+                        volatility_20 = current_data.get('volatility_20', 0)
+                        
+                        # Calculate ATR/Price ratio (using volatility as proxy)
+                        atr_to_price = (volatility_20 / current_price_val) if current_price_val > 0 else 0
+                        
+                        # Calculate scores
+                        trend_score = 0
+                        safety_score = 0
+                        relative_strength_score = 0
+                        
+                        # Trend score calculation
+                        if sma_50 > 0 and sma_144 > 0:
+                            if current_price_val > sma_144 and sma_50 > sma_144:
+                                trend_score += 2
+                            if macd > 0 and macd_hist > 0:
+                                trend_score += 2
+                        
+                        # Safety score calculation
+                        if 40 <= rsi <= 75:
+                            safety_score += 2
+                        elif 30 <= rsi <= 80:
+                            safety_score += 1
+                        
+                        if atr_to_price < 0.02:
+                            safety_score += 3
+                        elif atr_to_price < 0.03:
+                            safety_score += 2
+                        elif atr_to_price < 0.05:
+                            safety_score += 1
+                        
+                        if volume_sma > 2000000:
+                            safety_score += 2
+                        elif volume_sma > 1000000:
+                            safety_score += 1
+                        
+                        col_prof1, col_prof2, col_prof3 = st.columns(3)
+                        
+                        with col_prof1:
+                            # Price > SMA144
+                            price_vs_sma144_ok = current_price_val > sma_144 if sma_144 > 0 else False
+                            class1 = "success" if price_vs_sma144_ok else "danger"
+                            color1 = "green" if price_vs_sma144_ok else "red"
+                            
+                            # SMA50 > SMA144
+                            sma50_vs_sma144_ok = sma_50 > sma_144 if sma_50 > 0 and sma_144 > 0 else False
+                            class2 = "success" if sma50_vs_sma144_ok else "danger"
+                            color2 = "green" if sma50_vs_sma144_ok else "red"
+                            
+                            # MACD bullish
+                            macd_ok = macd > 0 and macd_hist > 0
+                            class3 = "success" if macd_ok else "danger"
+                            color3 = "green" if macd_ok else "red"
+                            
+                            st.markdown(f'''
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-arrow-trend-up"></i> Strong Trend Indicators
+                                </div>
+                                <div class="criteria-item {class1}">
+                                    <strong><i class="fas fa-arrow-up"></i> Price > SMA144:</strong>
+                                    <span style='color: {color1}; font-weight: 600;'>${current_price_val:.2f} vs ${sma_144:.2f}</span>
+                                </div>
+                                <div class="criteria-item {class2}">
+                                    <strong><i class="fas fa-chart-line"></i> SMA50 > SMA144:</strong>
+                                    <span style='color: {color2}; font-weight: 600;'>${sma_50:.2f} vs ${sma_144:.2f}</span>
+                                </div>
+                                <div class="criteria-item {class3}">
+                                    <strong><i class="fas fa-wave-square"></i> MACD Bullish:</strong>
+                                    <span style='color: {color3}; font-weight: 600;'>MACD: {macd:.4f}, Hist: {macd_hist:.4f}</span>
+                                </div>
+                                <div class="score-badge" style='background: linear-gradient(135deg, {'#28a745' if trend_score >= 3 else '#ffc107' if trend_score >= 2 else '#dc3545'}, {'#20c997' if trend_score >= 3 else '#fd7e14' if trend_score >= 2 else '#e83e8c'}); color: white;'>
+                                    <i class="fas fa-chart-line"></i> Trend Score: {trend_score}/4
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
+                        
+                        with col_prof2:
+                            # ATR/Price ratio
+                            atr_ok = atr_to_price < 0.05
+                            class4 = "success" if atr_ok else "danger"
+                            color4 = "green" if atr_ok else "red"
+                            
+                            # RSI range
+                            rsi_ok = 25 <= rsi <= 85
+                            class5 = "success" if rsi_ok else "danger"
+                            color5 = "green" if rsi_ok else "red"
+                            
+                            # Volume
+                            volume_ok = volume_sma > 500000
+                            class6 = "success" if volume_ok else "danger"
+                            color6 = "green" if volume_ok else "red"
+                            
+                            st.markdown(f'''
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-shield-alt"></i> Safety Requirements
+                                </div>
+                                <div class="criteria-item {class4}">
+                                    <strong><i class="fas fa-chart-area"></i> ATR/Price < 5%:</strong>
+                                    <span style='color: {color4}; font-weight: 600;'>{atr_to_price:.3%}</span>
+                                </div>
+                                <div class="criteria-item {class5}">
+                                    <strong><i class="fas fa-tachometer-alt"></i> RSI 25-85:</strong>
+                                    <span style='color: {color5}; font-weight: 600;'>{rsi:.1f}</span>
+                                </div>
+                                <div class="criteria-item {class6}">
+                                    <strong><i class="fas fa-water"></i> Volume > 500k:</strong>
+                                    <span style='color: {color6}; font-weight: 600;'>{volume_sma:,.0f}</span>
+                                </div>
+                                <div class="score-badge" style='background: linear-gradient(135deg, {'#28a745' if safety_score >= 4 else '#ffc107' if safety_score >= 2 else '#dc3545'}, {'#20c997' if safety_score >= 4 else '#fd7e14' if safety_score >= 2 else '#e83e8c'}); color: white;'>
+                                    <i class="fas fa-shield-alt"></i> Safety Score: {safety_score}/6
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
+                    
+                        with col_prof3:
+                            # Calculate relative strength metrics
+                            momentum_items = []
+                            
+                            # 3M Momentum
+                            if len(df) >= 60:
+                                price_60d_ago = df['close'].iloc[-60]
+                                momentum_3m = (current_price_val - price_60d_ago) / price_60d_ago if price_60d_ago > 0 else 0
+                                momentum_ok = momentum_3m > 0.02
+                                class7 = "success" if momentum_ok else "danger"
+                                color7 = "green" if momentum_ok else "red"
+                                if momentum_ok:
+                                    relative_strength_score += 2
+                                momentum_items.append(f"""
+<div class="criteria-item {class7}">
+    <strong><i class="fas fa-rocket"></i> 3M Momentum > 2%:</strong>
+    <span style="color: {color7}; font-weight: 600;">{momentum_3m:.1%}</span>
+</div>""")
+                            else:
+                                momentum_items.append("""
+<div class="criteria-item">
+    <strong><i class="fas fa-rocket"></i> 3M Momentum:</strong>
+    <span style="color: gray; font-weight: 600;">Insufficient data</span>
+</div>""")
+                            
+                            # 52W High proximity
+                            if len(df) >= 252:
+                                high_52w = df['high'].tail(252).max()
+                                distance_from_high = (current_price_val - high_52w) / high_52w
+                                near_high_ok = distance_from_high > -0.50
+                                class8 = "success" if near_high_ok else "danger"
+                                color8 = "green" if near_high_ok else "red"
+                                if near_high_ok:
+                                    relative_strength_score += 2
+                                momentum_items.append(f"""
+<div class="criteria-item {class8}">
+    <strong><i class="fas fa-mountain"></i> Near 52W High:</strong>
+    <span style="color: {color8}; font-weight: 600;">{distance_from_high:.1%}</span>
+</div>""")
+                            else:
+                                high_available = df['high'].max()
+                                distance_from_high = (current_price_val - high_available) / high_available
+                                class8 = "success" if distance_from_high > -0.20 else "danger"
+                                color8 = "green" if distance_from_high > -0.20 else "red"
+                                if distance_from_high > -0.20:
+                                    relative_strength_score += 1
+                                momentum_items.append(f"""
+<div class="criteria-item {class8}">
+    <strong><i class="fas fa-mountain"></i> Near Recent High:</strong>
+    <span style="color: {color8}; font-weight: 600;">{distance_from_high:.1%}</span>
+</div>""")
+                            
+                            # Recent price stability
+                            if len(df) >= 5:
+                                price_5d_ago = df['close'].iloc[-5]
+                                recent_change = (current_price_val - price_5d_ago) / price_5d_ago
+                                stable_ok = -0.10 < recent_change < 0.20
+                                class9 = "success" if stable_ok else "danger"
+                                color9 = "green" if stable_ok else "red"
+                                if stable_ok:
+                                    relative_strength_score += 1
+                                momentum_items.append(f"""
+<div class="criteria-item {class9}">
+    <strong><i class="fas fa-calendar-week"></i> 5D Change:</strong>
+    <span style="color: {color9}; font-weight: 600;">{recent_change:+.1%}</span>
+</div>""")
+                            
+                            # Technical confirmation
+                            macd_signal = current_data.get('macd_signal', 0)
+                            tech_confirm_ok = macd > macd_signal
+                            class10 = "success" if tech_confirm_ok else "danger"
+                            color10 = "green" if tech_confirm_ok else "red"
+                            if tech_confirm_ok:
+                                relative_strength_score += 1
+                            momentum_items.append(f"""
+<div class="criteria-item {class10}">
+    <strong><i class="fas fa-check-circle"></i> MACD > Signal:</strong>
+    <span style="color: {color10}; font-weight: 600;">{macd:.4f} vs {macd_signal:.4f}</span>
+</div>""")
+                            
+                            st.markdown(f"""
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-rocket"></i> Relative Strength
+                                </div>
+                                {''.join(momentum_items)}
+                                <div class="score-badge" style="background: linear-gradient(135deg, {'#28a745' if relative_strength_score >= 4 else '#ffc107' if relative_strength_score >= 2 else '#dc3545'}, {'#20c997' if relative_strength_score >= 4 else '#fd7e14' if relative_strength_score >= 2 else '#e83e8c'}); color: white;">
+                                    <i class="fas fa-rocket"></i> Strength Score: {relative_strength_score}/6
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        # Calculate final total score and display risk level
+                        final_total_score = trend_score + safety_score + relative_strength_score
+                        if final_total_score >= 12:
+                            final_risk_level = "LOW RISK"
+                            final_risk_class = "risk-low"
+                        elif final_total_score >= 8:
+                            final_risk_level = "MEDIUM RISK"
+                            final_risk_class = "risk-medium"
+                        else:
+                            final_risk_level = "HIGH RISK"
+                            final_risk_class = "risk-high"
+                        
+                        st.markdown(f'''
+                        <div style="text-align: center; margin: 2rem 0;">
+                            <div class="risk-badge {final_risk_class}">
+                                <i class="fas fa-shield-alt"></i> {final_risk_level}
+                            </div>
+                            <div class="risk-badge {final_risk_class}">
+                                <i class="fas fa-star"></i> Total Score: {final_total_score}/16
+                            </div>
+                        </div>
+                        <div style="text-align: center; margin: 1rem 0; font-size: 0.9rem; color: #6c757d;">
+                            Trend: {trend_score}/4 | Safety: {safety_score}/6 | Strength: {relative_strength_score}/6
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    
+                    # Add technical analysis insights
+                    st.markdown('<div class="section-header"><i class="fas fa-chart-bar"></i> Technical Analysis Insights</div>', unsafe_allow_html=True)
+                    
+                    # Calculate current technical indicators
+                    close = df['close']
+                    current_price = close.iloc[-1]
+                    
+                    # Bollinger Bands analysis
+                    bb_sma, bb_upper, bb_lower = TechnicalIndicators.bollinger_bands(close, 20, 2)
+                    current_bb_upper = bb_upper.iloc[-1]
+                    current_bb_lower = bb_lower.iloc[-1]
+                    current_bb_sma = bb_sma.iloc[-1]
+                    
+                    # SMA analysis
+                    sma_20 = TechnicalIndicators.sma(close, 20)
+                    sma_50 = TechnicalIndicators.sma(close, 50)
+                    sma_144 = TechnicalIndicators.sma(close, 144)
+                    
+                    current_sma_20 = sma_20.iloc[-1]
+                    current_sma_50 = sma_50.iloc[-1]
+                    current_sma_144 = sma_144.iloc[-1]
+                    
+                    # Price Distance to MA analysis
+                    pma_fast, pma_fast_signal, pma_fast_cycle = TechnicalIndicators.price_distance_to_ma(
+                        close, ma_length=20, signal_length=9, exponential=False
+                    )
+                    current_pma = pma_fast.iloc[-1]
+                    current_signal = pma_fast_signal.iloc[-1]
+                    current_cycle = pma_fast_cycle.iloc[-1]
+                    
+                    # Display technical insights
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        # SMA 20 analysis
+                        sma_20_above = current_price > current_sma_20
+                        sma_20_class = "success" if sma_20_above else "danger"
+                        sma_20_color = "green" if sma_20_above else "red"
+                        
+                        # SMA 50 analysis
+                        sma_50_above = current_price > current_sma_50
+                        sma_50_class = "success" if sma_50_above else "danger"
+                        sma_50_color = "green" if sma_50_above else "red"
+                        
+                        # SMA 144 analysis
+                        sma_144_above = current_price > current_sma_144
+                        sma_144_class = "success" if sma_144_above else "danger"
+                        sma_144_color = "green" if sma_144_above else "red"
+                        
+                        # Trend analysis
+                        if current_sma_20 > current_sma_50 > current_sma_144:
+                            trend_class = "success"
+                            trend_color = "green"
+                            trend_status = "Bullish"
+                        elif current_sma_20 < current_sma_50 < current_sma_144:
+                            trend_class = "danger"
+                            trend_color = "red"
+                            trend_status = "Bearish"
+                        else:
+                            trend_class = "warning"
+                            trend_color = "orange"
+                            trend_status = "Mixed"
+                        
+                        st.markdown(f'''
+                        <div class="criteria-card">
+                            <div class="criteria-header">
+                                <i class="fas fa-chart-line"></i> Moving Averages
+                            </div>
+                            <div class="criteria-item {sma_20_class}">
+                                <strong><i class="fas fa-arrow-up"></i> SMA 20:</strong>
+                                <span style='color: {sma_20_color}; font-weight: 600;'>${current_sma_20:.2f} ({current_price - current_sma_20:+.2f})</span>
+                            </div>
+                            <div class="criteria-item {sma_50_class}">
+                                <strong><i class="fas fa-chart-line"></i> SMA 50:</strong>
+                                <span style='color: {sma_50_color}; font-weight: 600;'>${current_sma_50:.2f} ({current_price - current_sma_50:+.2f})</span>
+                            </div>
+                            <div class="criteria-item {sma_144_class}">
+                                <strong><i class="fas fa-arrows-alt-h"></i> SMA 144:</strong>
+                                <span style='color: {sma_144_color}; font-weight: 600;'>${current_sma_144:.2f} ({current_price - current_sma_144:+.2f})</span>
+                            </div>
+                            <div class="criteria-item {trend_class}">
+                                <strong><i class="fas fa-trending-up"></i> Trend:</strong>
+                                <span style='color: {trend_color}; font-weight: 600;'>{trend_status}</span>
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    
+                    with col2:
+                        # Bollinger Bands analysis
+                        bb_position = ((current_price - current_bb_lower) / (current_bb_upper - current_bb_lower)) * 100
+                        
+                        if current_price > current_bb_upper:
+                            bb_class = "danger"
+                            bb_color = "red"
+                            bb_status = "Overbought"
+                        elif current_price < current_bb_lower:
+                            bb_class = "success"
+                            bb_color = "green"
+                            bb_status = "Oversold"
+                        else:
+                            bb_class = "warning"
+                            bb_color = "orange"
+                            bb_status = "Neutral"
+                        
+                        st.markdown(f'''
+                        <div class="criteria-card">
+                            <div class="criteria-header">
+                                <i class="fas fa-chart-area"></i> Bollinger Bands
+                            </div>
+                            <div class="criteria-item {bb_class}">
+                                <strong><i class="fas fa-percentage"></i> BB Position:</strong>
+                                <span style='color: {bb_color}; font-weight: 600;'>{bb_position:.1f}% ({bb_status})</span>
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-arrow-up"></i> BB Upper:</strong>
+                                <span style='color: #666; font-weight: 600;'>${current_bb_upper:.2f}</span>
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-arrow-down"></i> BB Lower:</strong>
+                                <span style='color: #666; font-weight: 600;'>${current_bb_lower:.2f}</span>
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-arrows-alt-h"></i> BB Width:</strong>
+                                <span style='color: #666; font-weight: 600;'>${current_bb_upper - current_bb_lower:.2f}</span>
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    
+                    with col3:
+                        # PMA analysis
+                        pma_above = current_pma > 0
+                        pma_class = "success" if pma_above else "danger"
+                        pma_color = "green" if pma_above else "red"
+                        
+                        # Cycle analysis
+                        cycle_positive = current_cycle > 0
+                        cycle_class = "success" if cycle_positive else "danger"
+                        cycle_color = "green" if cycle_positive else "red"
+                        
+                        st.markdown(f'''
+                        <div class="criteria-card">
+                            <div class="criteria-header">
+                                <i class="fas fa-wave-square"></i> Price/MA Analysis
+                            </div>
+                            <div class="criteria-item {pma_class}">
+                                <strong><i class="fas fa-percentage"></i> Price/MA %:</strong>
+                                <span style='color: {pma_color}; font-weight: 600;'>{current_pma:.2f}%</span>
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-signal"></i> Signal Line:</strong>
+                                <span style='color: #666; font-weight: 600;'>{current_signal:.2f}%</span>
+                            </div>
+                            <div class="criteria-item {cycle_class}">
+                                <strong><i class="fas fa-sync"></i> Cycle:</strong>
+                                <span style='color: {cycle_color}; font-weight: 600;'>{current_cycle:.2f}%</span>
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    
+                    # Add volume analysis (only if volume data exists)
+                    if 'volume' in df.columns:
+                        st.subheader("📊 Volume Analysis")
+                        col_vol1, col_vol2, col_vol3 = st.columns(3)
+                        
+                        with col_vol1:
+                            current_volume = df['volume'].iloc[-1]
+                            avg_volume = df['volume'].rolling(20).mean().iloc[-1]
+                            volume_ratio = current_volume / avg_volume
+                            
+                            if volume_ratio > 1.5:
+                                volume_status = "🔴 High Volume"
+                            elif volume_ratio < 0.5:
+                                volume_status = "🟢 Low Volume"
+                            else:
+                                volume_status = "🟡 Normal Volume"
+                            
+                            st.metric("Current Volume", f"{current_volume:,.0f}")
+                            st.metric("Avg Volume (20d)", f"{avg_volume:,.0f}")
+                            st.metric("Volume Ratio", f"{volume_ratio:.2f}x", volume_status)
+                        
+                        with col_vol2:
+                            # Price change analysis
+                            price_change_1d = ((current_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
+                            price_change_5d = ((current_price - df['close'].iloc[-6]) / df['close'].iloc[-6]) * 100
+                            price_change_20d = ((current_price - df['close'].iloc[-21]) / df['close'].iloc[-21]) * 100
+                            
+                            st.metric("1-Day Change", f"{price_change_1d:+.2f}%")
+                            st.metric("5-Day Change", f"{price_change_5d:+.2f}%")
+                            st.metric("20-Day Change", f"{price_change_20d:+.2f}%")
+                        
+                        with col_vol3:
+                            # Volatility analysis
+                            returns = df['close'].pct_change().dropna()
+                            volatility_20d = returns.rolling(20).std().iloc[-1] * 100
+                            volatility_60d = returns.rolling(60).std().iloc[-1] * 100
+                            
+                            st.metric("20-Day Volatility", f"{volatility_20d:.2f}%")
+                            st.metric("60-Day Volatility", f"{volatility_60d:.2f}%")
+                            
+                            if volatility_20d > volatility_60d:
+                                vol_status = "🔴 Increasing"
+                            else:
+                                vol_status = "🟢 Decreasing"
+                            
+                            st.metric("Volatility Trend", vol_status)
+                    else:
+                        # Show price change and volatility analysis without volume
+                        st.markdown('<div class="section-header"><i class="fas fa-chart-area"></i> Price & Volatility Analysis</div>', unsafe_allow_html=True)
+                        col_price, col_vol = st.columns(2)
+                        
+                        with col_price:
+                            # Price change analysis
+                            price_change_1d = ((current_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
+                            price_change_5d = ((current_price - df['close'].iloc[-6]) / df['close'].iloc[-6]) * 100
+                            price_change_20d = ((current_price - df['close'].iloc[-21]) / df['close'].iloc[-21]) * 100
+                            
+                            # Determine classes and colors for price changes
+                            change_1d_class = "success" if price_change_1d >= 0 else "danger"
+                            change_1d_color = "green" if price_change_1d >= 0 else "red"
+                            
+                            change_5d_class = "success" if price_change_5d >= 0 else "danger"
+                            change_5d_color = "green" if price_change_5d >= 0 else "red"
+                            
+                            change_20d_class = "success" if price_change_20d >= 0 else "danger"
+                            change_20d_color = "green" if price_change_20d >= 0 else "red"
+                            
+                            st.markdown(f'''
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-chart-line"></i> Price Performance
+                                </div>
+                                <div class="criteria-item {change_1d_class}">
+                                    <strong><i class="fas fa-calendar-day"></i> 1-Day Change:</strong>
+                                    <span style='color: {change_1d_color}; font-weight: 600;'>{price_change_1d:+.2f}%</span>
+                                </div>
+                                <div class="criteria-item {change_5d_class}">
+                                    <strong><i class="fas fa-calendar-week"></i> 5-Day Change:</strong>
+                                    <span style='color: {change_5d_color}; font-weight: 600;'>{price_change_5d:+.2f}%</span>
+                                </div>
+                                <div class="criteria-item {change_20d_class}">
+                                    <strong><i class="fas fa-calendar-alt"></i> 20-Day Change:</strong>
+                                    <span style='color: {change_20d_color}; font-weight: 600;'>{price_change_20d:+.2f}%</span>
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
+                        
+                        with col_vol:
+                            # Volatility analysis
+                            returns = df['close'].pct_change().dropna()
+                            volatility_20d = returns.rolling(20).std().iloc[-1] * 100
+                            volatility_60d = returns.rolling(60).std().iloc[-1] * 100
+                            
+                            # Determine volatility trend and classes
+                            vol_increasing = volatility_20d > volatility_60d
+                            vol_trend_class = "danger" if vol_increasing else "success"
+                            vol_trend_color = "red" if vol_increasing else "green"
+                            vol_status = "Increasing" if vol_increasing else "Decreasing"
+                            
+                            # Volatility level assessment
+                            if volatility_20d > 30:
+                                vol_level_class = "danger"
+                                vol_level_color = "red"
+                                vol_level = "High"
+                            elif volatility_20d > 15:
+                                vol_level_class = "warning"
+                                vol_level_color = "orange"
+                                vol_level = "Moderate"
+                            else:
+                                vol_level_class = "success"
+                                vol_level_color = "green"
+                                vol_level = "Low"
+                            
+                            st.markdown(f'''
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-wave-square"></i> Volatility Analysis
+                                </div>
+                                <div class="criteria-item {vol_level_class}">
+                                    <strong><i class="fas fa-chart-area"></i> 20-Day Volatility:</strong>
+                                    <span style='color: {vol_level_color}; font-weight: 600;'>{volatility_20d:.2f}% ({vol_level})</span>
+                                </div>
+                                <div class="criteria-item">
+                                    <strong><i class="fas fa-history"></i> 60-Day Volatility:</strong>
+                                    <span style='color: #666; font-weight: 600;'>{volatility_60d:.2f}%</span>
+                                </div>
+                                <div class="criteria-item {vol_trend_class}">
+                                    <strong><i class="fas fa-trending-up"></i> Volatility Trend:</strong>
+                                    <span style='color: {vol_trend_color}; font-weight: 600;'>{vol_status}</span>
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
+                    
+                    # Add support and resistance levels
+                    st.markdown('<div class="section-header"><i class="fas fa-crosshairs"></i> Support & Resistance Levels</div>', unsafe_allow_html=True)
+                    
+                    # Calculate recent highs and lows
+                    recent_high = df['high'].tail(20).max()
+                    recent_low = df['low'].tail(20).min()
+                    current_high = df['high'].iloc[-1]
+                    current_low = df['low'].iloc[-1]
+                    
+                    col_sr1, col_sr2, col_sr3 = st.columns(3)
+                    
+                    with col_sr1:
+                        resistance_distance = ((recent_high - current_price) / current_price) * 100
+                        
+                        # Determine resistance level status
+                        if resistance_distance > 5:
+                            resistance_class = "success"
+                            resistance_color = "green"
+                            resistance_status = "Far"
+                        elif resistance_distance > 2:
+                            resistance_class = "warning"
+                            resistance_color = "orange"
+                            resistance_status = "Near"
+                        else:
+                            resistance_class = "danger"
+                            resistance_color = "red"
+                            resistance_status = "Very Close"
+                        
+                        st.markdown(f'''
+                        <div class="criteria-card">
+                            <div class="criteria-header">
+                                <i class="fas fa-arrow-up"></i> Resistance Levels
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-mountain"></i> Recent High (20d):</strong>
+                                <span style='color: #666; font-weight: 600;'>${recent_high:.2f}</span>
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-chart-line"></i> Current High:</strong>
+                                <span style='color: #666; font-weight: 600;'>${current_high:.2f}</span>
+                            </div>
+                            <div class="criteria-item {resistance_class}">
+                                <strong><i class="fas fa-ruler-vertical"></i> Distance to Resistance:</strong>
+                                <span style='color: {resistance_color}; font-weight: 600;'>{resistance_distance:+.2f}% ({resistance_status})</span>
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    
+                    with col_sr2:
+                        support_distance = ((current_price - recent_low) / current_price) * 100
+                        
+                        # Determine support level status
+                        if support_distance > 5:
+                            support_class = "success"
+                            support_color = "green"
+                            support_status = "Strong"
+                        elif support_distance > 2:
+                            support_class = "warning"
+                            support_color = "orange"
+                            support_status = "Moderate"
+                        else:
+                            support_class = "danger"
+                            support_color = "red"
+                            support_status = "Weak"
+                        
+                        st.markdown(f'''
+                        <div class="criteria-card">
+                            <div class="criteria-header">
+                                <i class="fas fa-arrow-down"></i> Support Levels
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-valley"></i> Recent Low (20d):</strong>
+                                <span style='color: #666; font-weight: 600;'>${recent_low:.2f}</span>
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-chart-line"></i> Current Low:</strong>
+                                <span style='color: #666; font-weight: 600;'>${current_low:.2f}</span>
+                            </div>
+                            <div class="criteria-item {support_class}">
+                                <strong><i class="fas fa-ruler-vertical"></i> Distance to Support:</strong>
+                                <span style='color: {support_color}; font-weight: 600;'>{support_distance:+.2f}% ({support_status})</span>
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    
+                    with col_sr3:
+                        # Risk/Reward ratio
+                        risk = current_price - recent_low
+                        reward = recent_high - current_price
+                        risk_reward_ratio = reward / risk if risk > 0 else 0
+                        
+                        # Determine risk/reward assessment
+                        if risk_reward_ratio >= 2.0:
+                            rr_class = "success"
+                            rr_color = "green"
+                            rr_status = "Favorable"
+                        elif risk_reward_ratio >= 1.0:
+                            rr_class = "warning"
+                            rr_color = "orange"
+                            rr_status = "Balanced"
+                        else:
+                            rr_class = "danger"
+                            rr_color = "red"
+                            rr_status = "Unfavorable"
+                        
+                        st.markdown(f'''
+                        <div class="criteria-card">
+                            <div class="criteria-header">
+                                <i class="fas fa-balance-scale"></i> Risk/Reward Analysis
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-exclamation-triangle"></i> Risk:</strong>
+                                <span style='color: #666; font-weight: 600;'>${risk:.2f}</span>
+                            </div>
+                            <div class="criteria-item">
+                                <strong><i class="fas fa-gift"></i> Reward:</strong>
+                                <span style='color: #666; font-weight: 600;'>${reward:.2f}</span>
+                            </div>
+                            <div class="criteria-item {rr_class}">
+                                <strong><i class="fas fa-calculator"></i> Risk/Reward Ratio:</strong>
+                                <span style='color: {rr_color}; font-weight: 600;'>{risk_reward_ratio:.2f} ({rr_status})</span>
+                            </div>
+                            <div class="score-badge" style='background: linear-gradient(135deg, {rr_color}, {'#20c997' if rr_class == 'success' else '#fd7e14' if rr_class == 'warning' else '#e83e8c'}); color: white;'>
+                                <i class="fas fa-chart-pie"></i> R/R Score: {risk_reward_ratio:.2f}
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                
+                else:
+                    st.error("Failed to create technical analysis chart")
+            else:
+                st.info("👆 Run analysis first to see technical analysis chart")
+        
+        with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction Results</div>', unsafe_allow_html=True)
+            
+            # Display training errors if any
+            if training_error:
+                if training_error['type'] == 'training_failed':
+                    st.error(f"❌ Model training failed with return code {training_error['return_code']}")
+                    
+                    # Show both stdout and stderr if available
+                    if training_error.get('stdout'):
+                        st.subheader("Training Output:")
+                        st.code(training_error['stdout'], language="text")
+                    
+                    if training_error.get('stderr'):
+                        st.subheader("Error Output:")
+                        st.code(training_error['stderr'], language="text")
+                    
+                    # Continue with pattern analysis only
+                    st.info("📊 Continuing with pattern analysis only...")
+                    st.markdown("""
+                    **Note:** Model training failed likely due to:
+                    - Data format incompatibility between the app and training script
+                    - Missing required data columns
+                    - Insufficient historical data
+                    
+                    **Recommendations:**
+                    - Use the Pattern Analysis tab which works independently
+                    - Contact administrator to pre-train models for this ticker
+                    - Use a different ticker that may have existing models
+                    """)
+                elif training_error['type'] == 'timeout':
+                    st.error(f"❌ {training_error['message']}")
+                elif training_error['type'] == 'general_error':
+                    st.error(f"❌ Training error: {training_error['message']}")
             
             # Display basic results
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                st.markdown(f"### 📈 {ticker} Current Market Data")
-                
                 price_color = "green" if price_change >= 0 else "red"
                 change_symbol = "+" if price_change >= 0 else ""
                 
-                st.markdown(f"""
-                <div class="metric-card">
-                    <h4>💰 Current Price</h4>
-                    <h2 style="color: {price_color};">${current_price:.2f}</h2>
-                    <p style="color: {price_color};">{change_symbol}${price_change:.2f} ({price_change_pct:+.2f}%)</p>
-                </div>
-                """, unsafe_allow_html=True)
+                # Determine price change class
+                price_class = "success" if price_change >= 0 else "danger"
                 
-                # Market metrics
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.metric("📅 Open", f"${open_today:.2f}")
-                    st.metric("📊 Volume", f"{current_volume:,.0f}")
-                with col_b:
-                    st.metric("🔺 High", f"${high_today:.2f}")
-                    st.metric("🔻 Low", f"${low_today:.2f}")
+                st.markdown(f'''
+                <div class="criteria-card">
+                    <div class="criteria-header">
+                        <i class="fas fa-chart-line"></i> {ticker} Current Market Data
+                    </div>
+                    <div class="criteria-item {price_class}">
+                        <strong><i class="fas fa-dollar-sign"></i> Current Price:</strong>
+                        <span style='color: {price_color}; font-weight: 600; font-size: 1.2em;'>${current_price:.2f} ({change_symbol}{price_change_pct:+.2f}%)</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-play"></i> Open:</strong>
+                        <span style='color: #666; font-weight: 600;'>${open_today:.2f}</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-arrow-up"></i> High:</strong>
+                        <span style='color: #666; font-weight: 600;'>${high_today:.2f}</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-arrow-down"></i> Low:</strong>
+                        <span style='color: #666; font-weight: 600;'>${low_today:.2f}</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-water"></i> Volume:</strong>
+                        <span style='color: #666; font-weight: 600;'>{current_volume:,.0f}</span>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
             
             with col2:
-                st.markdown("### 🔮 Prediction Results")
-                
-                # Placeholder - will be updated with 7-day model results
-                prediction_placeholder = st.empty()
-                probability_placeholder = st.empty()
-                
                 if proba is not None:
                     best_class_idx = np.argmax(proba)
                     best_prob = proba[best_class_idx]
                     prediction_text = class_labels.get(best_class_idx, f"Class {best_class_idx}")
                     
-                    with prediction_placeholder.container():
-                        st.markdown(f"""
-                        <div class="prediction-box">
-                            <h3>🎯 Predicted Outcome</h3>
-                            <h2>{prediction_text}</h2>
-                            <p>Confidence: {best_prob:.1%}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    # Determine prediction class based on probability
+                    if best_prob >= 0.7:
+                        pred_class = "success"
+                        pred_color = "green"
+                        confidence_level = "High"
+                    elif best_prob >= 0.5:
+                        pred_class = "warning" 
+                        pred_color = "orange"
+                        confidence_level = "Medium"
+                    else:
+                        pred_class = "danger"
+                        pred_color = "red"
+                        confidence_level = "Low"
                     
-                    with probability_placeholder.container():
-                        st.metric("📊 Model Probability", f"{best_prob:.1%}")
-                else:
-                    with prediction_placeholder.container():
-                        st.markdown("""
-                        <div class="metric-card">
-                            <h4>⚠️ No Model Available</h4>
-                            <p>No trained model found for this ticker.<br>
-                            Pattern analysis is still available in the second tab.</p>
+                    st.markdown(f'''
+                    <div class="criteria-card">
+                        <div class="criteria-header">
+                            <i class="fas fa-crystal-ball"></i> AI Prediction Results
                         </div>
-                        """, unsafe_allow_html=True)
+                        <div class="criteria-item {pred_class}">
+                            <strong><i class="fas fa-target"></i> Predicted Outcome:</strong>
+                            <span style='color: {pred_color}; font-weight: 600; font-size: 1.1em;'>{prediction_text}</span>
+                        </div>
+                        <div class="criteria-item {pred_class}">
+                            <strong><i class="fas fa-percentage"></i> Confidence:</strong>
+                            <span style='color: {pred_color}; font-weight: 600;'>{best_prob:.1%} ({confidence_level})</span>
+                        </div>
+                        <div class="score-badge" style='background: linear-gradient(135deg, {pred_color}, {'#20c997' if pred_class == 'success' else '#fd7e14' if pred_class == 'warning' else '#e83e8c'}); color: white;'>
+                            <i class="fas fa-brain"></i> AI Confidence: {best_prob:.1%}
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                else:
+                    st.markdown('''
+                    <div class="criteria-card">
+                        <div class="criteria-header">
+                            <i class="fas fa-exclamation-triangle"></i> Prediction Status
+                        </div>
+                        <div class="criteria-item danger">
+                            <strong><i class="fas fa-times"></i> Model Status:</strong>
+                            <span style='color: red; font-weight: 600;'>No Model Available</span>
+                        </div>
+                        <div class="criteria-item">
+                            <strong><i class="fas fa-info-circle"></i> Note:</strong>
+                            <span style='color: #666; font-weight: 600;'>Pattern analysis available in Fractal tab</span>
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
             
             # Add 7-Day Probability Matrix if model is available
             if model is not None:
@@ -1786,17 +2532,7 @@ def main():
                                 class_names = ['Strong Down', 'Down', 'Sideways', 'Up', 'Strong Up']
                                 best_class_name = class_names[best_class_idx]
                                 
-                                with prediction_placeholder.container():
-                                    st.markdown(f"""
-                                    <div class="prediction-box">
-                                        <h3>🎯 Predicted Outcome (Day-1 Model)</h3>
-                                        <h2>{best_class_name}</h2>
-                                        <p>Model Confidence: {best_prob:.1%}</p>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                
-                                with probability_placeholder.container():
-                                    st.metric("📊 Model Probability", f"{best_prob:.1%}")
+                                st.success(f"✅ Day-1 Model Prediction: {best_class_name} (Confidence: {best_prob:.1%})")
                             
                             # Add to bubble chart data
                             day_label = day_labels[day_ahead - 1]
@@ -1851,282 +2587,96 @@ def main():
                         )
                         
                         _ = st.plotly_chart(fig_bubble, use_container_width=True)
-            
-            # Add Professional Analysis Criteria
-            if model is not None and df is not None:
-                st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Professional Analysis Criteria</div>', unsafe_allow_html=True)
-                
-                # Calculate professional metrics from current data
-                current_data = df.iloc[-1]
-                current_price_val = current_data['close']
-                
-                # Calculate metrics
-                sma_144 = current_data.get('sma_144', 0)
-                sma_50 = current_data.get('sma_50', 0)
-                macd = current_data.get('macd', 0)
-                macd_hist = current_data.get('macd_histogram', 0)
-                rsi = current_data.get('rsi_14', 0)
-                volume_sma = current_data.get('volume_sma', 0)
-                volatility_20 = current_data.get('volatility_20', 0)
-                
-                # Calculate ATR/Price ratio (using volatility as proxy)
-                atr_to_price = (volatility_20 / current_price_val) if current_price_val > 0 else 0
-                
-                # Calculate scores
-                trend_score = 0
-                safety_score = 0
-                relative_strength_score = 0
-                
-                # Trend score calculation
-                if sma_50 > 0 and sma_144 > 0:
-                    if current_price_val > sma_144 and sma_50 > sma_144:
-                        trend_score += 2
-                    if macd > 0 and macd_hist > 0:
-                        trend_score += 2
-                
-                # Safety score calculation
-                if 40 <= rsi <= 75:
-                    safety_score += 2
-                elif 30 <= rsi <= 80:
-                    safety_score += 1
-                
-                if atr_to_price < 0.02:
-                    safety_score += 3
-                elif atr_to_price < 0.03:
-                    safety_score += 2
-                elif atr_to_price < 0.05:
-                    safety_score += 1
-                
-                if volume_sma > 2000000:
-                    safety_score += 2
-                elif volume_sma > 1000000:
-                    safety_score += 1
-                
-                col_prof1, col_prof2, col_prof3 = st.columns(3)
-                
-                with col_prof1:
-                    # Price > SMA144
-                    price_vs_sma144_ok = current_price_val > sma_144 if sma_144 > 0 else False
-                    class1 = "success" if price_vs_sma144_ok else "danger"
-                    color1 = "green" if price_vs_sma144_ok else "red"
-                    
-                    # SMA50 > SMA144
-                    sma50_vs_sma144_ok = sma_50 > sma_144 if sma_50 > 0 and sma_144 > 0 else False
-                    class2 = "success" if sma50_vs_sma144_ok else "danger"
-                    color2 = "green" if sma50_vs_sma144_ok else "red"
-                    
-                    # MACD bullish
-                    macd_ok = macd > 0 and macd_hist > 0
-                    class3 = "success" if macd_ok else "danger"
-                    color3 = "green" if macd_ok else "red"
-                    
-                    st.markdown(f'''
-                    <div class="criteria-card">
-                        <div class="criteria-header">
-                            <i class="fas fa-arrow-trend-up"></i> Strong Trend Indicators
-                        </div>
-                        <div class="criteria-item {class1}">
-                            <strong><i class="fas fa-arrow-up"></i> Price > SMA144:</strong>
-                            <span style='color: {color1}; font-weight: 600;'>${current_price_val:.2f} vs ${sma_144:.2f}</span>
-                        </div>
-                        <div class="criteria-item {class2}">
-                            <strong><i class="fas fa-chart-line"></i> SMA50 > SMA144:</strong>
-                            <span style='color: {color2}; font-weight: 600;'>${sma_50:.2f} vs ${sma_144:.2f}</span>
-                        </div>
-                        <div class="criteria-item {class3}">
-                            <strong><i class="fas fa-wave-square"></i> MACD Bullish:</strong>
-                            <span style='color: {color3}; font-weight: 600;'>MACD: {macd:.4f}, Hist: {macd_hist:.4f}</span>
-                        </div>
-                        <div class="score-badge" style='background: linear-gradient(135deg, {'#28a745' if trend_score >= 3 else '#ffc107' if trend_score >= 2 else '#dc3545'}, {'#20c997' if trend_score >= 3 else '#fd7e14' if trend_score >= 2 else '#e83e8c'}); color: white;'>
-                            <i class="fas fa-chart-line"></i> Trend Score: {trend_score}/4
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                
-                with col_prof2:
-                    # ATR/Price ratio
-                    atr_ok = atr_to_price < 0.05
-                    class4 = "success" if atr_ok else "danger"
-                    color4 = "green" if atr_ok else "red"
-                    
-                    # RSI range
-                    rsi_ok = 25 <= rsi <= 85
-                    class5 = "success" if rsi_ok else "danger"
-                    color5 = "green" if rsi_ok else "red"
-                    
-                    # Volume
-                    volume_ok = volume_sma > 500000
-                    class6 = "success" if volume_ok else "danger"
-                    color6 = "green" if volume_ok else "red"
-                    
-                    st.markdown(f'''
-                    <div class="criteria-card">
-                        <div class="criteria-header">
-                            <i class="fas fa-shield-alt"></i> Safety Requirements
-                        </div>
-                        <div class="criteria-item {class4}">
-                            <strong><i class="fas fa-chart-area"></i> ATR/Price < 5%:</strong>
-                            <span style='color: {color4}; font-weight: 600;'>{atr_to_price:.3%}</span>
-                        </div>
-                        <div class="criteria-item {class5}">
-                            <strong><i class="fas fa-tachometer-alt"></i> RSI 25-85:</strong>
-                            <span style='color: {color5}; font-weight: 600;'>{rsi:.1f}</span>
-                        </div>
-                        <div class="criteria-item {class6}">
-                            <strong><i class="fas fa-water"></i> Volume > 500k:</strong>
-                            <span style='color: {color6}; font-weight: 600;'>{volume_sma:,.0f}</span>
-                        </div>
-                        <div class="score-badge" style='background: linear-gradient(135deg, {'#28a745' if safety_score >= 4 else '#ffc107' if safety_score >= 2 else '#dc3545'}, {'#20c997' if safety_score >= 4 else '#fd7e14' if safety_score >= 2 else '#e83e8c'}); color: white;'>
-                            <i class="fas fa-shield-alt"></i> Safety Score: {safety_score}/6
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-            
-                with col_prof3:
-                    # Calculate relative strength metrics
-                    momentum_items = []
-                    
-                    # 3M Momentum
-                    if len(df) >= 60:
-                        price_60d_ago = df['close'].iloc[-60]
-                        momentum_3m = (current_price_val - price_60d_ago) / price_60d_ago if price_60d_ago > 0 else 0
-                        momentum_ok = momentum_3m > 0.02
-                        class7 = "success" if momentum_ok else "danger"
-                        color7 = "green" if momentum_ok else "red"
-                        if momentum_ok:
-                            relative_strength_score += 2
-                        momentum_items.append(f"""
-<div class="criteria-item {class7}">
-    <strong><i class="fas fa-rocket"></i> 3M Momentum > 2%:</strong>
-    <span style="color: {color7}; font-weight: 600;">{momentum_3m:.1%}</span>
-</div>""")
-                    else:
-                        momentum_items.append("""
-<div class="criteria-item">
-    <strong><i class="fas fa-rocket"></i> 3M Momentum:</strong>
-    <span style="color: gray; font-weight: 600;">Insufficient data</span>
-</div>""")
-                    
-                    # 52W High proximity
-                    if len(df) >= 252:
-                        high_52w = df['high'].tail(252).max()
-                        distance_from_high = (current_price_val - high_52w) / high_52w
-                        near_high_ok = distance_from_high > -0.50
-                        class8 = "success" if near_high_ok else "danger"
-                        color8 = "green" if near_high_ok else "red"
-                        if near_high_ok:
-                            relative_strength_score += 2
-                        momentum_items.append(f"""
-<div class="criteria-item {class8}">
-    <strong><i class="fas fa-mountain"></i> Near 52W High:</strong>
-    <span style="color: {color8}; font-weight: 600;">{distance_from_high:.1%}</span>
-</div>""")
-                    else:
-                        high_available = df['high'].max()
-                        distance_from_high = (current_price_val - high_available) / high_available
-                        class8 = "success" if distance_from_high > -0.20 else "danger"
-                        color8 = "green" if distance_from_high > -0.20 else "red"
-                        if distance_from_high > -0.20:
-                            relative_strength_score += 1
-                        momentum_items.append(f"""
-<div class="criteria-item {class8}">
-    <strong><i class="fas fa-mountain"></i> Near Recent High:</strong>
-    <span style="color: {color8}; font-weight: 600;">{distance_from_high:.1%}</span>
-</div>""")
-                    
-                    # Recent price stability
-                    if len(df) >= 5:
-                        price_5d_ago = df['close'].iloc[-5]
-                        recent_change = (current_price_val - price_5d_ago) / price_5d_ago
-                        stable_ok = -0.10 < recent_change < 0.20
-                        class9 = "success" if stable_ok else "danger"
-                        color9 = "green" if stable_ok else "red"
-                        if stable_ok:
-                            relative_strength_score += 1
-                        momentum_items.append(f"""
-<div class="criteria-item {class9}">
-    <strong><i class="fas fa-calendar-week"></i> 5D Change:</strong>
-    <span style="color: {color9}; font-weight: 600;">{recent_change:+.1%}</span>
-</div>""")
-                    
-                    # Technical confirmation
-                    macd_signal = current_data.get('macd_signal', 0)
-                    tech_confirm_ok = macd > macd_signal
-                    class10 = "success" if tech_confirm_ok else "danger"
-                    color10 = "green" if tech_confirm_ok else "red"
-                    if tech_confirm_ok:
-                        relative_strength_score += 1
-                    momentum_items.append(f"""
-<div class="criteria-item {class10}">
-    <strong><i class="fas fa-check-circle"></i> MACD > Signal:</strong>
-    <span style="color: {color10}; font-weight: 600;">{macd:.4f} vs {macd_signal:.4f}</span>
-</div>""")
-                    
-                    st.markdown(f"""
-                    <div class="criteria-card">
-                        <div class="criteria-header">
-                            <i class="fas fa-rocket"></i> Relative Strength
-                        </div>
-                        {''.join(momentum_items)}
-                        <div class="score-badge" style="background: linear-gradient(135deg, {'#28a745' if relative_strength_score >= 4 else '#ffc107' if relative_strength_score >= 2 else '#dc3545'}, {'#20c997' if relative_strength_score >= 4 else '#fd7e14' if relative_strength_score >= 2 else '#e83e8c'}); color: white;">
-                            <i class="fas fa-rocket"></i> Strength Score: {relative_strength_score}/6
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Calculate final total score and display risk level
-                final_total_score = trend_score + safety_score + relative_strength_score
-                if final_total_score >= 12:
-                    final_risk_level = "LOW RISK"
-                    final_risk_class = "risk-low"
-                elif final_total_score >= 8:
-                    final_risk_level = "MEDIUM RISK"
-                    final_risk_class = "risk-medium"
-                else:
-                    final_risk_level = "HIGH RISK"
-                    final_risk_class = "risk-high"
-                
-                st.markdown(f'''
-                <div style="text-align: center; margin: 2rem 0;">
-                    <div class="risk-badge {final_risk_class}">
-                        <i class="fas fa-shield-alt"></i> {final_risk_level}
-                    </div>
-                    <div class="risk-badge {final_risk_class}">
-                        <i class="fas fa-star"></i> Total Score: {final_total_score}/16
-                    </div>
-                </div>
-                <div style="text-align: center; margin: 1rem 0; font-size: 0.9rem; color: #6c757d;">
-                    Trend: {trend_score}/4 | Safety: {safety_score}/6 | Strength: {relative_strength_score}/6
-                </div>
-                ''', unsafe_allow_html=True)
-            
             # Show feature count information at the bottom
             st.info(f"📊 Loaded {len(training_features)} features for prediction")
         
-        with tab2:
+        with tab3:
             st.markdown('<div class="section-header"><i class="fas fa-search"></i> Fractal Pattern Analysis Results</div>', unsafe_allow_html=True)
             
             # ========== SEARCH CONFIGURATION DISPLAY ==========
-            st.subheader("🔧 Search Configuration")
+            st.markdown('<div class="section-header"><i class="fas fa-cog"></i> Search Configuration</div>', unsafe_allow_html=True)
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                st.metric("Reference Pattern", f"{pattern_length} {timeframe_label}")
-                st.metric("Similarity Method", "Cosine Similarity")
-                st.metric("Timeframe", timeframe)
+                st.markdown(f'''
+                <div class="criteria-card">
+                    <div class="criteria-header">
+                        <i class="fas fa-search"></i> Pattern Settings
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-chart-line"></i> Reference Pattern:</strong>
+                        <span style='color: #666; font-weight: 600;'>{pattern_length} {timeframe_label}</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-calculator"></i> Similarity Method:</strong>
+                        <span style='color: #666; font-weight: 600;'>Cosine Similarity</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-clock"></i> Timeframe:</strong>
+                        <span style='color: #666; font-weight: 600;'>{timeframe}</span>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
             
             with col2:
-                st.metric("Pattern Length", f"{pattern_length} periods")
-                st.metric("Similarity Threshold", f"{similarity_threshold:.2f}")
-                # Calculate smart range for display
-                smart_min = max(5, int(pattern_length * 0.74))
-                smart_max = max(smart_min + 1, int(pattern_length * 1.24))
-                st.metric("Window Sizes", f"{smart_min} to {smart_max}")
+                st.markdown(f'''
+                <div class="criteria-card">
+                    <div class="criteria-header">
+                        <i class="fas fa-sliders-h"></i> Analysis Parameters
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-ruler"></i> Pattern Length:</strong>
+                        <span style='color: #666; font-weight: 600;'>{pattern_length} periods</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-percentage"></i> Similarity Threshold:</strong>
+                        <span style='color: #666; font-weight: 600;'>{similarity_threshold:.2f}</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-window-maximize"></i> Window Sizes:</strong>
+                        <span style='color: #666; font-weight: 600;'>{max(5, int(pattern_length * 0.74))} to {max(max(5, int(pattern_length * 0.74)) + 1, int(pattern_length * 1.24))}</span>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
             
             with col3:
-                st.metric("Analysis Period", f"{len(analysis_df)} {timeframe_label}")
-                st.metric("Total Matches Found", len(matches))
-                st.metric("Top Matches Shown", min(20, len(matches)))
+                # Determine match quality based on number of matches found
+                if len(matches) > 10:
+                    match_class = "success"
+                    match_color = "green"
+                    match_quality = "Excellent"
+                elif len(matches) > 5:
+                    match_class = "warning"
+                    match_color = "orange" 
+                    match_quality = "Good"
+                elif len(matches) > 0:
+                    match_class = "danger"
+                    match_color = "red"
+                    match_quality = "Limited"
+                else:
+                    match_class = "danger"
+                    match_color = "red"
+                    match_quality = "None"
+                
+                st.markdown(f'''
+                <div class="criteria-card">
+                    <div class="criteria-header">
+                        <i class="fas fa-chart-bar"></i> Analysis Results
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-calendar"></i> Analysis Period:</strong>
+                        <span style='color: #666; font-weight: 600;'>{len(analysis_df)} {timeframe_label}</span>
+                    </div>
+                    <div class="criteria-item {match_class}">
+                        <strong><i class="fas fa-search"></i> Total Matches:</strong>
+                        <span style='color: {match_color}; font-weight: 600;'>{len(matches)} ({match_quality})</span>
+                    </div>
+                    <div class="criteria-item">
+                        <strong><i class="fas fa-list"></i> Top Matches Shown:</strong>
+                        <span style='color: #666; font-weight: 600;'>{min(20, len(matches))}</span>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
             
             if matches:
                 st.success(f"Found {len(matches)} similar patterns using {timeframe.lower()} data!")
@@ -2442,248 +2992,20 @@ def main():
             else:
                 st.warning(f"No similar patterns found with similarity threshold {similarity_threshold:.2f}")
                 st.info("Try lowering the similarity threshold or using a different pattern length.")
-        
-        # ========== TECHNICAL ANALYSIS TAB ==========
-        with tab3:
-            st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis Chart</div>', unsafe_allow_html=True)
-            
-            if df is not None and len(df) > 0:
-                st.subheader(f"📊 {ticker} Technical Analysis")
-                
-                # Create technical analysis chart
-                tech_chart = create_technical_analysis_chart(df, ticker)
-                
-                if tech_chart is not None:
-                    st.plotly_chart(tech_chart, use_container_width=True)
-                    
-                    # Add technical analysis insights
-                    st.subheader("🔍 Technical Analysis Insights")
-                    
-                    # Calculate current technical indicators
-                    close = df['close']
-                    current_price = close.iloc[-1]
-                    
-                    # Bollinger Bands analysis
-                    bb_sma, bb_upper, bb_lower = TechnicalIndicators.bollinger_bands(close, 20, 2)
-                    current_bb_upper = bb_upper.iloc[-1]
-                    current_bb_lower = bb_lower.iloc[-1]
-                    current_bb_sma = bb_sma.iloc[-1]
-                    
-                    # SMA analysis
-                    sma_20 = TechnicalIndicators.sma(close, 20)
-                    sma_50 = TechnicalIndicators.sma(close, 50)
-                    sma_144 = TechnicalIndicators.sma(close, 144)
-                    
-                    current_sma_20 = sma_20.iloc[-1]
-                    current_sma_50 = sma_50.iloc[-1]
-                    current_sma_144 = sma_144.iloc[-1]
-                    
-                    # Price Distance to MA analysis
-                    pma_fast, pma_fast_signal, pma_fast_cycle = TechnicalIndicators.price_distance_to_ma(
-                        close, ma_length=20, signal_length=9, exponential=False
-                    )
-                    current_pma = pma_fast.iloc[-1]
-                    current_signal = pma_fast_signal.iloc[-1]
-                    current_cycle = pma_fast_cycle.iloc[-1]
-                    
-                    # Display technical insights
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.markdown("### 📈 Moving Averages")
-                        
-                        # SMA 20 analysis
-                        sma_20_status = "🟢 Above" if current_price > current_sma_20 else "🔴 Below"
-                        st.metric("SMA 20", f"${current_sma_20:.2f}", 
-                                f"{sma_20_status} (${current_price - current_sma_20:+.2f})")
-                        
-                        # SMA 50 analysis
-                        sma_50_status = "🟢 Above" if current_price > current_sma_50 else "🔴 Below"
-                        st.metric("SMA 50", f"${current_sma_50:.2f}", 
-                                f"{sma_50_status} (${current_price - current_sma_50:+.2f})")
-                        
-                        # SMA 144 analysis
-                        sma_144_status = "🟢 Above" if current_price > current_sma_144 else "🔴 Below"
-                        st.metric("SMA 144", f"${current_sma_144:.2f}", 
-                                f"{sma_144_status} (${current_price - current_sma_144:+.2f})")
-                        
-                        # Trend analysis
-                        if current_sma_20 > current_sma_50 > current_sma_144:
-                            trend_status = "🟢 Bullish"
-                        elif current_sma_20 < current_sma_50 < current_sma_144:
-                            trend_status = "🔴 Bearish"
-                        else:
-                            trend_status = "🟡 Mixed"
-                        
-                        st.metric("Trend", trend_status)
-                    
-                    with col2:
-                        st.markdown("### 📊 Bollinger Bands")
-                        
-                        # Bollinger Bands analysis
-                        bb_position = ((current_price - current_bb_lower) / (current_bb_upper - current_bb_lower)) * 100
-                        
-                        if current_price > current_bb_upper:
-                            bb_status = "🔴 Overbought"
-                        elif current_price < current_bb_lower:
-                            bb_status = "🟢 Oversold"
-                        else:
-                            bb_status = "🟡 Neutral"
-                        
-                        st.metric("BB Position", f"{bb_position:.1f}%", bb_status)
-                        st.metric("BB Upper", f"${current_bb_upper:.2f}")
-                        st.metric("BB Lower", f"${current_bb_lower:.2f}")
-                        st.metric("BB Width", f"${current_bb_upper - current_bb_lower:.2f}")
-                    
-                    with col3:
-                        st.markdown("### 📉 Price/MA Analysis")
-                        
-                        # PMA analysis
-                        if current_pma > 0:
-                            pma_status = "🟢 Above MA"
-                        else:
-                            pma_status = "🔴 Below MA"
-                        
-                        st.metric("Price/MA %", f"{current_pma:.2f}%", pma_status)
-                        st.metric("Signal Line", f"{current_signal:.2f}%")
-                        st.metric("Cycle", f"{current_cycle:.2f}%")
-                        
-                        # Cycle analysis
-                        if current_cycle > 0:
-                            cycle_status = "🟢 Positive"
-                        else:
-                            cycle_status = "🔴 Negative"
-                        
-                        st.metric("Cycle Status", cycle_status)
-                    
-                    # Add volume analysis (only if volume data exists)
-                    if 'volume' in df.columns:
-                        st.subheader("📊 Volume Analysis")
-                        col_vol1, col_vol2, col_vol3 = st.columns(3)
-                        
-                        with col_vol1:
-                            current_volume = df['volume'].iloc[-1]
-                            avg_volume = df['volume'].rolling(20).mean().iloc[-1]
-                            volume_ratio = current_volume / avg_volume
-                            
-                            if volume_ratio > 1.5:
-                                volume_status = "🔴 High Volume"
-                            elif volume_ratio < 0.5:
-                                volume_status = "🟢 Low Volume"
-                            else:
-                                volume_status = "🟡 Normal Volume"
-                            
-                            st.metric("Current Volume", f"{current_volume:,.0f}")
-                            st.metric("Avg Volume (20d)", f"{avg_volume:,.0f}")
-                            st.metric("Volume Ratio", f"{volume_ratio:.2f}x", volume_status)
-                        
-                        with col_vol2:
-                            # Price change analysis
-                            price_change_1d = ((current_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
-                            price_change_5d = ((current_price - df['close'].iloc[-6]) / df['close'].iloc[-6]) * 100
-                            price_change_20d = ((current_price - df['close'].iloc[-21]) / df['close'].iloc[-21]) * 100
-                            
-                            st.metric("1-Day Change", f"{price_change_1d:+.2f}%")
-                            st.metric("5-Day Change", f"{price_change_5d:+.2f}%")
-                            st.metric("20-Day Change", f"{price_change_20d:+.2f}%")
-                        
-                        with col_vol3:
-                            # Volatility analysis
-                            returns = df['close'].pct_change().dropna()
-                            volatility_20d = returns.rolling(20).std().iloc[-1] * 100
-                            volatility_60d = returns.rolling(60).std().iloc[-1] * 100
-                            
-                            st.metric("20-Day Volatility", f"{volatility_20d:.2f}%")
-                            st.metric("60-Day Volatility", f"{volatility_60d:.2f}%")
-                            
-                            if volatility_20d > volatility_60d:
-                                vol_status = "🔴 Increasing"
-                            else:
-                                vol_status = "🟢 Decreasing"
-                            
-                            st.metric("Volatility Trend", vol_status)
-                    else:
-                        # Show price change and volatility analysis without volume
-                        st.subheader("📊 Price & Volatility Analysis")
-                        col_price, col_vol = st.columns(2)
-                        
-                        with col_price:
-                            # Price change analysis
-                            price_change_1d = ((current_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
-                            price_change_5d = ((current_price - df['close'].iloc[-6]) / df['close'].iloc[-6]) * 100
-                            price_change_20d = ((current_price - df['close'].iloc[-21]) / df['close'].iloc[-21]) * 100
-                            
-                            st.metric("1-Day Change", f"{price_change_1d:+.2f}%")
-                            st.metric("5-Day Change", f"{price_change_5d:+.2f}%")
-                            st.metric("20-Day Change", f"{price_change_20d:+.2f}%")
-                        
-                        with col_vol:
-                            # Volatility analysis
-                            returns = df['close'].pct_change().dropna()
-                            volatility_20d = returns.rolling(20).std().iloc[-1] * 100
-                            volatility_60d = returns.rolling(60).std().iloc[-1] * 100
-                            
-                            st.metric("20-Day Volatility", f"{volatility_20d:.2f}%")
-                            st.metric("60-Day Volatility", f"{volatility_60d:.2f}%")
-                            
-                            if volatility_20d > volatility_60d:
-                                vol_status = "🔴 Increasing"
-                            else:
-                                vol_status = "🟢 Decreasing"
-                            
-                            st.metric("Volatility Trend", vol_status)
-                    
-                    # Add support and resistance levels
-                    st.subheader("🎯 Support & Resistance Levels")
-                    
-                    # Calculate recent highs and lows
-                    recent_high = df['high'].tail(20).max()
-                    recent_low = df['low'].tail(20).min()
-                    current_high = df['high'].iloc[-1]
-                    current_low = df['low'].iloc[-1]
-                    
-                    col_sr1, col_sr2, col_sr3 = st.columns(3)
-                    
-                    with col_sr1:
-                        st.metric("Recent High (20d)", f"${recent_high:.2f}")
-                        st.metric("Current High", f"${current_high:.2f}")
-                        resistance_distance = ((recent_high - current_price) / current_price) * 100
-                        st.metric("Distance to Resistance", f"{resistance_distance:+.2f}%")
-                    
-                    with col_sr2:
-                        st.metric("Recent Low (20d)", f"${recent_low:.2f}")
-                        st.metric("Current Low", f"${current_low:.2f}")
-                        support_distance = ((current_price - recent_low) / current_price) * 100
-                        st.metric("Distance to Support", f"{support_distance:+.2f}%")
-                    
-                    with col_sr3:
-                        # Risk/Reward ratio
-                        risk = current_price - recent_low
-                        reward = recent_high - current_price
-                        risk_reward_ratio = reward / risk if risk > 0 else 0
-                        
-                        st.metric("Risk", f"${risk:.2f}")
-                        st.metric("Reward", f"${reward:.2f}")
-                        st.metric("Risk/Reward Ratio", f"{risk_reward_ratio:.2f}")
-                
-                else:
-                    st.error("Failed to create technical analysis chart")
-            else:
-                st.info("👆 Run analysis first to see technical analysis chart")
     
     else:
         # Show placeholders when no analysis has been run
         with tab1:
+            st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis</div>', unsafe_allow_html=True)
+            st.info("👆 Click 'Run Prediction' in the sidebar to see technical analysis chart.")
+        
+        with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction</div>', unsafe_allow_html=True)
             st.info("👆 Click 'Run Prediction' in the sidebar to see stock prediction results.")
         
-        with tab2:
+        with tab3:
             st.markdown('<div class="section-header"><i class="fas fa-search"></i> Fractal Pattern Analysis</div>', unsafe_allow_html=True)
             st.info("👆 Click 'Run Prediction' in the sidebar to see fractal pattern analysis results.")
-        
-        with tab3:
-            st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis</div>', unsafe_allow_html=True)
-            st.info("👆 Click 'Run Prediction' in the sidebar to see technical analysis chart.")
 
     # Footer
     st.markdown("---")
