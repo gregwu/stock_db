@@ -1047,11 +1047,36 @@ def main():
     with st.sidebar:
         st.header("📊 Analysis Settings")
         
+        # URL Parameters info
+        with st.expander("🔗 URL Parameters", expanded=False):
+            st.info("""
+            **Quick Access via URL:**
+            
+            `?ticker=AAPL` - Set ticker symbol
+            
+            `?timeframe=Daily` - Set timeframe (Daily/Weekly)
+            
+            `?pattern_length=60` - Set pattern length
+            
+            **Example:**
+            `?ticker=TSLA&timeframe=Weekly&pattern_length=12`
+            """)
+        
+        st.markdown("---")
+        
+        # Get ticker from URL parameter or use default
+        url_ticker = st.query_params.get("ticker", "").upper()
+        default_ticker = url_ticker if url_ticker else "AAPL"
+        
         ticker = st.text_input(
             "Enter Stock Ticker", 
-            value="AAPL",
-            help="Enter a valid stock ticker symbol (e.g., AAPL, TSLA, MSFT)"
+            value=default_ticker,
+            help="Enter a valid stock ticker symbol (e.g., AAPL, TSLA, MSFT). You can also use URL: ?ticker=SYMBOL"
         ).upper()
+        
+        # Update URL parameter when ticker changes
+        if ticker != st.query_params.get("ticker", "").upper():
+            st.query_params["ticker"] = ticker
         
         st.markdown("---")
         st.subheader("🔮 Prediction Settings")
@@ -1077,31 +1102,60 @@ def main():
             help="Minimum cosine similarity score for pattern matches"
         )
         
+        # Get timeframe from URL parameter or use default
+        url_timeframe = st.query_params.get("timeframe", "Daily")
+        if url_timeframe not in ["Daily", "Weekly"]:
+            url_timeframe = "Daily"
+        
+        timeframe_index = 0 if url_timeframe == "Daily" else 1
+        
         timeframe = st.selectbox(
             "Timeframe",
             options=["Daily", "Weekly"],
-            index=0,
-            help="Timeframe for pattern analysis"
+            index=timeframe_index,
+            help="Timeframe for pattern analysis. You can also use URL: ?timeframe=Daily or ?timeframe=Weekly"
         )
         
+        # Update URL parameter when timeframe changes
+        if timeframe != st.query_params.get("timeframe", "Daily"):
+            st.query_params["timeframe"] = timeframe
+        
         if timeframe == "Daily":
+            # Get pattern_length from URL parameter or use default
+            url_pattern_length = st.query_params.get("pattern_length", "60")
+            try:
+                default_pattern_length = max(5, min(100, int(url_pattern_length)))
+            except (ValueError, TypeError):
+                default_pattern_length = 60
+            
             pattern_length = st.slider(
                 "Pattern Length (days)",
                 min_value=5,
                 max_value=100,
-                value=60,
+                value=default_pattern_length,
                 step=1,
-                help="Length of the reference pattern in days"
+                help="Length of the reference pattern in days. You can also use URL: ?pattern_length=60"
             )
         else:  # Weekly
+            # Get pattern_length from URL parameter or use default
+            url_pattern_length = st.query_params.get("pattern_length", "8")
+            try:
+                default_pattern_length = max(2, min(52, int(url_pattern_length)))
+            except (ValueError, TypeError):
+                default_pattern_length = 8
+            
             pattern_length = st.slider(
                 "Pattern Length (weeks)",
                 min_value=2,
                 max_value=52,
-                value=8,
+                value=default_pattern_length,
                 step=2,
-                help="Length of the reference pattern in weeks"
+                help="Length of the reference pattern in weeks. You can also use URL: ?pattern_length=8"
             )
+        
+        # Update URL parameter when pattern_length changes
+        if str(pattern_length) != st.query_params.get("pattern_length", ""):
+            st.query_params["pattern_length"] = str(pattern_length)
         
         st.markdown("---")
         # Single unified button
@@ -1116,13 +1170,25 @@ def main():
     if 'analysis_config' not in st.session_state:
         st.session_state.analysis_config = None
     
-    # Check if we should run analysis (either button clicked or results exist)
-    should_run_analysis = run_analysis or st.session_state.analysis_results is not None
+    # Auto-run analysis if URL parameters are provided and no cached results exist
+    has_url_params = any([
+        st.query_params.get("ticker"),
+        st.query_params.get("timeframe"),
+        st.query_params.get("pattern_length")
+    ])
+    auto_run = has_url_params and st.session_state.analysis_results is None
+    
+    # Check if we should run analysis (button clicked, auto-run, or results exist)
+    should_run_analysis = run_analysis or auto_run or st.session_state.analysis_results is not None
     
     if should_run_analysis:
         if not ticker:
             st.error("Please enter a ticker symbol")
             return
+        
+        # Show auto-run indicator
+        if auto_run:
+            st.info("🔗 Auto-running analysis from URL parameters...")
         
         # Check if we need to run new analysis or use cached results
         current_config = {
