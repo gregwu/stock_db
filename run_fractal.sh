@@ -15,4 +15,4 @@ echo "  • 📊 Real-time change tracking"
 echo
 
 # Launch Streamlit app
-"$PYTHON_EXE" -m streamlit run "$STREAMLIT_APP" --server.port 8502 --server.address localhost --server.baseUrlPath fractal
+nohup "$PYTHON_EXE" -m streamlit run "$STREAMLIT_APP" --server.port 8502 --server.address localhost --server.baseUrlPath fractal &
