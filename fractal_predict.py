@@ -1058,8 +1058,15 @@ def main():
             
             `?pattern_length=60` - Set pattern length
             
-            **Example:**
-            `?ticker=TSLA&timeframe=Weekly&pattern_length=12`
+            `?tech_only=false` - Enable Full Analysis mode (default is tech-only)
+            
+            **Examples:**
+            
+            `?ticker=TSLA` - Auto-load quick technical analysis (default)
+            
+            `?ticker=MSFT&tech_only=false&timeframe=Weekly&pattern_length=12` - Auto-run full analysis
+            
+            *Note: Analysis runs automatically when URL parameters are provided.*
             """)
         
         st.markdown("---")
@@ -1158,8 +1165,24 @@ def main():
             st.query_params["pattern_length"] = str(pattern_length)
         
         st.markdown("---")
-        # Single unified button
-        run_analysis = st.button("🚀 Run Prediction", type="primary", use_container_width=True)
+        
+        # Technical Analysis Only option with URL parameter support (default: True)
+        url_tech_only = st.query_params.get("tech_only", "true").lower() == "true"
+        tech_only = st.checkbox(
+            "📊 Technical Analysis Only",
+            value=url_tech_only,
+            help="Load only technical analysis charts and indicators (faster, no AI predictions or pattern matching)"
+        )
+        
+        # Update URL parameter when tech_only changes
+        if str(tech_only).lower() != st.query_params.get("tech_only", "true").lower():
+            st.query_params["tech_only"] = str(tech_only).lower()
+        
+        # Different button text based on mode
+        if tech_only:
+            run_analysis = st.button("📊 Load Technical Analysis", type="primary", use_container_width=True)
+        else:
+            run_analysis = st.button("🚀 Run Full Analysis", type="primary", use_container_width=True)
     
     # Create tabs for different views
     tab1, tab2, tab3 = st.tabs(["📊 Technical Analysis", "📈 Stock Prediction Results", "🔍 Fractal Pattern Results"])
@@ -1174,7 +1197,8 @@ def main():
     has_url_params = any([
         st.query_params.get("ticker"),
         st.query_params.get("timeframe"),
-        st.query_params.get("pattern_length")
+        st.query_params.get("pattern_length"),
+        st.query_params.get("tech_only")
     ])
     auto_run = has_url_params and st.session_state.analysis_results is None
     
@@ -1188,14 +1212,18 @@ def main():
         
         # Show auto-run indicator
         if auto_run:
-            st.info("🔗 Auto-running analysis from URL parameters...")
+            if tech_only:
+                st.info("🔗 Auto-loading technical analysis from URL parameters...")
+            else:
+                st.info("🔗 Auto-running full analysis from URL parameters...")
         
         # Check if we need to run new analysis or use cached results
         current_config = {
             'ticker': ticker,
             'similarity_threshold': similarity_threshold,
             'timeframe': timeframe,
-            'pattern_length': pattern_length
+            'pattern_length': pattern_length,
+            'tech_only': tech_only
         }
         
         # Run new analysis if button clicked or config changed
@@ -1243,6 +1271,72 @@ def main():
             price_change_pct = (price_change / previous_price) * 100
             
             progress_bar.progress(20)
+            
+            # ========== TECH-ONLY MODE BRANCH ==========
+            if tech_only:
+                status_text.text("📊 Processing technical indicators (fast mode)...")
+                progress_bar.progress(50)
+                
+                # Get basic market data for technical analysis
+                current_volume = int(df['vol'].iloc[-1])
+                high_today = float(df['high'].iloc[-1])
+                low_today = float(df['low'].iloc[-1])
+                open_today = float(df['open'].iloc[-1])
+                
+                # Initialize variables needed for tech-only mode
+                training_error = None
+                training_features = []
+                model = None
+                proba = None
+                matches = []
+                matches_sorted = []
+                analysis_df = df
+                timeframe_label = "days"
+                
+                # Cache minimal results for tech-only mode
+                st.session_state.analysis_results = {
+                    'ticker': ticker,
+                    'current_price': current_price,
+                    'previous_price': previous_price,
+                    'price_change': price_change,
+                    'price_change_pct': price_change_pct,
+                    'current_volume': current_volume,
+                    'high_today': high_today,
+                    'low_today': low_today,
+                    'open_today': open_today,
+                    'df': df,
+                    'model': None,
+                    'proba': None,
+                    'matches': [],
+                    'matches_sorted': [],
+                    'price_series': None,
+                    'series_dates': None,
+                    'reference_pattern': None,
+                    'reference_pattern_norm': None,
+                    'timeframe': 'Daily',
+                    'timeframe_label': 'days',
+                    'similarity_threshold': 0.85,
+                    'pattern_length': pattern_length,
+                    'analysis_df': df,
+                    'X_live': None,
+                    'training_features': [],
+                    'df_clean': None,
+                    'pattern_start_date': None,
+                    'pattern_end_date': None,
+                    'tech_only': True
+                }
+                st.session_state.analysis_config = current_config
+                
+                status_text.text("✅ Technical analysis ready!")
+                progress_bar.progress(100)
+                progress_bar.empty()
+                status_text.empty()
+                
+                # Jump to display section
+                goto_display = True
+            else:
+                # Continue with full analysis
+                goto_display = False
         else:
             # Use cached results
             results = st.session_state.analysis_results
@@ -1277,6 +1371,10 @@ def main():
             df_clean = results.get('df_clean', None)  # Added df_clean to loading
             pattern_start_date = results.get('pattern_start_date', None)
             pattern_end_date = results.get('pattern_end_date', None)
+            training_error = results.get('training_error', None)
+            
+            # Check if cached results are from tech-only mode
+            cached_tech_only = results.get('tech_only', False)
             
             # Skip to display results
             goto_display = True
@@ -2287,37 +2385,51 @@ def main():
         with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction Results</div>', unsafe_allow_html=True)
             
-            # Display training errors if any
-            if training_error:
-                if training_error['type'] == 'training_failed':
-                    st.error(f"❌ Model training failed with return code {training_error['return_code']}")
-                    
-                    # Show both stdout and stderr if available
-                    if training_error.get('stdout'):
-                        st.subheader("Training Output:")
-                        st.code(training_error['stdout'], language="text")
-                    
-                    if training_error.get('stderr'):
-                        st.subheader("Error Output:")
-                        st.code(training_error['stderr'], language="text")
-                    
-                    # Continue with pattern analysis only
-                    st.info("📊 Continuing with pattern analysis only...")
-                    st.markdown("""
-                    **Note:** Model training failed likely due to:
-                    - Data format incompatibility between the app and training script
-                    - Missing required data columns
-                    - Insufficient historical data
-                    
-                    **Recommendations:**
-                    - Use the Pattern Analysis tab which works independently
-                    - Contact administrator to pre-train models for this ticker
-                    - Use a different ticker that may have existing models
-                    """)
-                elif training_error['type'] == 'timeout':
-                    st.error(f"❌ {training_error['message']}")
-                elif training_error['type'] == 'general_error':
-                    st.error(f"❌ Training error: {training_error['message']}")
+            # Check if in tech-only mode
+            is_tech_only = tech_only if 'tech_only' in locals() else st.session_state.analysis_results.get('tech_only', False)
+            
+            if is_tech_only:
+                st.info("""
+                📊 **Technical Analysis Only Mode**
+                
+                This tab shows AI stock predictions and requires full analysis mode.
+                
+                To see prediction results:
+                1. Uncheck "📊 Technical Analysis Only" in the sidebar
+                2. Click "🚀 Run Full Analysis"
+                """)
+            else:
+                # Display training errors if any
+                if training_error:
+                    if training_error['type'] == 'training_failed':
+                        st.error(f"❌ Model training failed with return code {training_error['return_code']}")
+                        
+                        # Show both stdout and stderr if available
+                        if training_error.get('stdout'):
+                            st.subheader("Training Output:")
+                            st.code(training_error['stdout'], language="text")
+                        
+                        if training_error.get('stderr'):
+                            st.subheader("Error Output:")
+                            st.code(training_error['stderr'], language="text")
+                        
+                        # Continue with pattern analysis only
+                        st.info("📊 Continuing with pattern analysis only...")
+                        st.markdown("""
+                        **Note:** Model training failed likely due to:
+                        - Data format incompatibility between the app and training script
+                        - Missing required data columns
+                        - Insufficient historical data
+                        
+                        **Recommendations:**
+                        - Use the Pattern Analysis tab which works independently
+                        - Contact administrator to pre-train models for this ticker
+                        - Use a different ticker that may have existing models
+                        """)
+                    elif training_error['type'] == 'timeout':
+                        st.error(f"❌ {training_error['message']}")
+                    elif training_error['type'] == 'general_error':
+                        st.error(f"❌ Training error: {training_error['message']}")
             
             # Display basic results
             col1, col2 = st.columns([1, 1])
@@ -2659,12 +2771,26 @@ def main():
         with tab3:
             st.markdown('<div class="section-header"><i class="fas fa-search"></i> Fractal Pattern Analysis Results</div>', unsafe_allow_html=True)
             
-            # ========== SEARCH CONFIGURATION DISPLAY ==========
-            st.markdown('<div class="section-header"><i class="fas fa-cog"></i> Search Configuration</div>', unsafe_allow_html=True)
-            col1, col2, col3 = st.columns(3)
+            # Check if in tech-only mode
+            is_tech_only = tech_only if 'tech_only' in locals() else st.session_state.analysis_results.get('tech_only', False)
             
-            with col1:
-                st.markdown(f'''
+            if is_tech_only:
+                st.info("""
+                📊 **Technical Analysis Only Mode**
+                
+                This tab shows fractal pattern analysis and requires full analysis mode.
+                
+                To see pattern matching results:
+                1. Uncheck "📊 Technical Analysis Only" in the sidebar
+                2. Click "🚀 Run Full Analysis"
+                """)
+            else:
+                # ========== SEARCH CONFIGURATION DISPLAY ==========
+                st.markdown('<div class="section-header"><i class="fas fa-cog"></i> Search Configuration</div>', unsafe_allow_html=True)
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.markdown(f'''
                 <div class="criteria-card">
                     <div class="criteria-header">
                         <i class="fas fa-search"></i> Pattern Settings
@@ -2705,44 +2831,46 @@ def main():
                 </div>
                 ''', unsafe_allow_html=True)
             
-            with col3:
-                # Determine match quality based on number of matches found
-                if len(matches) > 10:
-                    match_class = "success"
-                    match_color = "green"
-                    match_quality = "Excellent"
-                elif len(matches) > 5:
-                    match_class = "warning"
-                    match_color = "orange" 
-                    match_quality = "Good"
-                elif len(matches) > 0:
-                    match_class = "danger"
-                    match_color = "red"
-                    match_quality = "Limited"
-                else:
-                    match_class = "danger"
-                    match_color = "red"
-                    match_quality = "None"
-                
-                st.markdown(f'''
-                <div class="criteria-card">
-                    <div class="criteria-header">
-                        <i class="fas fa-chart-bar"></i> Analysis Results
+                with col3:
+                    # Only show Analysis Results section when we have actual matches (not in tech-only mode)
+                    if matches and len(matches) > 0:
+                        # Determine match quality based on number of matches found
+                        if len(matches) > 10:
+                            match_class = "success"
+                            match_color = "green"
+                            match_quality = "Excellent"
+                        elif len(matches) > 5:
+                            match_class = "warning"
+                            match_color = "orange" 
+                            match_quality = "Good"
+                        elif len(matches) > 0:
+                            match_class = "danger"
+                            match_color = "red"
+                            match_quality = "Limited"
+                        else:
+                            match_class = "danger"
+                            match_color = "red"
+                            match_quality = "None"
+                        
+                        st.markdown(f'''
+                    <div class="criteria-card">
+                        <div class="criteria-header">
+                            <i class="fas fa-chart-bar"></i> Analysis Results
+                        </div>
+                        <div class="criteria-item">
+                            <strong><i class="fas fa-calendar"></i> Analysis Period:</strong>
+                            <span style='color: #666; font-weight: 600;'>{len(analysis_df)} {timeframe_label}</span>
+                        </div>
+                        <div class="criteria-item {match_class}">
+                            <strong><i class="fas fa-search"></i> Total Matches:</strong>
+                            <span style='color: {match_color}; font-weight: 600;'>{len(matches)} ({match_quality})</span>
+                        </div>
+                        <div class="criteria-item">
+                            <strong><i class="fas fa-list"></i> Top Matches Shown:</strong>
+                            <span style='color: #666; font-weight: 600;'>{min(20, len(matches))}</span>
+                        </div>
                     </div>
-                    <div class="criteria-item">
-                        <strong><i class="fas fa-calendar"></i> Analysis Period:</strong>
-                        <span style='color: #666; font-weight: 600;'>{len(analysis_df)} {timeframe_label}</span>
-                    </div>
-                    <div class="criteria-item {match_class}">
-                        <strong><i class="fas fa-search"></i> Total Matches:</strong>
-                        <span style='color: {match_color}; font-weight: 600;'>{len(matches)} ({match_quality})</span>
-                    </div>
-                    <div class="criteria-item">
-                        <strong><i class="fas fa-list"></i> Top Matches Shown:</strong>
-                        <span style='color: #666; font-weight: 600;'>{min(20, len(matches))}</span>
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
+                    ''', unsafe_allow_html=True)
             
             if matches:
                 st.success(f"Found {len(matches)} similar patterns using {timeframe.lower()} data!")
