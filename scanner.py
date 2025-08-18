@@ -1179,6 +1179,9 @@ class StockScanner:
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html_report)
         
+        with open(f"{output_dir}/report.html", 'w', encoding='utf-8') as f:
+            f.write(html_report)
+        
         logger.info(f"HTML report generated: {html_path}")
         return html_path
 
