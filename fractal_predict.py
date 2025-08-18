@@ -51,6 +51,7 @@ warnings.filterwarnings('ignore')
 
 sys.path.append('..')
 from util import calculate_all_technical_indicators
+from technical_indicators import TechnicalIndicators
 from config import features
 
 # Load environment variables
@@ -66,93 +67,6 @@ from config import features
 #}
 
 # Technical Analysis Indicators Class
-class TechnicalIndicators:
-    """Calculate various technical indicators"""
-    
-    @staticmethod
-    def bollinger_bands(data, window=20, std_dev=2):
-        """Calculate Bollinger Bands"""
-        sma = data.rolling(window=window).mean()
-        std = data.rolling(window=window).std()
-        upper_band = sma + (std * std_dev)
-        lower_band = sma - (std * std_dev)
-        return sma, upper_band, lower_band
-    
-    @staticmethod
-    def sma(data, window):
-        """Simple Moving Average"""
-        return data.rolling(window=window).mean()
-    
-    @staticmethod
-    def ema(data, window):
-        """Exponential Moving Average"""
-        return data.ewm(span=window).mean()
-    
-    @staticmethod
-    def price_distance_to_ma(price, ma_length=20, signal_length=9, exponential=False):
-        """
-        Price Distance to Moving Average indicator
-        
-        Args:
-            price: Price series (typically close price)
-            ma_length: Moving average length (default 20)
-            signal_length: Signal line length (default 9)
-            exponential: Use EMA instead of SMA (default False)
-        
-        Returns:
-            pma: Price/MA ratio as percentage
-            signal: Signal line (MA of PMA)
-            cycle: Cycle histogram (PMA - Signal)
-        """
-        # Calculate moving average
-        if exponential:
-            ma = TechnicalIndicators.ema(price, ma_length)
-            signal_ma_func = TechnicalIndicators.ema
-        else:
-            ma = TechnicalIndicators.sma(price, ma_length)
-            signal_ma_func = TechnicalIndicators.sma
-        
-        # Calculate price distance to MA as percentage
-        pma = ((price / ma) - 1) * 100
-        
-        # Calculate signal line (MA of PMA)
-        signal = signal_ma_func(pma, signal_length)
-        
-        # Calculate cycle (difference between PMA and signal)
-        cycle = pma - signal
-        
-        return pma, signal, cycle
-    
-    @staticmethod
-    def pma_threshold_bands(pma, bb_length=200, std_dev_low=1.5, std_dev_high=2.25):
-        """
-        Calculate threshold bands for PMA using Bollinger Bands methodology
-        
-        Args:
-            pma: Price/MA ratio series
-            bb_length: Bollinger Bands calculation length
-            std_dev_low: Lower standard deviation multiplier
-            std_dev_high: Higher standard deviation multiplier
-        
-        Returns:
-            Dictionary with upper and lower threshold bands
-        """
-        # Calculate Bollinger Bands components
-        bb_sma = pma.rolling(window=bb_length).mean()
-        bb_std = pma.rolling(window=bb_length).std()
-        
-        # Calculate threshold bands
-        upper_low = bb_sma + (bb_std * std_dev_low)
-        lower_low = bb_sma - (bb_std * std_dev_low)
-        upper_high = bb_sma + (bb_std * std_dev_high)
-        lower_high = bb_sma - (bb_std * std_dev_high)
-        
-        return {
-            'upper_low': upper_low,
-            'lower_low': lower_low,
-            'upper_high': upper_high,
-            'lower_high': lower_high
-        }
 
 def create_technical_analysis_chart(df, symbol):
     """Create comprehensive technical analysis chart"""
@@ -2335,24 +2249,23 @@ def main():
                         ''', unsafe_allow_html=True)
                     
                     with col_sr3:
-                        # Risk/Reward ratio
-                        risk = current_price - recent_low
-                        reward = recent_high - current_price
-                        risk_reward_ratio = reward / risk if risk > 0 else 0
+                        # Risk/Reward ratio using technical indicators
+                        rr_data = TechnicalIndicators.risk_reward_ratio(current_price, recent_high, recent_low)
+                        risk = rr_data['risk']
+                        reward = rr_data['reward']
+                        risk_reward_ratio = rr_data['ratio']
+                        rr_status = rr_data['status']
                         
-                        # Determine risk/reward assessment
-                        if risk_reward_ratio >= 2.0:
+                        # Determine display colors based on status
+                        if rr_status == "Favorable":
                             rr_class = "success"
                             rr_color = "green"
-                            rr_status = "Favorable"
-                        elif risk_reward_ratio >= 1.0:
+                        elif rr_status == "Balanced":
                             rr_class = "warning"
                             rr_color = "orange"
-                            rr_status = "Balanced"
                         else:
                             rr_class = "danger"
                             rr_color = "red"
-                            rr_status = "Unfavorable"
                         
                         st.markdown(f'''
                         <div class="criteria-card">

@@ -1140,7 +1140,7 @@ class StockScanner:
             html_report += f"""
             <tr>
                 <td><strong>{i}</strong></td>
-                <td class="ticker"><a href="/ypredict/?ticker={ticker}&pattern_length=60">{ticker}</a></td>
+                <td class="ticker"><a href="/ypredict/?ticker={ticker}&pattern_length=60" target="_blank">{ticker}</a></td>
                 <td class="{signal_class}">{signal}</td>
                 <td>${current_price:.2f}</td>
                 <td>${predicted_price:.2f}</td>
