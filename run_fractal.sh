@@ -1,7 +1,7 @@
 
 PYTHON_EXE="/usr/bin/python"
 SCRIPT_DIR="/home/greg/stock_db"
-STREAMLIT_APP="$SCRIPT_DIR/fractal.py"
+STREAMLIT_APP="$SCRIPT_DIR/similarity_scan_app.py"
 
 # Change to the script directory
 cd "$SCRIPT_DIR"
