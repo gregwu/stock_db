@@ -21,5 +21,5 @@ echo "  • 📊 Real-time change tracking"
 echo
 
 # Launch Streamlit app
-"$PYTHON_EXE" -m streamlit run "$STREAMLIT_APP" --server.port 8501 --server.address localhost --server.baseUrlPath seekingalpha
+nohup "$PYTHON_EXE" -m streamlit run "$STREAMLIT_APP" --server.port 8501 --server.address localhost --server.baseUrlPath seekingalpha &
 
