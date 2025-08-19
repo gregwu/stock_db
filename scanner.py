@@ -19,6 +19,12 @@ Usage:
     python scanner.py --tickers AAPL GOOGL MSFT          # Specific tickers -> scanner_reports/
     python scanner.py --ticker-file my_tickers.txt        # From file -> scanner_reports/
     python scanner.py --output-dir custom_dir --max-tickers 5  # Custom output directory
+    
+    # Filter examples:
+    python scanner.py --filter-tickers AAPL MSFT         # Only show results for specific tickers
+    python scanner.py --min-rr-ratio 1.5                 # Only show R/R ratio >= 1.5
+    python scanner.py --max-atr-price-ratio 0.03         # Only show ATR/Price <= 3%
+    python scanner.py --min-bb-position 0.2 --max-bb-position 0.8  # BB position between 20%-80%
 """
 
 import argparse
@@ -768,8 +774,55 @@ class StockScanner:
         
         return prediction
     
+    def apply_filters(self, predictions: List[Dict], filters: Dict) -> List[Dict]:
+        """
+        Apply filters to predictions based on criteria
+        
+        Args:
+            predictions: List of prediction dictionaries
+            filters: Dictionary containing filter criteria
+            
+        Returns:
+            Filtered list of predictions
+        """
+        if not filters:
+            return predictions
+        
+        filtered_predictions = []
+        
+        for pred in predictions:
+            # Apply ticker filter
+            if filters.get('ticker') and pred['ticker'] not in filters['ticker']:
+                continue
+            
+            tech_scores = pred.get('technical_scores', {})
+            
+            # Apply R/R Ratio filter
+            rr_ratio = tech_scores.get('risk_reward_ratio', 0)
+            if filters.get('min_rr_ratio') and rr_ratio < filters['min_rr_ratio']:
+                continue
+            if filters.get('max_rr_ratio') and rr_ratio > filters['max_rr_ratio']:
+                continue
+            
+            # Apply ATR/Price filter
+            atr_ratio = tech_scores.get('atr_to_price_ratio', 0)
+            if filters.get('max_atr_price_ratio') and atr_ratio > filters['max_atr_price_ratio']:
+                continue
+            
+            # Apply BB Position filter
+            bb_position = tech_scores.get('bb_position', 0)
+            if filters.get('min_bb_position') and bb_position < filters['min_bb_position']:
+                continue
+            if filters.get('max_bb_position') and bb_position > filters['max_bb_position']:
+                continue
+            
+            filtered_predictions.append(pred)
+        
+        logger.info(f"Applied filters: {len(predictions)} -> {len(filtered_predictions)} predictions")
+        return filtered_predictions
+
     def scan_stocks(self, date_filter: str = "latest", max_tickers: Optional[int] = None, 
-                   predict_only: bool = False) -> List[Dict]:
+                   predict_only: bool = False, filters: Dict = None) -> List[Dict]:
         """
         Scan stocks and generate predictions
         
@@ -777,6 +830,7 @@ class StockScanner:
             date_filter: Date filter for ticker selection
             max_tickers: Maximum number of tickers to scan
             predict_only: Only generate predictions, don't run full scan
+            filters: Dictionary containing filter criteria
             
         Returns:
             List of prediction dictionaries
@@ -807,6 +861,10 @@ class StockScanner:
             # Log significant predictions
             if prediction['confidence'] >= 70:
                 logger.info(f"{ticker}: {prediction['signal']} (confidence: {prediction['confidence']}%)")
+        
+        # Apply filters if provided
+        if filters:
+            predictions = self.apply_filters(predictions, filters)
         
         # Sort by confidence (highest first)
         predictions.sort(key=lambda x: x['confidence'], reverse=True)
@@ -1060,9 +1118,106 @@ class StockScanner:
             rows.forEach(row => tbody.appendChild(row));
         }}
         
+        
+        function applyAdvancedFilters() {{
+            const tickerFilter = document.getElementById('tickerFilter').value.toUpperCase();
+            const minRRRatio = parseFloat(document.getElementById('minRRRatio').value) || 0;
+            const maxATRRatio = parseFloat(document.getElementById('maxATRRatio').value) || 100;
+            const minBBPosition = parseFloat(document.getElementById('minBBPosition').value) || 0;
+            const maxBBPosition = parseFloat(document.getElementById('maxBBPosition').value) || 100;
+            
+            const rows = document.querySelectorAll('#resultsTable tbody tr');
+            let visibleCount = 0;
+            
+            rows.forEach(row => {{
+                let showRow = true;
+                const cells = row.getElementsByTagName('td');
+                
+                if (cells.length > 0) {{
+                    // Apply signal filter (existing)
+                    const signalCell = cells[2];
+                    const signalText = signalCell ? signalCell.textContent.trim() : '';
+                    if (currentFilter !== 'all') {{
+                        if (currentFilter === 'hold' && !(signalText === 'HOLD' || signalText === 'WEAK_HOLD')) {{
+                            showRow = false;
+                        }} else if (currentFilter !== 'hold' && signalText !== currentFilter) {{
+                            showRow = false;
+                        }}
+                    }}
+                    
+                    if (showRow) {{
+                        // Apply ticker filter
+                        const tickerCell = cells[1];
+                        const ticker = tickerCell ? tickerCell.textContent.trim() : '';
+                        if (tickerFilter && !ticker.includes(tickerFilter)) {{
+                            showRow = false;
+                        }}
+                        
+                        // Apply R/R Ratio filter
+                        const rrCell = cells[7];
+                        if (rrCell && showRow) {{
+                            const rrText = rrCell.textContent.trim();
+                            const rrMatch = rrText.match(/([0-9.-]+)/);
+                            const rrRatio = rrMatch ? parseFloat(rrMatch[1]) : 0;
+                            if (rrRatio < minRRRatio) {{
+                                showRow = false;
+                            }}
+                        }}
+                        
+                        // Apply ATR/Price filter
+                        const atrCell = cells[9];
+                        if (atrCell && showRow) {{
+                            const atrText = atrCell.textContent.trim();
+                            const atrMatch = atrText.match(/([0-9.-]+)%/);
+                            const atrPercent = atrMatch ? parseFloat(atrMatch[1]) * 100 : 0; // Convert from decimal
+                            if (atrPercent > maxATRRatio) {{
+                                showRow = false;
+                            }}
+                        }}
+                        
+                        // Apply BB Position filter
+                        const bbCell = cells[10];
+                        if (bbCell && showRow) {{
+                            const bbText = bbCell.textContent.trim();
+                            const bbMatch = bbText.match(/([0-9.-]+)%/);
+                            const bbPercent = bbMatch ? parseFloat(bbMatch[1]) * 100 : 0; // Convert from decimal
+                            if (bbPercent < minBBPosition || bbPercent > maxBBPosition) {{
+                                showRow = false;
+                            }}
+                        }}
+                    }}
+                }}
+                
+                if (showRow) {{
+                    row.style.display = '';
+                    visibleCount++;
+                }} else {{
+                    row.style.display = 'none';
+                }}
+            }});
+            
+            // Update filter count display
+            updateFilterCounts(visibleCount);
+        }}
+        
+        function clearAdvancedFilters() {{
+            document.getElementById('tickerFilter').value = '';
+            document.getElementById('minRRRatio').value = '';
+            document.getElementById('maxATRRatio').value = '';
+            document.getElementById('minBBPosition').value = '';
+            document.getElementById('maxBBPosition').value = '';
+            
+            // Reset to current signal filter only
+            filterTable(currentFilter);
+        }}
+        
+        function updateFilterCounts(visibleCount) {{
+            // This could be enhanced to show filtered counts in the future
+            console.log('Visible rows after filtering: ' + visibleCount);
+        }}
+        
         function filterTable(signal) {{
             currentFilter = signal;
-            const rows = document.querySelectorAll('#resultsTable tbody tr');
             
             // Update button states
             document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
@@ -1071,18 +1226,8 @@ class StockScanner:
                 targetButton.classList.add('active');
             }}
             
-            rows.forEach(row => {{
-                const signalCell = row.getElementsByTagName('td')[2];
-                if (signalCell) {{
-                    const signalText = signalCell.textContent.trim();
-                    if (signal === 'all' || signalText === signal || 
-                        (signal === 'hold' && (signalText === 'HOLD' || signalText === 'WEAK_HOLD'))) {{
-                        row.style.display = '';
-                    }} else {{
-                        row.style.display = 'none';
-                    }}
-                }}
-            }});
+            // Apply both signal and advanced filters
+            applyAdvancedFilters();
         }}
         
         window.onload = function() {{
@@ -1123,6 +1268,35 @@ class StockScanner:
             <button class="filter-btn btn-buy" onclick="filterTable('BUY')">BUY ({buy_count})</button>
             <button class="filter-btn btn-sell" onclick="filterTable('SELL')">SELL ({sell_count})</button>
             <button class="filter-btn btn-hold" onclick="filterTable('hold')">HOLD ({hold_count})</button>
+        </div>
+        
+        <div class="advanced-filters" style="margin-top: 15px; padding: 15px; background: #ffffff; border: 1px solid #dee2e6; border-radius: 8px;">
+            <h4 style="margin: 0 0 10px 0; color: #495057;">🔧 Advanced Filters</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                <div>
+                    <label for="tickerFilter" style="font-weight: bold; display: block; margin-bottom: 5px;">🎯 Ticker Search:</label>
+                    <input type="text" id="tickerFilter" placeholder="e.g., AAPL, MSFT" onkeyup="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minRRRatio" style="font-weight: bold; display: block; margin-bottom: 5px;">📊 Min R/R Ratio:</label>
+                    <input type="number" id="minRRRatio" placeholder="e.g., 1.5" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxATRRatio" style="font-weight: bold; display: block; margin-bottom: 5px;">📈 Max ATR/Price %:</label>
+                    <input type="number" id="maxATRRatio" placeholder="e.g., 5" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minBBPosition" style="font-weight: bold; display: block; margin-bottom: 5px;">🎈 Min BB Position %:</label>
+                    <input type="number" id="minBBPosition" placeholder="e.g., 20" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxBBPosition" style="font-weight: bold; display: block; margin-bottom: 5px;">🎈 Max BB Position %:</label>
+                    <input type="number" id="maxBBPosition" placeholder="e.g., 80" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div style="display: flex; align-items: end;">
+                    <button onclick="clearAdvancedFilters()" style="padding: 8px 15px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%;">🗑️ Clear Filters</button>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -1348,6 +1522,20 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true",
                        help="Enable verbose logging")
     
+    # Filter arguments
+    parser.add_argument("--filter-tickers", nargs="+",
+                       help="Only include specific tickers in results (space-separated)")
+    parser.add_argument("--min-rr-ratio", type=float,
+                       help="Minimum risk/reward ratio filter")
+    parser.add_argument("--max-rr-ratio", type=float,
+                       help="Maximum risk/reward ratio filter")
+    parser.add_argument("--max-atr-price-ratio", type=float, default=0.05,
+                       help="Maximum ATR/Price ratio filter (default: 0.05 for 5%%)")
+    parser.add_argument("--min-bb-position", type=float,
+                       help="Minimum Bollinger Band position filter (0.0-1.0)")
+    parser.add_argument("--max-bb-position", type=float,
+                       help="Maximum Bollinger Band position filter (0.0-1.0)")
+    
     args = parser.parse_args()
     
     # Setup logging level
@@ -1372,11 +1560,30 @@ def main():
         # Initialize scanner with specified tickers or database/fallback
         scanner = StockScanner(ticker_list, use_database, use_ml_predictions=use_ml)
         
+        # Build filters dictionary
+        filters = {}
+        if args.filter_tickers:
+            filters['ticker'] = [t.upper() for t in args.filter_tickers]
+        if args.min_rr_ratio is not None:
+            filters['min_rr_ratio'] = args.min_rr_ratio
+        if args.max_rr_ratio is not None:
+            filters['max_rr_ratio'] = args.max_rr_ratio
+        if args.max_atr_price_ratio is not None:
+            filters['max_atr_price_ratio'] = args.max_atr_price_ratio
+        if args.min_bb_position is not None:
+            filters['min_bb_position'] = args.min_bb_position
+        if args.max_bb_position is not None:
+            filters['max_bb_position'] = args.max_bb_position
+        
+        if filters:
+            logger.info(f"Applied filters: {filters}")
+        
         # Run scan
         predictions = scanner.scan_stocks(
             date_filter=args.date_filter,
             max_tickers=args.max_tickers,
-            predict_only=args.predict_only
+            predict_only=args.predict_only,
+            filters=filters if filters else None
         )
         
         # Save results
