@@ -264,10 +264,22 @@ class TechnicalIndicators:
         # Calculate risk and reward
         risk = current_price - recent_low
         reward = recent_high - current_price
-        ratio = reward / risk if risk > 0 else 0
+        
+        # Calculate ratio with proper handling for zero risk
+        if risk > 0:
+            ratio = reward / risk
+        elif risk == 0:
+            # When risk is 0, ratio should be infinity if reward is positive
+            ratio = float('inf') if reward > 0 else 0
+        else:
+            # Risk is negative (price below recent low)
+            ratio = 0
         
         # Determine status based on ratio
-        if ratio >= 2.0:
+        if ratio == float('inf'):
+            status = "Perfect"
+            score = 1.0
+        elif ratio >= 2.0:
             status = "Favorable"
             score = 1.0
         elif ratio >= 1.0:
