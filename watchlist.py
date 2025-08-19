@@ -207,6 +207,10 @@ class StreamlitSeekingAlphaManager:
     def add_ticker(self, ticker: str, pdf_source: str = None, 
                    date_added: date = None) -> bool:
         """Add a single ticker to the database"""
+        # Check if ticker already exists in database
+        if self.ticker_exists(ticker):
+            return False  # Ticker already exists
+            
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -220,7 +224,7 @@ class StreamlitSeekingAlphaManager:
                         conn.commit()
                         return True
                     else:
-                        return False  # Already exists
+                        return False  # Already exists for this date
                         
         except psycopg2.IntegrityError as e:
             if "duplicate key value violates unique constraint" in str(e) and "pkey" in str(e):
@@ -248,6 +252,23 @@ class StreamlitSeekingAlphaManager:
                 return False
         except Exception as e:
             st.error(f"❌ Error adding ticker: {e}")
+            return False
+    
+    def ticker_exists(self, ticker: str) -> bool:
+        """Check if a ticker already exists in the database (regardless of date)"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT COUNT(*) FROM seekingalpha 
+                        WHERE ticker = %s
+                    """, (ticker.upper().strip(),))
+                    
+                    count = cur.fetchone()[0]
+                    return count > 0
+                    
+        except Exception as e:
+            st.error(f"❌ Error checking ticker existence: {e}")
             return False
     
     def delete_record(self, record_id: int) -> bool:
@@ -1062,6 +1083,8 @@ def view_records_page(manager):
                         st.success(f"✅ Added {quick_ticker}")
                         st.cache_data.clear()
                         st.rerun()
+                    else:
+                        st.warning(f"⚠️ {quick_ticker} already exists in database")
 
 def add_records_page(manager):
     """Page for adding new records"""
@@ -1083,7 +1106,7 @@ def add_records_page(manager):
             st.success(f"✅ Added {ticker} successfully!")
             st.cache_data.clear()
         else:
-            st.warning(f"⚠️ {ticker} already exists for {date_added}")
+            st.warning(f"⚠️ {ticker} already exists in database")
     
     st.divider()
     
@@ -1154,13 +1177,20 @@ def add_records_page(manager):
                     status_text = st.empty()
                     
                     added_count = 0
+                    duplicate_count = 0
                     total_count = len(final_symbols)
                     
                     for i, symbol in enumerate(final_symbols):
                         status_text.text(f"Adding {symbol}... ({i+1}/{total_count})")
                         if manager.add_ticker(symbol, image_source, image_date):
                             added_count += 1
+                        else:
+                            duplicate_count += 1
                         progress_bar.progress((i + 1) / total_count)
+                    
+                    status_text.text(f"✅ Complete! Added {added_count} new symbols. {duplicate_count} duplicates skipped.")
+                    if duplicate_count > 0:
+                        st.info(f"ℹ️ {duplicate_count} symbols were already in the database and were skipped.")
                     
                     st.cache_data.clear()
                     
@@ -1216,13 +1246,20 @@ def add_records_page(manager):
         status_text = st.empty()
         
         added_count = 0
+        duplicate_count = 0
         total_count = len(tickers_list)
         
         for i, ticker in enumerate(tickers_list):
             status_text.text(f"Adding {ticker}... ({i+1}/{total_count})")
             if manager.add_ticker(ticker, bulk_source, bulk_date):
                 added_count += 1
+            else:
+                duplicate_count += 1
             progress_bar.progress((i + 1) / total_count)
+        
+        status_text.text(f"✅ Complete! Added {added_count} new tickers. {duplicate_count} duplicates skipped.")
+        if duplicate_count > 0:
+            st.info(f"ℹ️ {duplicate_count} tickers were already in the database and were skipped.")
         
         st.cache_data.clear()
 
@@ -2055,6 +2092,7 @@ def export_import_page(manager):
                         status_text = st.empty()
                         
                         imported_count = 0
+                        duplicate_count = 0
                         total_rows = len(df_import)
                         
                         for i, row in df_import.iterrows():
@@ -2066,12 +2104,16 @@ def export_import_page(manager):
                                 
                                 if manager.add_ticker(ticker, pdf_source, date_added):
                                     imported_count += 1
+                                else:
+                                    duplicate_count += 1
                             except Exception as e:
                                 st.warning(f"⚠️ Error importing row {i+1}: {e}")
                             
                             progress_bar.progress((i + 1) / total_rows)
                         
-                        st.success(f"✅ Successfully imported {imported_count} out of {total_rows} records!")
+                        status_text.text(f"✅ Complete! Imported {imported_count} new records. {duplicate_count} duplicates skipped.")
+                        if duplicate_count > 0:
+                            st.info(f"ℹ️ {duplicate_count} tickers were already in the database and were skipped.")
                         st.cache_data.clear()
                         
             except Exception as e:
@@ -2145,15 +2187,20 @@ def export_import_page(manager):
                         status_text = st.empty()
                         
                         added_count = 0
+                        duplicate_count = 0
                         total_count = len(final_symbols)
                         
                         for i, symbol in enumerate(final_symbols):
                             status_text.text(f"Adding {symbol}... ({i+1}/{total_count})")
                             if manager.add_ticker(symbol, image_source, image_date):
                                 added_count += 1
+                            else:
+                                duplicate_count += 1
                             progress_bar.progress((i + 1) / total_count)
                         
-                        st.success(f"✅ Successfully imported {added_count} out of {total_count} symbols from image!")
+                        status_text.text(f"✅ Complete! Added {added_count} new symbols. {duplicate_count} duplicates skipped.")
+                        if duplicate_count > 0:
+                            st.info(f"ℹ️ {duplicate_count} symbols were already in the database and were skipped.")
                         st.cache_data.clear()
                         
                         # Clear the session state
@@ -2216,15 +2263,20 @@ def export_import_page(manager):
                     status_text = st.empty()
                     
                     added_count = 0
+                    duplicate_count = 0
                     total_count = len(parsed_symbols)
                     
                     for i, symbol in enumerate(parsed_symbols):
                         status_text.text(f"Adding {symbol}... ({i+1}/{total_count})")
                         if manager.add_ticker(symbol, manual_source, manual_date):
                             added_count += 1
+                        else:
+                            duplicate_count += 1
                         progress_bar.progress((i + 1) / total_count)
                     
-                    st.success(f"✅ Successfully imported {added_count} out of {total_count} symbols!")
+                    status_text.text(f"✅ Complete! Added {added_count} new symbols. {duplicate_count} duplicates skipped.")
+                    if duplicate_count > 0:
+                        st.info(f"ℹ️ {duplicate_count} symbols were already in the database and were skipped.")
                     st.cache_data.clear()
             else:
                 st.info("📝 Enter symbols above to see the preview")
