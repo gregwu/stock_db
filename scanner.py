@@ -299,6 +299,23 @@ class StockScanner:
                 else:
                     scores['bb_score'] = 0.0
         
+        # ATR/Price ratio (using volatility_20 as ATR proxy)
+        volatility_col = 'volatility_20' if 'volatility_20' in latest else 'VOLATILITY_20'
+        if volatility_col in latest and not pd.isna(latest[volatility_col]):
+            volatility_20 = latest[volatility_col]
+            atr_to_price_ratio = (volatility_20 / current_price) if current_price > 0 else 0
+            scores['atr_to_price_ratio'] = atr_to_price_ratio
+            
+            # Score based on volatility levels (lower is better for stability)
+            if atr_to_price_ratio < 0.02:  # Very low volatility
+                scores['atr_score'] = 1.0
+            elif atr_to_price_ratio < 0.03:  # Low volatility
+                scores['atr_score'] = 0.8
+            elif atr_to_price_ratio < 0.05:  # Moderate volatility
+                scores['atr_score'] = 0.6
+            else:  # High volatility
+                scores['atr_score'] = 0.3
+
         # Volume analysis
         if 'vol' in latest and 'vol' in df.columns:
             current_volume = latest['vol']
@@ -1070,7 +1087,7 @@ class StockScanner:
         
         window.onload = function() {{
             // Set initial sort
-            sortTable(12, 'ml_class');
+            sortTable(14, 'ml_class');
         }};
     </script>
 </head>
@@ -1121,10 +1138,12 @@ class StockScanner:
                 <th onclick="sortTable(6, 'reward_amount')">Reward</th>
                 <th onclick="sortTable(7, 'rr_ratio')">R/R Ratio</th>
                 <th onclick="sortTable(8, 'rsi')">RSI</th>
-                <th onclick="sortTable(9, 'trend_score')">Trend</th>
-                <th onclick="sortTable(10, 'ml_negative')">ML Negative</th>
-                <th onclick="sortTable(11, 'ml_positive')">ML Positive</th>
-                <th onclick="sortTable(12, 'ml_class')">ML Class</th>
+                <th onclick="sortTable(9, 'atr_ratio')">ATR/Price</th>
+                <th onclick="sortTable(10, 'bb_position')">BB Position</th>
+                <th onclick="sortTable(11, 'trend_score')">Trend</th>
+                <th onclick="sortTable(12, 'ml_negative')">ML Negative</th>
+                <th onclick="sortTable(13, 'ml_positive')">ML Positive</th>
+                <th onclick="sortTable(14, 'ml_class')">ML Class</th>
             </tr>
         </thead>
         <tbody>"""
@@ -1148,6 +1167,8 @@ class StockScanner:
             reward_amount = tech_scores.get('reward_amount', 0)
             rr_ratio = tech_scores.get('risk_reward_ratio', 0)
             rr_status = tech_scores.get('rr_status', 'Unknown')
+            atr_ratio = tech_scores.get('atr_to_price_ratio', 0)
+            bb_position = tech_scores.get('bb_position', 0)
             
             # Calculate risk and reward percentages
             risk_percentage = (risk_amount / current_price * 100) if current_price > 0 else 0
@@ -1248,6 +1269,8 @@ class StockScanner:
                 <td class="reward-amount">${reward_amount:.2f}<br><small>({reward_percentage:.1f}%)</small></td>
                 <td class="{rr_class}">{rr_ratio:.2f} ({rr_status})</td>
                 <td class="{rsi_class}">{rsi_value:.1f}</td>
+                <td>{atr_ratio:.1%}</td>
+                <td>{bb_position:.1%}</td>
                 <td>{trend_score:.1%}</td>
                 <td><span class="ml-negative">{ml_negative_pct}</span></td>
                 <td><span class="ml-positive">{ml_positive_pct}</span></td>
