@@ -609,8 +609,15 @@ class StockScanner:
             }
             
             # Get predicted class and confidence
-            predicted_class = np.argmax(probabilities)
-            confidence = probabilities[predicted_class] * 100
+            predicted_idx = np.argmax(probabilities)
+            confidence = probabilities[predicted_idx] * 100
+            
+            # Map probability index to actual class number
+            if hasattr(model, 'classes_'):
+                predicted_class = model.classes_[predicted_idx]
+            else:
+                # Fallback to assuming direct mapping
+                predicted_class = predicted_idx
             
             # Convert class to signal and price prediction
             current_price = scores.get('current_price', df.iloc[-1]['close'])
@@ -636,11 +643,21 @@ class StockScanner:
             
             predicted_price = current_price * (1 + price_change_pct / 100)
             
+            # Try to get model classes mapping from model metadata
+            model_classes = None
+            if hasattr(model, 'classes_'):
+                model_classes = model.classes_.tolist()
+            elif hasattr(model, '_scanner_metadata') and model._scanner_metadata:
+                valid_classes = model._scanner_metadata.get('valid_classes')
+                if valid_classes:
+                    model_classes = valid_classes
+            
             return {
                 'method': 'ML',
                 'model_class': predicted_class,
                 'class_label': class_labels[predicted_class],
                 'probabilities': probabilities.tolist(),
+                'model_classes': model_classes,
                 'signal': signal,
                 'confidence': confidence,
                 'price_change_pct': price_change_pct,
@@ -684,7 +701,8 @@ class StockScanner:
                         'method': ml_prediction['method'],
                         'model_class': ml_prediction['model_class'],
                         'class_label': ml_prediction['class_label'],
-                        'probabilities': ml_prediction['probabilities']
+                        'probabilities': ml_prediction['probabilities'],
+                        'model_classes': ml_prediction.get('model_classes')
                     }
                 }
                 
@@ -919,6 +937,12 @@ class StockScanner:
         .ml-negative {{ color: #dc3545; font-weight: bold; }}
         .ml-positive {{ color: #28a745; font-weight: bold; }}
         .ml-class-small {{ font-size: 0.8em; color: #6c757d; font-style: italic; }}
+        .ml-class-drop-severe {{ color: #dc3545; font-weight: bold; }}  /* Drop >10% - Class 0 */
+        .ml-class-drop-moderate {{ color: #fd7e14; font-weight: bold; }} /* Drop 5-10% - Class 1 */
+        .ml-class-drop-mild {{ color: #ffc107; font-weight: bold; }}     /* Drop 0-5% - Class 2 */
+        .ml-class-gain-mild {{ color: #20c997; font-weight: bold; }}     /* Gain 0-5% - Class 3 */
+        .ml-class-gain-moderate {{ color: #28a745; font-weight: bold; }} /* Gain 5-10% - Class 4 */
+        .ml-class-gain-severe {{ color: #198754; font-weight: bold; }}   /* Gain >10% - Class 5 */
         .sort-desc::after {{ content: ' ↓'; }}
         .sort-asc::after {{ content: ' ↑'; }}
         .footer {{ margin-top: 30px; text-align: center; color: #6c757d; font-size: 0.9em; }}
@@ -1079,41 +1103,48 @@ class StockScanner:
             ml_prediction = pred.get('ml_prediction', {})
             ml_probabilities = ml_prediction.get('probabilities', [])
             ml_class = ml_prediction.get('class_label', '')
+            ml_class_num = ml_prediction.get('model_class', -1)
             has_ml_prediction = bool(ml_prediction.get('method') == 'ML')
             
             # Calculate ML negative and positive probabilities
-            if ml_probabilities and len(ml_probabilities) >= 4:
-                # Get model metadata to understand class mapping
-                model_classes = []
-                if hasattr(pred.get('ml_prediction', {}), 'get'):
-                    # If we have model metadata, use valid classes
-                    ml_pred_data = pred.get('ml_prediction', {})
-                    if 'valid_classes' in str(ml_pred_data):  # Check if metadata exists
-                        # For models with filtered classes, we need to map differently
-                        # Assume classes 0,1,2 = negative, 3,4,5 = positive regardless of filtering
-                        if len(ml_probabilities) == 4:
-                            # Common case: classes [1,2,3,4] after filtering
-                            ml_negative = sum(ml_probabilities[0:2])  # Drop classes
-                            ml_positive = sum(ml_probabilities[2:4])  # Gain classes
-                        elif len(ml_probabilities) == 6:
-                            # Full 6-class model: 0=Drop>10%, 1=Drop5-10%, 2=Drop0-5%, 3=Gain0-5%, 4=Gain5-10%, 5=Gain>10%
-                            ml_negative = sum(ml_probabilities[0:3])  # All drops
-                            ml_positive = sum(ml_probabilities[3:6])  # All gains
-                        else:
-                            # Default: assume first half negative, second half positive
-                            mid_point = len(ml_probabilities) // 2
-                            ml_negative = sum(ml_probabilities[:mid_point])
-                            ml_positive = sum(ml_probabilities[mid_point:])
-                    else:
-                        # Default mapping for any number of classes
-                        mid_point = len(ml_probabilities) // 2
-                        ml_negative = sum(ml_probabilities[:mid_point])
-                        ml_positive = sum(ml_probabilities[mid_point:])
+            if ml_probabilities and len(ml_probabilities) >= 1:
+                # Get model_classes from model metadata if available
+                model_classes = ml_prediction.get('model_classes')
+                
+                # Map probabilities to actual classes
+                ml_negative = 0.0
+                ml_positive = 0.0
+                
+                if model_classes:
+                    # Use actual model_classes mapping
+                    # Class mapping: 0=Drop>10%, 1=Drop5-10%, 2=Drop0-5%, 3=Gain0-5%, 4=Gain5-10%, 5=Gain>10%
+                    # Negative classes: 0, 1, 2 (drops)
+                    # Positive classes: 3, 4, 5 (gains)
+                    
+                    for i, class_num in enumerate(model_classes):
+                        if i < len(ml_probabilities):
+                            if class_num <= 2:  # Drop classes
+                                ml_negative += ml_probabilities[i]
+                            else:  # Gain classes
+                                ml_positive += ml_probabilities[i]
                 else:
-                    # Default mapping
-                    mid_point = len(ml_probabilities) // 2
-                    ml_negative = sum(ml_probabilities[:mid_point])
-                    ml_positive = sum(ml_probabilities[mid_point:])
+                    # Fallback logic when model_classes not available
+                    if len(ml_probabilities) == 6:
+                        # Full 6-class model - assume standard order
+                        ml_negative = sum(ml_probabilities[0:3])  # Classes 0,1,2 (drops)
+                        ml_positive = sum(ml_probabilities[3:6])  # Classes 3,4,5 (gains)
+                    else:
+                        # Filtered model - use heuristic based on predicted class
+                        if ml_class_num <= 2:
+                            # Drop prediction - assume model has more drop classes
+                            neg_count = min(3, len(ml_probabilities) - 1)  # Leave at least 1 for positive
+                            ml_negative = sum(ml_probabilities[:neg_count])
+                            ml_positive = sum(ml_probabilities[neg_count:])
+                        else:
+                            # Gain prediction - assume model has more gain classes
+                            pos_count = min(3, len(ml_probabilities) - 1)  # Leave at least 1 for negative
+                            ml_positive = sum(ml_probabilities[-pos_count:])
+                            ml_negative = sum(ml_probabilities[:-pos_count])
                 
                 ml_negative_pct = f"{ml_negative:.1%}"
                 ml_positive_pct = f"{ml_positive:.1%}"
@@ -1137,6 +1168,21 @@ class StockScanner:
             else:
                 rr_class = "poor-ratio"
             
+            # ML class-based styling
+            if has_ml_prediction and ml_class_num >= 0:
+                ml_class_styles = {
+                    0: "ml-class-drop-severe",     # Drop >10%
+                    1: "ml-class-drop-moderate",   # Drop 5-10%
+                    2: "ml-class-drop-mild",       # Drop 0-5%
+                    3: "ml-class-gain-mild",       # Gain 0-5%
+                    4: "ml-class-gain-moderate",   # Gain 5-10%
+                    5: "ml-class-gain-severe"      # Gain >10%
+                }
+                ml_class_css = ml_class_styles.get(ml_class_num, "confidence-medium")
+            else:
+                # Fallback to confidence-based styling for non-ML predictions
+                ml_class_css = confidence_class
+            
             html_report += f"""
             <tr>
                 <td><strong>{i}</strong></td>
@@ -1152,7 +1198,7 @@ class StockScanner:
                 <td>{trend_score:.1%}</td>
                 <td><span class="ml-negative">{ml_negative_pct}</span></td>
                 <td><span class="ml-positive">{ml_positive_pct}</span></td>
-                <td class="{confidence_class}">
+                <td class="{ml_class_css}">
                     {confidence:.1f}%
                     {f'<br><small class="ml-class-small">{ml_class}</small>' if has_ml_prediction and ml_class else ''}
                 </td>
