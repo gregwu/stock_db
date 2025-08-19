@@ -707,144 +707,6 @@ def get_process_status(log_file: str) -> str:
     except Exception as e:
         return f"❓ Unknown ({e})"
 
-def show_prediction_controls(added_count: int = 0):
-    """
-    Show prediction controls after successful ticker addition
-    
-    Args:
-        added_count: Number of tickers that were just added
-    """
-    if added_count > 0:
-        st.success(f"✅ Successfully added {added_count} tickers to database!")
-        
-        st.divider()
-        st.subheader("🔮 Run Predictions")
-        st.markdown(f"""
-        **{added_count} new tickers** have been added to the database. 
-        You can now run predictions on these tickers using the scanner.
-        """)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            pred_date_filter = st.selectbox(
-                "Date Filter",
-                ["latest", "today"],
-                help="Which tickers to predict on"
-            )
-            
-        with col2:
-            pred_max_tickers = st.number_input(
-                "Max Tickers", 
-                min_value=1, 
-                value=min(added_count, 10),
-                help="Number of tickers to process (no upper limit)"
-            )
-            
-        with col3:
-            pred_background = st.checkbox(
-                "Run in Background", 
-                value=True,
-                help="Run predictions in background (recommended)"
-            )
-        
-        col_run, col_status = st.columns([1, 3])
-        
-        with col_run:
-            if st.button("🚀 Run Predictions", type="primary"):
-                with st.spinner("Starting predictions..."):
-                    result = run_predictions(
-                        date_filter=pred_date_filter,
-                        max_tickers=pred_max_tickers,
-                        background=pred_background
-                    )
-                    
-                    if result['success']:
-                        if pred_background:
-                            st.success("✅ Predictions started in background!")
-                            st.info("💡 Check the status below or refresh the page to see results")
-                            
-                            # Show log file info if available
-                            if result.get('log_file'):
-                                st.info(f"📄 **Log file:** `{os.path.basename(result['log_file'])}`")
-                        else:
-                            st.success("✅ Predictions completed!")
-                            
-                            # Show log file info if available
-                            if result.get('log_file'):
-                                st.info(f"📄 **Log file:** `{os.path.basename(result['log_file'])}`")
-                                
-                                # Option to view log immediately
-                                if st.button("� View Log", key="view_sync_log"):
-                                    st.session_state.viewing_log = result['log_file']
-                                    st.rerun()
-                    else:
-                        st.error(f"❌ Failed to start predictions: {result.get('error', 'Unknown error')}")
-        
-        with col_status:
-            # Show prediction status if available
-            if 'prediction_result' in st.session_state:
-                pred_result = st.session_state.prediction_result
-                
-                if pred_result['success']:
-                    st.success("✅ Background predictions completed!")
-                    
-                    # Check for reports directory from config
-                    reports_dir = DIRECTORIES['reports']
-                    if os.path.exists(reports_dir):
-                        html_file = os.path.join(reports_dir, FILE_PATTERNS['report_html'])
-                        json_file = os.path.join(reports_dir, FILE_PATTERNS['report_json'])
-                        csv_file = os.path.join(reports_dir, FILE_PATTERNS['report_csv'])
-                        
-                        st.markdown("**📁 Generated Reports:**")
-                        if os.path.exists(html_file):
-                            create_report_link_or_download(html_file, "HTML Report")
-                        if os.path.exists(json_file):
-                            filename = os.path.basename(json_file)
-                            with open(json_file, 'r') as f:
-                                json_content = f.read()
-                            st.download_button(
-                                label="📥 Download JSON Report",
-                                data=json_content,
-                                file_name=filename,
-                                mime="application/json"
-                            )
-                        if os.path.exists(csv_file):
-                            df = pd.read_csv(csv_file)
-                            st.download_button(
-                                label="� Download CSV Report",
-                                data=df.to_csv(index=False),
-                                file_name=os.path.basename(csv_file),
-                                mime="text/csv"
-                            )
-                else:
-                    st.error("❌ Background predictions failed!")
-                    
-                with st.expander("📝 Show Prediction Details"):
-                    st.code(f"Command: {pred_result['command']}")
-                    st.code(f"Timestamp: {pred_result['timestamp']}")
-                    
-                    # Show log file if available
-                    if pred_result.get('log_file'):
-                        st.code(f"Log file: {pred_result['log_file']}")
-                        
-                        # Quick log preview
-                        if os.path.exists(pred_result['log_file']):
-                            log_preview = get_log_tail(pred_result['log_file'], 10)
-                            st.text_area("Log Preview (last 10 lines)", log_preview, height=150)
-                        else:
-                            st.warning("📄 Log file not found")
-                    
-                    if pred_result.get('output'):
-                        st.text_area("Output", pred_result['output'], height=200)
-                    if pred_result.get('error'):
-                        st.text_area("Error", pred_result['error'], height=100)
-                
-                # Clear button
-                if st.button("🔄 Clear Status"):
-                    if 'prediction_result' in st.session_state:
-                        del st.session_state.prediction_result
-                    st.rerun()
 
 def main():
     st.set_page_config(
@@ -1220,9 +1082,6 @@ def add_records_page(manager):
         if manager.add_ticker(ticker, pdf_source, date_added):
             st.success(f"✅ Added {ticker} successfully!")
             st.cache_data.clear()
-            
-            # Show prediction controls for single ticker
-            show_prediction_controls(added_count=1)
         else:
             st.warning(f"⚠️ {ticker} already exists for {date_added}")
     
@@ -1308,9 +1167,6 @@ def add_records_page(manager):
                     # Clear the session state
                     if 'extracted_symbols' in st.session_state:
                         del st.session_state.extracted_symbols
-                    
-                    # Show prediction controls for extracted symbols
-                    show_prediction_controls(added_count=added_count)
             else:
                 st.info("📷 Upload an image above to extract symbols")
                 st.markdown("""
@@ -1369,9 +1225,6 @@ def add_records_page(manager):
             progress_bar.progress((i + 1) / total_count)
         
         st.cache_data.clear()
-        
-        # Show prediction controls for bulk add
-        show_prediction_controls(added_count=added_count)
 
 def predictions_page(manager):
     """Dedicated page for running predictions"""

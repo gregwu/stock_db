@@ -975,10 +975,61 @@ class StockScanner:
                 let aVal = a.getElementsByTagName('td')[columnIndex].textContent.trim();
                 let bVal = b.getElementsByTagName('td')[columnIndex].textContent.trim();
                 
-                // Handle numeric values
-                if (!isNaN(parseFloat(aVal)) && !isNaN(parseFloat(bVal))) {{
-                    aVal = parseFloat(aVal);
-                    bVal = parseFloat(bVal);
+                // Special handling for different column types
+                if (columnName === 'risk_amount' || columnName === 'reward_amount') {{
+                    // Extract percentage values from parentheses, e.g., "(9.6%)" -> 9.6
+                    const aMatch = aVal.match(/\\(([0-9.-]+)%\\)/);
+                    const bMatch = bVal.match(/\\(([0-9.-]+)%\\)/);
+                    
+                    if (aMatch && bMatch) {{
+                        aVal = parseFloat(aMatch[1]);
+                        bVal = parseFloat(bMatch[1]);
+                    }}
+                }} else if (columnName === 'predicted_price') {{
+                    // Extract percentage values from parentheses for predicted price, e.g., "(+7.5%)" -> 7.5
+                    const aMatch = aVal.match(/\\(([+-]?[0-9.-]+)%\\)/);
+                    const bMatch = bVal.match(/\\(([+-]?[0-9.-]+)%\\)/);
+                    
+                    if (aMatch && bMatch) {{
+                        aVal = parseFloat(aMatch[1]);
+                        bVal = parseFloat(bMatch[1]);
+                    }}
+                }} else if (columnName === 'ml_class') {{
+                    // For ML class, sort by class number first, then by confidence percentage
+                    // Extract class number from the displayed class labels
+                    const getClassNumber = (text) => {{
+                        if (text.includes('Drop >10%')) return 0;
+                        if (text.includes('Drop 5-10%')) return 1;
+                        if (text.includes('Drop 0-5%')) return 2;
+                        if (text.includes('Gain 0-5%')) return 3;
+                        if (text.includes('Gain 5-10%')) return 4;
+                        if (text.includes('Gain >10%')) return 5;
+                        return 999; // Unknown class
+                    }};
+                    
+                    const aClassNum = getClassNumber(aVal);
+                    const bClassNum = getClassNumber(bVal);
+                    
+                    if (aClassNum !== bClassNum) {{
+                        // Sort by class number first
+                        aVal = aClassNum;
+                        bVal = bClassNum;
+                    }} else {{
+                        // Same class, sort by confidence percentage
+                        const aConfMatch = aVal.match(/([0-9.-]+)%/);
+                        const bConfMatch = bVal.match(/([0-9.-]+)%/);
+                        
+                        if (aConfMatch && bConfMatch) {{
+                            aVal = parseFloat(aConfMatch[1]);
+                            bVal = parseFloat(bConfMatch[1]);
+                        }}
+                    }}
+                }} else {{
+                    // Handle numeric values for other columns
+                    if (!isNaN(parseFloat(aVal)) && !isNaN(parseFloat(bVal))) {{
+                        aVal = parseFloat(aVal);
+                        bVal = parseFloat(bVal);
+                    }}
                 }}
                 
                 if (currentSort.direction === 'asc') {{
@@ -1019,7 +1070,7 @@ class StockScanner:
         
         window.onload = function() {{
             // Set initial sort
-            sortTable(13, 'ml_class');
+            sortTable(12, 'ml_class');
         }};
     </script>
 </head>
@@ -1066,15 +1117,14 @@ class StockScanner:
                 <th onclick="sortTable(2, 'signal')">Signal</th>
                 <th onclick="sortTable(3, 'current_price')">Current Price</th>
                 <th onclick="sortTable(4, 'predicted_price')">Predicted Price</th>
-                <th onclick="sortTable(5, 'price_change')">Price Change</th>
-                <th onclick="sortTable(6, 'risk_amount')">Risk</th>
-                <th onclick="sortTable(7, 'reward_amount')">Reward</th>
-                <th onclick="sortTable(8, 'rr_ratio')">R/R Ratio</th>
-                <th onclick="sortTable(9, 'rsi')">RSI</th>
-                <th onclick="sortTable(10, 'trend_score')">Trend</th>
-                <th onclick="sortTable(11, 'ml_negative')">ML Negative</th>
-                <th onclick="sortTable(12, 'ml_positive')">ML Positive</th>
-                <th onclick="sortTable(13, 'ml_class')">ML Class</th>
+                <th onclick="sortTable(5, 'risk_amount')">Risk</th>
+                <th onclick="sortTable(6, 'reward_amount')">Reward</th>
+                <th onclick="sortTable(7, 'rr_ratio')">R/R Ratio</th>
+                <th onclick="sortTable(8, 'rsi')">RSI</th>
+                <th onclick="sortTable(9, 'trend_score')">Trend</th>
+                <th onclick="sortTable(10, 'ml_negative')">ML Negative</th>
+                <th onclick="sortTable(11, 'ml_positive')">ML Positive</th>
+                <th onclick="sortTable(12, 'ml_class')">ML Class</th>
             </tr>
         </thead>
         <tbody>"""
@@ -1098,6 +1148,10 @@ class StockScanner:
             reward_amount = tech_scores.get('reward_amount', 0)
             rr_ratio = tech_scores.get('risk_reward_ratio', 0)
             rr_status = tech_scores.get('rr_status', 'Unknown')
+            
+            # Calculate risk and reward percentages
+            risk_percentage = (risk_amount / current_price * 100) if current_price > 0 else 0
+            reward_percentage = (reward_amount / current_price * 100) if current_price > 0 else 0
             
             # Get ML prediction data
             ml_prediction = pred.get('ml_prediction', {})
@@ -1189,10 +1243,9 @@ class StockScanner:
                 <td class="ticker"><a href="/ypredict/?ticker={ticker}&pattern_length=60" target="_blank">{ticker}</a></td>
                 <td class="{signal_class}">{signal}</td>
                 <td>${current_price:.2f}</td>
-                <td>${predicted_price:.2f}</td>
-                <td class="{price_change_class}">{price_change:+.1f}%</td>
-                <td class="risk-amount">${risk_amount:.2f}</td>
-                <td class="reward-amount">${reward_amount:.2f}</td>
+                <td class="{price_change_class}">${predicted_price:.2f}<br><small>({price_change:+.1f}%)</small></td>
+                <td class="risk-amount">${risk_amount:.2f}<br><small>({risk_percentage:.1f}%)</small></td>
+                <td class="reward-amount">${reward_amount:.2f}<br><small>({reward_percentage:.1f}%)</small></td>
                 <td class="{rr_class}">{rr_ratio:.2f} ({rr_status})</td>
                 <td class="{rsi_class}">{rsi_value:.1f}</td>
                 <td>{trend_score:.1%}</td>
