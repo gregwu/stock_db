@@ -1120,11 +1120,16 @@ class StockScanner:
         
         
         function applyAdvancedFilters() {{
-            const tickerFilter = document.getElementById('tickerFilter').value.toUpperCase();
-            const minRRRatio = parseFloat(document.getElementById('minRRRatio').value) || 0;
-            const maxATRRatio = parseFloat(document.getElementById('maxATRRatio').value) || 100;
-            const minBBPosition = parseFloat(document.getElementById('minBBPosition').value) || 0;
-            const maxBBPosition = parseFloat(document.getElementById('maxBBPosition').value) || 100;
+            const tickerFilter = document.getElementById('tickerFilter').value.toUpperCase().trim();
+            const minRRRatioValue = document.getElementById('minRRRatio').value.trim();
+            const maxATRRatioValue = document.getElementById('maxATRRatio').value.trim();
+            const minBBPositionValue = document.getElementById('minBBPosition').value.trim();
+            const maxBBPositionValue = document.getElementById('maxBBPosition').value.trim();
+            
+            const minRRRatio = minRRRatioValue ? parseFloat(minRRRatioValue) : 0;
+            const maxATRRatio = maxATRRatioValue ? parseFloat(maxATRRatioValue) : 0;
+            const minBBPosition = minBBPositionValue ? parseFloat(minBBPositionValue) : 0;
+            const maxBBPosition = maxBBPositionValue ? parseFloat(maxBBPositionValue) : 0;
             
             const rows = document.querySelectorAll('#resultsTable tbody tr');
             let visibleCount = 0;
@@ -1159,7 +1164,7 @@ class StockScanner:
                             const rrText = rrCell.textContent.trim();
                             const rrMatch = rrText.match(/([0-9.-]+)/);
                             const rrRatio = rrMatch ? parseFloat(rrMatch[1]) : 0;
-                            if (rrRatio < minRRRatio) {{
+                            if (minRRRatioValue && rrRatio < minRRRatio) {{
                                 showRow = false;
                             }}
                         }}
@@ -1169,8 +1174,8 @@ class StockScanner:
                         if (atrCell && showRow) {{
                             const atrText = atrCell.textContent.trim();
                             const atrMatch = atrText.match(/([0-9.-]+)%/);
-                            const atrPercent = atrMatch ? parseFloat(atrMatch[1]) * 100 : 0; // Convert from decimal
-                            if (atrPercent > maxATRRatio) {{
+                            const atrPercent = atrMatch ? parseFloat(atrMatch[1]) : 0; // Already in percentage
+                            if (maxATRRatioValue && atrPercent > maxATRRatio) {{
                                 showRow = false;
                             }}
                         }}
@@ -1180,8 +1185,9 @@ class StockScanner:
                         if (bbCell && showRow) {{
                             const bbText = bbCell.textContent.trim();
                             const bbMatch = bbText.match(/([0-9.-]+)%/);
-                            const bbPercent = bbMatch ? parseFloat(bbMatch[1]) * 100 : 0; // Convert from decimal
-                            if (bbPercent < minBBPosition || bbPercent > maxBBPosition) {{
+                            const bbPercent = bbMatch ? parseFloat(bbMatch[1]) : 0; // Already in percentage
+                            if ((minBBPositionValue && bbPercent < minBBPosition) || 
+                                (maxBBPositionValue && bbPercent > maxBBPosition)) {{
                                 showRow = false;
                             }}
                         }}
@@ -1212,7 +1218,19 @@ class StockScanner:
         }}
         
         function updateFilterCounts(visibleCount) {{
-            // This could be enhanced to show filtered counts in the future
+            // Update the filter status display
+            const allButtons = document.querySelectorAll('.filter-btn');
+            allButtons.forEach(btn => {{
+                const originalText = btn.textContent.split(' (')[0];
+                const signal = btn.classList.contains('btn-buy') ? 'BUY' :
+                              btn.classList.contains('btn-sell') ? 'SELL' :
+                              btn.classList.contains('btn-hold') ? 'HOLD' :
+                              'All';
+                
+                if (btn.classList.contains('active')) {{
+                    btn.textContent = `${{originalText}} (${{visibleCount}})`;
+                }}
+            }});
             console.log('Visible rows after filtering: ' + visibleCount);
         }}
         

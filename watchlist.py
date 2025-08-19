@@ -486,7 +486,7 @@ def run_predictions(date_filter: str = "latest", max_tickers: int = None,
     
     Args:
         date_filter: Date filter for predictions ("latest", "today", specific date)
-        max_tickers: Maximum number of tickers to process
+        max_tickers: Maximum number of tickers to process (None = process all)
         background: Whether to run in background thread
         
     Returns:
@@ -1292,7 +1292,7 @@ def predictions_page(manager):
     # Prediction configuration
     st.subheader("⚙️ Prediction Configuration")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
         date_filter = st.selectbox(
@@ -1303,14 +1303,6 @@ def predictions_page(manager):
         )
     
     with col2:
-        max_tickers = st.number_input(
-            "🔢 Max Tickers",
-            min_value=1,
-            value=100,
-            help="Number of tickers to process (no upper limit)"
-        )
-    
-    with col3:
         background_mode = st.checkbox(
             "🔄 Background Mode",
             value=True,
@@ -1321,16 +1313,20 @@ def predictions_page(manager):
     st.subheader("📋 Prediction Preview")
     try:
         preview_df = manager.get_records(
-            date_filter=date_filter if date_filter not in ["latest", "today"] else (date_filter if date_filter == "today" else None),
-            limit=max_tickers
+            date_filter=date_filter if date_filter not in ["latest", "today"] else (date_filter if date_filter == "today" else None)
         )
         
         if not preview_df.empty:
-            st.info(f"📊 Will process **{len(preview_df)}** tickers")
+            st.info(f"📊 Will process **ALL {len(preview_df)}** tickers")
             
-            # Show preview table
+            # Show preview table (limit display to first 50 for performance)
             with st.expander("👀 Preview Tickers"):
-                st.dataframe(preview_df[['ticker', 'date_added', 'pdf_source']], use_container_width=True)
+                display_df = preview_df[['ticker', 'date_added', 'pdf_source']]
+                if len(display_df) > 50:
+                    st.dataframe(display_df.head(50), use_container_width=True)
+                    st.info(f"Showing first 50 of {len(display_df)} tickers")
+                else:
+                    st.dataframe(display_df, use_container_width=True)
         else:
             st.warning("⚠️ No tickers found matching the selected criteria")
             return
@@ -1351,7 +1347,7 @@ def predictions_page(manager):
             with st.spinner("Starting predictions..."):
                 result = run_predictions(
                     date_filter=date_filter,
-                    max_tickers=max_tickers,
+                    max_tickers=None,
                     background=background_mode
                 )
                 
@@ -1377,11 +1373,10 @@ def predictions_page(manager):
             python_exe,
             "scanner.py",
             "--predict-only",
-            "--date-filter", date_filter,
-            "--max-tickers", str(max_tickers)
+            "--date-filter", date_filter
         ]
         
-        st.info("**Command to execute:**")
+        st.info("**Command to execute (ALL tickers):**")
         st.code(" ".join(cmd_parts))
     
     st.divider()
