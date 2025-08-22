@@ -340,10 +340,14 @@ def fetch_current_pattern_from_yahoo(ticker: str, days: int = 5) -> Optional[pd.
             'Volume': 'Volume'
         })
         
+        # Convert UTC timestamps to Eastern Time before filtering
+        yf_data['Datetime'] = yf_data['Datetime'].dt.tz_convert('America/New_York')
+        
         # Filter to market hours only (9:30 AM - 4:00 PM EST)
-        yf_data = yf_data[(yf_data['Datetime'].dt.hour >= 9) & 
-                         ((yf_data['Datetime'].dt.hour < 16) | 
-                          ((yf_data['Datetime'].dt.hour == 9) & (yf_data['Datetime'].dt.minute >= 30)))]
+        yf_data = yf_data[
+            ((yf_data['Datetime'].dt.hour == 9) & (yf_data['Datetime'].dt.minute >= 30)) |
+            ((yf_data['Datetime'].dt.hour >= 10) & (yf_data['Datetime'].dt.hour < 16))
+        ]
         
         # Filter out weekends
         yf_data = yf_data[yf_data['Datetime'].dt.weekday < 5]
@@ -524,7 +528,7 @@ def create_price_chart(data: pd.DataFrame, title: str) -> go.Figure:
     
     return fig
 
-def create_historical_matches_chart(current_pattern: pd.DataFrame, historical_matches: list, title: str) -> go.Figure:
+def create_historical_matches_chart(current_pattern: pd.DataFrame, historical_matches: list, title: str, selected_pattern_idx: int = None) -> go.Figure:
     """Create a chart showing current pattern in blue and historical matches in grey"""
     fig = go.Figure()
     
@@ -550,8 +554,19 @@ def create_historical_matches_chart(current_pattern: pd.DataFrame, historical_ma
     # Normalize all matches to start from the same price point
     base_price = 100  # Use $100 as base for normalization
     
-    # Show only top 4 matches for cleaner visualization
-    top_matches = high_similarity_matches[:4]
+    # Show top 4 matches, but always include selected pattern if specified
+    if selected_pattern_idx is not None and selected_pattern_idx < len(high_similarity_matches):
+        # Ensure selected pattern is included
+        selected_match = high_similarity_matches[selected_pattern_idx]
+        top_matches = high_similarity_matches[:4].copy()
+        
+        # If selected pattern is not in top 4, replace the 4th one with the selected
+        if selected_pattern_idx >= 4:
+            top_matches[3] = selected_match
+            # Update the selected_pattern_idx to point to position 3 in the display
+            selected_pattern_idx = 3
+    else:
+        top_matches = high_similarity_matches[:4]
     
     # Add historical matches first (so current pattern appears on top)
     for idx, match in enumerate(top_matches):
@@ -580,30 +595,39 @@ def create_historical_matches_chart(current_pattern: pd.DataFrame, historical_ma
         outcome_x = x_values[pattern_length-1:]  # Include last point of pattern for continuity
         outcome_y = normalized_combined[pattern_length-1:]
         
-        # Grey color coding based on similarity - darker grey = higher similarity
-        similarity = match['similarity']
+        # Check if this pattern is selected for highlighting
+        is_selected = (selected_pattern_idx is not None and idx == selected_pattern_idx)
         
-        # Map similarity to grey darkness (0.8 to 1.0 similarity -> darkest to lightest)
-        # Higher similarity = lower RGB values = darker color
-        grey_intensity = int(255 * (1.0 - (similarity - 0.8) / 0.2))  # 0.8->255 (light), 1.0->0 (black)
-        grey_intensity = max(50, min(200, grey_intensity))  # Clamp between 50-200 for visibility
-        
-        base_color = f'rgb({grey_intensity},{grey_intensity},{grey_intensity})'
-        outcome_color = f'rgb({min(255, grey_intensity + 30)},{min(255, grey_intensity + 30)},{min(255, grey_intensity + 30)})'  # Slightly lighter for outcome
-        
-        # Line width and opacity based on similarity
-        if similarity >= 0.95:
-            width = 2.0
-            opacity = 0.9
-        elif similarity >= 0.9:
-            width = 1.8
-            opacity = 0.85
-        elif similarity >= 0.85:
-            width = 1.5
-            opacity = 0.8
-        else:  # 80-85% similarity
-            width = 1.2
-            opacity = 0.7
+        if is_selected:
+            # Highlight selected pattern with bright color
+            base_color = 'rgb(255, 140, 0)'  # Orange
+            outcome_color = 'rgb(255, 165, 0)'  # Light orange
+            width = 3.0
+            opacity = 1.0
+        else:
+            # Use 4 distinct grey color scales for non-selected patterns
+            grey_levels = [
+                60,   # Pattern 1: Darkest grey (highest similarity)
+                100,  # Pattern 2: Dark grey
+                140,  # Pattern 3: Medium grey  
+                180   # Pattern 4: Light grey (lowest similarity)
+            ]
+            
+            grey_intensity = grey_levels[idx]
+            base_color = f'rgb({grey_intensity},{grey_intensity},{grey_intensity})'
+            outcome_color = f'rgb({min(255, grey_intensity + 30)},{min(255, grey_intensity + 30)},{min(255, grey_intensity + 30)})'
+            
+            # Line width and opacity based on pattern rank
+            line_styles = [
+                {'width': 2.0, 'opacity': 0.9},   # Pattern 1: Thickest, most opaque
+                {'width': 1.8, 'opacity': 0.85},  # Pattern 2
+                {'width': 1.5, 'opacity': 0.8},   # Pattern 3 
+                {'width': 1.2, 'opacity': 0.7}    # Pattern 4: Thinnest, most transparent
+            ]
+            
+            style = line_styles[idx]
+            width = style['width']
+            opacity = style['opacity']
         
         # Create a unique legend group for this match
         legend_group = f'group_{idx}'
@@ -713,7 +737,7 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">🔍 QQQ Historical Pattern Matcher</h1>', unsafe_allow_html=True)
     st.markdown("**Find similar patterns in QQQ's own historical data**")
-    st.markdown("*Flexible data sources • Historical patterns from comprehensive QQQ dataset*")
+    st.markdown("*Real-time Yahoo data • Historical patterns from comprehensive QQQ dataset*")
     
     # Sidebar controls
     with st.sidebar:
@@ -724,20 +748,10 @@ def main():
         target_ticker = "QQQ"
         st.info("📈 **Target Stock:** QQQ (NASDAQ-100 ETF)")
         
-        # Data source selection
-        st.subheader("📡 Current Pattern Data Source")
-        use_yahoo_current = st.checkbox(
-            "Use Yahoo Finance for current pattern (real-time)",
-            value=True,
-            help="✅ Yahoo Finance: Real-time/recent data (last 60 days)\n❌ File data: Use most recent data from qqq.us.txt"
-        )
-        
-        if use_yahoo_current:
-            st.success("📡 **Current**: Yahoo Finance (real-time) • **Historical**: qqq.us.txt")
-            st.caption("⚡ Fresh data from Yahoo API (up to 15-30 min delay)")
-        else:
-            st.warning("📁 **Current**: qqq.us.txt (file) • **Historical**: qqq.us.txt (same file)")
-            st.caption("📂 All data from local file (same timeframe as historical patterns)")
+        # Data source info (Yahoo Finance is now the default)
+        st.subheader("📡 Data Sources")
+        st.success("📡 **Current**: Yahoo Finance (real-time) • **Historical**: qqq.us.txt")
+        st.caption("⚡ Fresh data from Yahoo API (up to 15-30 min delay)")
         
         # Pattern matching settings
         st.subheader("🔍 Pattern Settings")
@@ -805,19 +819,19 @@ def main():
         st.markdown("### 🔍 Ready to Analyze QQQ Patterns")
         st.markdown("""
         This tool will:
-        - 📡 **Current Pattern**: Load 5 trading days from your selected data source (Yahoo Finance or local file)
+        - 📡 **Current Pattern**: Load 5 trading days from Yahoo Finance (real-time data)
         - 📁 **Historical Data**: Search through ALL available historical QQQ data from qqq.us.txt  
         - 🎯 Show top 4 matches with >80% similarity in grey (dark grey for >90%, light grey for 80-90%)
         - 📊 Display current pattern in blue with 2-day outcome predictions (dotted lines)
-        - 🔄 **Flexible Sources**: Choose between real-time Yahoo data or comprehensive file data
+        - 🔄 **Optimal Performance**: Real-time current data + comprehensive historical patterns
         """)
         return
     
     # Pattern matching analysis
     with st.spinner("🔍 Fetching current pattern and analyzing..."):
         
-        # Fetch current pattern for target stock (using selected data source)
-        current_pattern = fetch_current_pattern(target_ticker, pattern_days, use_yahoo_current)
+        # Fetch current pattern for target stock (using Yahoo Finance)
+        current_pattern = fetch_current_pattern(target_ticker, pattern_days, use_yahoo=True)
         
         if current_pattern is None or current_pattern.empty:
             st.error(f"❌ Could not fetch current {pattern_days}-day pattern for QQQ")
@@ -886,18 +900,7 @@ def main():
             else:
                 st.metric("High Sim Success Rate", "N/A")
         
-        # Show historical matches chart (similarity > 80% only)
-        st.subheader("📈 Historical Pattern Matches (Similarity > 80%)")
-        
-        # Create chart showing current pattern in blue and historical matches in grey
-        historical_fig = create_historical_matches_chart(current_pattern, historical_matches, 
-                                                       f"QQQ Pattern Comparison - Current vs Historical Matches + Outcomes")
-        st.plotly_chart(historical_fig, use_container_width=True)
-        
-        st.info(f"💡 **Showing top 4 of {len(high_similarity_matches)} patterns with similarity > 80%** | " +
-                f"🔵 **Blue/Light Blue**: Current Pattern (alternating by day) | ⚫ **Grey Gradient**: Darker = Higher Similarity + 2-day outcomes (dotted) | Similarity range: {min([m['similarity'] for m in high_similarity_matches]):.3f} to {max([m['similarity'] for m in high_similarity_matches]):.3f}")
-        
-        # Create summary table (show only high similarity matches)
+        # Create summary table first (show only high similarity matches)
         if high_similarity_matches:
             st.subheader("📋 High Similarity Matches Summary (>80%)")
             summary_data = []
@@ -913,9 +916,38 @@ def main():
                 })
             
             summary_df = pd.DataFrame(summary_data)
-            st.dataframe(summary_df, use_container_width=True)
+            
+            # Add selection functionality
+            st.markdown("**Click on a row to highlight that pattern on the chart:**")
+            selected_rows = st.dataframe(
+                summary_df, 
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            
+            # Store selected pattern in session state
+            if selected_rows.selection.rows:
+                selected_idx = selected_rows.selection.rows[0]
+                st.session_state.selected_pattern_idx = selected_idx
+                st.success(f"✅ Selected pattern #{selected_idx + 1}: {summary_data[selected_idx]['Date']} (Similarity: {summary_data[selected_idx]['Similarity']})")
+            elif 'selected_pattern_idx' not in st.session_state:
+                st.session_state.selected_pattern_idx = None
         else:
             st.warning("⚠️ No patterns found with similarity > 80%. Try lowering the similarity threshold.")
+        
+        # Show historical matches chart (similarity > 80% only) - after table selection
+        st.subheader("📈 Historical Pattern Matches (Similarity > 80%)")
+        
+        # Create chart showing current pattern in blue and historical matches in grey
+        selected_idx = getattr(st.session_state, 'selected_pattern_idx', None)
+        historical_fig = create_historical_matches_chart(current_pattern, historical_matches, 
+                                                       f"QQQ Pattern Comparison - Current vs Historical Matches + Outcomes",
+                                                       selected_pattern_idx=selected_idx)
+        st.plotly_chart(historical_fig, use_container_width=True)
+        
+        st.info(f"💡 **Showing top 4 patterns (+ selected pattern if beyond top 4) of {len(high_similarity_matches)} patterns with similarity > 80%** | " +
+                f"🔵 **Blue/Light Blue**: Current Pattern (alternating by day) | ⚫ **4 Grey Scales**: Darkest = Rank 1 (highest similarity), Lightest = Rank 4 + 2-day outcomes (dotted) | 🟠 **Orange**: Selected pattern from table | Similarity range: {min([m['similarity'] for m in high_similarity_matches]):.3f} to {max([m['similarity'] for m in high_similarity_matches]):.3f}")
         
         # Pattern prediction insights
         st.subheader("🔮 Pattern Prediction Summary")
