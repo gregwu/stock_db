@@ -508,6 +508,61 @@ def calculate_comprehensive_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['PMA_UPPER_HIGH'] = pma_bands['upper_high']
     df['PMA_LOWER_HIGH'] = pma_bands['lower_high']
     
+    # =================
+    # LAG FEATURES
+    # =================
+    
+    # Price change lag features
+    df['PRICE_CHANGE_LAG_1'] = df['PRICE_CHANGE'].shift(1)
+    df['PRICE_CHANGE_LAG_2'] = df['PRICE_CHANGE'].shift(2)
+    df['PRICE_CHANGE_LAG_3'] = df['PRICE_CHANGE'].shift(3)
+    df['PRICE_CHANGE_LAG_5'] = df['PRICE_CHANGE'].shift(5)
+    
+    # Volume ratio lag features
+    df['VOLUME_RATIO_LAG_1'] = df['VOLUME_RATIO'].shift(1)
+    df['VOLUME_RATIO_LAG_2'] = df['VOLUME_RATIO'].shift(2)
+    df['VOLUME_RATIO_LAG_3'] = df['VOLUME_RATIO'].shift(3)
+    df['VOLUME_RATIO_LAG_5'] = df['VOLUME_RATIO'].shift(5)
+    
+    # =================
+    # DERIVED/COMPOSITE FEATURES
+    # =================
+    
+    # Bollinger Bands to Volatility ratios
+    df['BB_TO_VOLATILITY'] = df['BB_Std'] / df['PRICE_VOLATILITY'].replace(0, np.nan)
+    df['BB_WIDTH_TO_VOLATILITY20'] = df['BB_WIDTH'] / df['VOLATILITY_20'].replace(0, np.nan)
+    df['PRICE_VOL_TO_VOL20'] = df['PRICE_VOLATILITY'] / df['VOLATILITY_20'].replace(0, np.nan)
+    
+    # MACD derived features
+    df['MACD_DIFF'] = df['MACD'] - df['MACD_Signal']
+    df['MACD_TREND_STRENGTH'] = df['MACD_Hist'] * df['MACD_MOMENTUM']
+    
+    # SMA comparison features
+    df['SMA_DIFF_5_20'] = df['PRICE_TO_SMA_20'] - df['PRICE_TO_SMA_5']
+    df['SMA_SLOPE_DIFF'] = df['SMA_5_SLOPE'] - df['SMA_20_SLOPE']
+    
+    # Volume-Price interaction
+    df['VOL_PRICE_MOMENTUM'] = df['VOLUME_RATIO'] * df['PRICE_CHANGE_ABS']
+    df['OBV_MACD_INTERACT'] = df['OBV_MOMENTUM'] * df['MACD_MOMENTUM']
+    
+    # Stochastic difference
+    df['STOCH_DIFF'] = df['STOCH_K'] - df['STOCH_D']
+    
+    # Support/Resistance ratios
+    # Calculate resistance_distance if not exists
+    if 'RESISTANCE_DISTANCE' not in df.columns:
+        df['RESISTANCE_DISTANCE'] = df['RESISTANCE_20'] - df['CLOSE']
+    df['SR_RATIO'] = df['SUPPORT_DISTANCE'] / df['RESISTANCE_DISTANCE'].replace(0, np.nan)
+    df['MOVE_TO_SUPPORT_RATIO'] = df['PRICE_CHANGE_ABS'] / df['SUPPORT_DISTANCE'].replace(0, np.nan)
+    
+    # Trend consistency features
+    df['TREND_CONSISTENCY_2D'] = df['PRICE_CHANGE_LAG_1'] * df['PRICE_CHANGE_LAG_2']
+    df['TREND_CONSISTENCY_3D'] = df['PRICE_CHANGE_LAG_1'] * df['PRICE_CHANGE_LAG_3']
+    
+    # Fill any infinite values with NaN and then forward fill
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
+    
     return df
 
 

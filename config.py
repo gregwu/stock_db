@@ -32,25 +32,20 @@ features = [
     "volume_ratio_lag_3",
     "volume_ratio_lag_5",
 
-    # === New derived features ===
+    # === Derived/Composite Features ===
+    # These advanced features combine multiple indicators for better predictions
     "bb_to_volatility",                # bb_std / price_volatility
     "bb_width_to_volatility20",        # bb_width / volatility_20
     "price_vol_to_vol20",              # price_volatility / volatility_20
-
     "macd_diff",                       # macd - macd_signal
     "macd_trend_strength",            # macd_hist * macd_momentum
-
     "sma_diff_5_20",                  # price_to_sma_20 - price_to_sma_5
     "sma_slope_diff",                # sma_5_slope - sma_20_slope
-
     "vol_price_momentum",             # volume_ratio * price_change_abs
     "obv_macd_interact",              # obv_momentum * macd_momentum
-
     "stoch_diff",                     # stoch_k - stoch_d
-
     "sr_ratio",                       # support_distance / resistance_distance
     "move_to_support_ratio",         # price_change_abs / support_distance
-
     "trend_consistency_2d",          # price_change_lag_1 * price_change_lag_2
     "trend_consistency_3d"           # price_change_lag_1 * price_change_lag_3
 ]

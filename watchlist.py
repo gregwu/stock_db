@@ -205,7 +205,7 @@ class StreamlitSeekingAlphaManager:
             return pd.DataFrame()
     
     def add_ticker(self, ticker: str, pdf_source: str = None, 
-                   date_added: date = None) -> bool:
+                   date_added: date = None, price: float = None, exp: date = None) -> bool:
         """Add a single ticker to the database"""
         # Check if ticker already exists in database
         if self.ticker_exists(ticker):
@@ -215,10 +215,10 @@ class StreamlitSeekingAlphaManager:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO seekingalpha (ticker, date_added, pdf_source)
-                        VALUES (%s, %s, %s)
+                        INSERT INTO seekingalpha (ticker, date_added, pdf_source, price, exp)
+                        VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (ticker, date_added) DO NOTHING
-                    """, (ticker.upper().strip(), date_added or datetime.now().date(), pdf_source))
+                    """, (ticker.upper().strip(), date_added or datetime.now().date(), pdf_source, price, exp))
                     
                     if cur.rowcount > 0:
                         conn.commit()
@@ -286,7 +286,8 @@ class StreamlitSeekingAlphaManager:
             return False
     
     def update_record(self, record_id: int, ticker: str = None, 
-                     pdf_source: str = None, date_added: date = None) -> bool:
+                     pdf_source: str = None, date_added: date = None,
+                     price: float = None, exp: date = None) -> bool:
         """Update an existing record"""
         try:
             with self.get_connection() as conn:
@@ -303,6 +304,12 @@ class StreamlitSeekingAlphaManager:
                     if date_added:
                         updates.append("date_added = %s")
                         params.append(date_added)
+                    if price is not None:  # Allow 0 as valid price
+                        updates.append("price = %s")
+                        params.append(price)
+                    if exp:
+                        updates.append("exp = %s")
+                        params.append(exp)
                     
                     if not updates:
                         return False
@@ -818,7 +825,7 @@ def view_records_page(manager):
     if not df.empty:
         # Initialize session state for sorting and changes
         if 'table_sort_by' not in st.session_state:
-            st.session_state.table_sort_by = 'date_added'
+            st.session_state.table_sort_by = 'id'
         if 'table_sort_order' not in st.session_state:
             st.session_state.table_sort_order = 'desc'
         if 'pending_updates' not in st.session_state:
@@ -848,7 +855,7 @@ def view_records_page(manager):
         st.markdown("### 📝 Interactive Table (Click Headers to Sort, Fields to Edit)")
         
         # Table header with clickable sorting buttons
-        header_cols = st.columns([1, 2, 2, 4, 3, 2])
+        header_cols = st.columns([1, 3, 2, 2, 2])
         
         # Sort indicators and button handlers
         def get_sort_indicator(column):
@@ -876,27 +883,22 @@ def view_records_page(manager):
                 st.rerun()
                 
         with header_cols[2]:
-            if st.button(f"**Date Added**{get_sort_indicator('date_added')}", key="sort_date", help="Click to sort by Date", use_container_width=True):
-                handle_sort_click('date_added')
+            if st.button(f"**Price**{get_sort_indicator('price')}", key="sort_price", help="Click to sort by Price", use_container_width=True):
+                handle_sort_click('price')
                 st.rerun()
                 
         with header_cols[3]:
-            if st.button(f"**PDF Source**{get_sort_indicator('pdf_source')}", key="sort_source", help="Click to sort by PDF Source", use_container_width=True):
-                handle_sort_click('pdf_source')
+            if st.button(f"**Exp Date**{get_sort_indicator('exp')}", key="sort_exp", help="Click to sort by Exp Date", use_container_width=True):
+                handle_sort_click('exp')
                 st.rerun()
                 
         with header_cols[4]:
-            if st.button(f"**Created At**{get_sort_indicator('created_at')}", key="sort_created", help="Click to sort by Created At", use_container_width=True):
-                handle_sort_click('created_at')
-                st.rerun()
-                
-        with header_cols[5]:
             col_action1, col_action2 = st.columns([1, 1])
             with col_action1:
                 st.markdown("**Actions**")
             with col_action2:
-                if st.button("🔄", key="reset_sort", help="Reset to default sort (Date Added desc)", use_container_width=True):
-                    st.session_state.table_sort_by = 'date_added'
+                if st.button("🔄", key="reset_sort", help="Reset to default sort (ID desc)", use_container_width=True):
+                    st.session_state.table_sort_by = 'id'
                     st.session_state.table_sort_order = 'desc'
                     st.rerun()
         
@@ -914,7 +916,7 @@ def view_records_page(manager):
                 continue
             
             # Create columns for each field
-            cols = st.columns([1, 2, 2, 4, 3, 2])
+            cols = st.columns([1, 3, 2, 2, 2])
             
             with cols[0]:
                 st.write(f"`{record_id}`")
@@ -934,40 +936,40 @@ def view_records_page(manager):
                     changes_made = True
             
             with cols[2]:
-                # Editable date
-                new_date = st.date_input(
-                    "date",
-                    value=record['date_added'],
-                    key=f"date_{record_id}",
-                    label_visibility="collapsed"
+                # Editable price
+                current_price = record.get('price', 0.0) if record.get('price') is not None else 0.0
+                new_price = st.number_input(
+                    "price",
+                    value=float(current_price),
+                    min_value=0.0,
+                    step=0.01,
+                    format="%.2f",
+                    key=f"price_{record_id}",
+                    label_visibility="collapsed",
+                    placeholder="Price..."
                 )
-                if new_date != record['date_added']:
+                if new_price != current_price:
                     if record_id not in st.session_state.pending_updates:
                         st.session_state.pending_updates[record_id] = {}
-                    st.session_state.pending_updates[record_id]['date_added'] = new_date
+                    st.session_state.pending_updates[record_id]['price'] = new_price
                     changes_made = True
             
             with cols[3]:
-                # Editable PDF source
-                new_source = st.text_input(
-                    "source",
-                    value=record['pdf_source'] or "",
-                    key=f"source_{record_id}",
-                    label_visibility="collapsed",
-                    placeholder="PDF source..."
+                # Editable exp date
+                current_exp = record.get('exp')
+                new_exp = st.date_input(
+                    "exp",
+                    value=current_exp,
+                    key=f"exp_{record_id}",
+                    label_visibility="collapsed"
                 )
-                if new_source != (record['pdf_source'] or ""):
+                if new_exp != current_exp:
                     if record_id not in st.session_state.pending_updates:
                         st.session_state.pending_updates[record_id] = {}
-                    st.session_state.pending_updates[record_id]['pdf_source'] = new_source if new_source else None
+                    st.session_state.pending_updates[record_id]['exp'] = new_exp
                     changes_made = True
             
             with cols[4]:
-                # Display created_at (not editable)
-                created_at_str = record['created_at'].strftime('%Y-%m-%d %H:%M') if record['created_at'] else 'N/A'
-                st.write(f"`{created_at_str}`")
-            
-            with cols[5]:
                 # Delete button
                 delete_col1, delete_col2 = st.columns(2)
                 with delete_col1:
@@ -998,7 +1000,9 @@ def view_records_page(manager):
                                 record_id=record_id,
                                 ticker=updates.get('ticker'),
                                 pdf_source=updates.get('pdf_source'),
-                                date_added=updates.get('date_added')
+                                date_added=updates.get('date_added'),
+                                price=updates.get('price'),
+                                exp=updates.get('exp')
                             ):
                                 success_count += 1
                             else:
@@ -1092,7 +1096,7 @@ def add_records_page(manager):
     
     # Single ticker addition
     st.subheader("📝 Add Single Ticker")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         ticker = st.text_input("Ticker Symbol", placeholder="e.g., AAPL").upper()
@@ -1100,9 +1104,13 @@ def add_records_page(manager):
         pdf_source = st.text_input("PDF Source", placeholder="source.pdf")
     with col3:
         date_added = st.date_input("Date Added", value=datetime.now().date())
+    with col4:
+        price = st.number_input("Price", min_value=0.0, step=0.01, format="%.2f", placeholder="0.00")
+    with col5:
+        exp = st.date_input("Exp Date", value=None)
     
     if st.button("➕ Add Ticker", type="primary", disabled=not ticker):
-        if manager.add_ticker(ticker, pdf_source, date_added):
+        if manager.add_ticker(ticker, pdf_source, date_added, price if price > 0 else None, exp):
             st.success(f"✅ Added {ticker} successfully!")
             st.cache_data.clear()
         else:
