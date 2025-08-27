@@ -43,6 +43,30 @@ from config import DB_CONFIG, DIRECTORIES, PYTHON_CONFIG, FILE_PATTERNS, WEB_CON
 
 # Database configuration is now imported from config.py
 
+def parse_number_with_suffix(value_str):
+    """Parse number with K/M suffix (e.g., '1.5K' -> 1500.0, '2.3M' -> 2300000.0)"""
+    if not value_str or value_str == "":
+        return 0.0
+    
+    # Convert to string and strip whitespace
+    value_str = str(value_str).strip().upper()
+    
+    try:
+        # Check for K suffix
+        if value_str.endswith('K'):
+            number = float(value_str[:-1])
+            return number * 1000
+        # Check for M suffix
+        elif value_str.endswith('M'):
+            number = float(value_str[:-1])
+            return number * 1000000
+        # No suffix, just convert to float
+        else:
+            return float(value_str)
+    except ValueError:
+        # If parsing fails, return 0
+        return 0.0
+
 def ensure_directories():
     """Ensure all configured directories exist"""
     for dir_name, dir_path in DIRECTORIES.items():
@@ -134,6 +158,7 @@ class StreamlitSeekingAlphaManager:
         if 'dbname' in self.db_config:
             self.db_config['database'] = self.db_config.pop('dbname')
     
+
     @st.cache_resource
     def get_connection(_self):
         """Get cached database connection"""
@@ -150,6 +175,9 @@ class StreamlitSeekingAlphaManager:
                             ticker VARCHAR(20) NOT NULL,
                             date_added DATE NOT NULL DEFAULT CURRENT_DATE,
                             pdf_source VARCHAR(255),
+                            price DECIMAL(10,2),
+                            exp DATE,
+                            premiums DECIMAL(10,2),
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                             UNIQUE(ticker, date_added)
                         )
@@ -159,6 +187,20 @@ class StreamlitSeekingAlphaManager:
                     cur.execute("""
                         CREATE INDEX IF NOT EXISTS idx_seekingalpha_ticker_date 
                         ON seekingalpha(ticker, date_added)
+                    """)
+                    
+                    # Add missing columns if they don't exist (for existing tables)
+                    cur.execute("""
+                        ALTER TABLE seekingalpha 
+                        ADD COLUMN IF NOT EXISTS price DECIMAL(10,2)
+                    """)
+                    cur.execute("""
+                        ALTER TABLE seekingalpha 
+                        ADD COLUMN IF NOT EXISTS exp DATE
+                    """)
+                    cur.execute("""
+                        ALTER TABLE seekingalpha 
+                        ADD COLUMN IF NOT EXISTS premiums DECIMAL(10,2)
                     """)
                     
                     conn.commit()
@@ -205,7 +247,7 @@ class StreamlitSeekingAlphaManager:
             return pd.DataFrame()
     
     def add_ticker(self, ticker: str, pdf_source: str = None, 
-                   date_added: date = None, price: float = None, exp: date = None) -> bool:
+                   date_added: date = None, price: float = None, exp: date = None, premiums: float = None) -> bool:
         """Add a single ticker to the database"""
         # Check if ticker already exists in database
         if self.ticker_exists(ticker):
@@ -215,10 +257,10 @@ class StreamlitSeekingAlphaManager:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO seekingalpha (ticker, date_added, pdf_source, price, exp)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO seekingalpha (ticker, date_added, pdf_source, price, exp, premiums)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         ON CONFLICT (ticker, date_added) DO NOTHING
-                    """, (ticker.upper().strip(), date_added or datetime.now().date(), pdf_source, price, exp))
+                    """, (ticker.upper().strip(), date_added or datetime.now().date(), pdf_source, price, exp, premiums))
                     
                     if cur.rowcount > 0:
                         conn.commit()
@@ -276,18 +318,27 @@ class StreamlitSeekingAlphaManager:
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # First check if record exists
+                    cur.execute("SELECT id FROM seekingalpha WHERE id = %s", (record_id,))
+                    if not cur.fetchone():
+                        st.warning(f"Record with ID {record_id} not found")
+                        return False
+                    
+                    # Perform the delete
                     cur.execute("DELETE FROM seekingalpha WHERE id = %s", (record_id,))
                     if cur.rowcount > 0:
                         conn.commit()
                         return True
-                    return False
+                    else:
+                        st.error(f"Delete operation affected 0 rows for ID {record_id}")
+                        return False
         except Exception as e:
-            st.error(f"❌ Error deleting record: {e}")
+            st.error(f"❌ Error deleting record {record_id}: {e}")
             return False
     
     def update_record(self, record_id: int, ticker: str = None, 
                      pdf_source: str = None, date_added: date = None,
-                     price: float = None, exp: date = None) -> bool:
+                     price: float = None, exp: date = None, premiums: float = None) -> bool:
         """Update an existing record"""
         try:
             with self.get_connection() as conn:
@@ -310,6 +361,9 @@ class StreamlitSeekingAlphaManager:
                     if exp:
                         updates.append("exp = %s")
                         params.append(exp)
+                    if premiums is not None:  # Allow 0 as valid premiums
+                        updates.append("premiums = %s")
+                        params.append(premiums)
                     
                     if not updates:
                         return False
@@ -855,7 +909,7 @@ def view_records_page(manager):
         st.markdown("### 📝 Interactive Table (Click Headers to Sort, Fields to Edit)")
         
         # Table header with clickable sorting buttons
-        header_cols = st.columns([1, 3, 2, 2, 2])
+        header_cols = st.columns([1, 3, 2, 2, 2, 2])
         
         # Sort indicators and button handlers
         def get_sort_indicator(column):
@@ -893,6 +947,11 @@ def view_records_page(manager):
                 st.rerun()
                 
         with header_cols[4]:
+            if st.button(f"**Premiums**{get_sort_indicator('premiums')}", key="sort_premiums", help="Click to sort by Premiums", use_container_width=True):
+                handle_sort_click('premiums')
+                st.rerun()
+                
+        with header_cols[5]:
             col_action1, col_action2 = st.columns([1, 1])
             with col_action1:
                 st.markdown("**Actions**")
@@ -916,7 +975,7 @@ def view_records_page(manager):
                 continue
             
             # Create columns for each field
-            cols = st.columns([1, 3, 2, 2, 2])
+            cols = st.columns([1, 3, 2, 2, 2, 2])
             
             with cols[0]:
                 st.write(f"`{record_id}`")
@@ -970,6 +1029,31 @@ def view_records_page(manager):
                     changes_made = True
             
             with cols[4]:
+                # Editable premiums
+                current_premiums = record.get('premiums', 0.0) if record.get('premiums') is not None else 0.0
+                # Format current value for display
+                if current_premiums >= 1000000:
+                    display_value = f"{current_premiums/1000000:.1f}M"
+                elif current_premiums >= 1000:
+                    display_value = f"{current_premiums/1000:.1f}K"
+                else:
+                    display_value = f"{current_premiums:.2f}" if current_premiums > 0 else ""
+                
+                new_premiums_str = st.text_input(
+                    "premiums",
+                    value=display_value,
+                    key=f"premiums_{record_id}",
+                    label_visibility="collapsed",
+                    placeholder="e.g. 1.5K, 2.3M, 150"
+                )
+                new_premiums = parse_number_with_suffix(new_premiums_str)
+                if new_premiums != current_premiums:
+                    if record_id not in st.session_state.pending_updates:
+                        st.session_state.pending_updates[record_id] = {}
+                    st.session_state.pending_updates[record_id]['premiums'] = new_premiums
+                    changes_made = True
+            
+            with cols[5]:
                 # Delete button
                 delete_col1, delete_col2 = st.columns(2)
                 with delete_col1:
@@ -990,7 +1074,8 @@ def view_records_page(manager):
             
             with col1:
                 if st.button("✅ Save All Changes", type="primary"):
-                    success_count = 0
+                    update_success = 0
+                    delete_success = 0
                     error_count = 0
                     
                     # Process updates
@@ -1002,21 +1087,29 @@ def view_records_page(manager):
                                 pdf_source=updates.get('pdf_source'),
                                 date_added=updates.get('date_added'),
                                 price=updates.get('price'),
-                                exp=updates.get('exp')
+                                exp=updates.get('exp'),
+                                premiums=updates.get('premiums')
                             ):
-                                success_count += 1
+                                update_success += 1
                             else:
+                                st.error(f"Failed to update record {record_id}")
                                 error_count += 1
                         except Exception as e:
                             st.error(f"Error updating record {record_id}: {e}")
                             error_count += 1
                     
                     # Process deletions
+                    if st.session_state.pending_deletes:
+                        st.info(f"Attempting to delete {len(st.session_state.pending_deletes)} records...")
+                    
                     for record_id in st.session_state.pending_deletes:
                         try:
+                            st.info(f"Deleting record ID: {record_id}")
                             if manager.delete_record(record_id):
-                                success_count += 1
+                                delete_success += 1
+                                st.success(f"Successfully deleted record {record_id}")
                             else:
+                                st.error(f"Failed to delete record {record_id}")
                                 error_count += 1
                         except Exception as e:
                             st.error(f"Error deleting record {record_id}: {e}")
@@ -1027,8 +1120,11 @@ def view_records_page(manager):
                     st.session_state.pending_deletes = set()
                     st.cache_data.clear()
                     
-                    if success_count > 0:
-                        st.success(f"✅ Successfully processed {success_count} changes!")
+                    # Show results
+                    if update_success > 0:
+                        st.success(f"✅ Updated {update_success} records!")
+                    if delete_success > 0:
+                        st.success(f"✅ Deleted {delete_success} records!")
                     if error_count > 0:
                         st.error(f"❌ {error_count} operations failed")
                     
@@ -1096,7 +1192,7 @@ def add_records_page(manager):
     
     # Single ticker addition
     st.subheader("📝 Add Single Ticker")
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     with col1:
         ticker = st.text_input("Ticker Symbol", placeholder="e.g., AAPL").upper()
@@ -1108,9 +1204,15 @@ def add_records_page(manager):
         price = st.number_input("Price", min_value=0.0, step=0.01, format="%.2f", placeholder="0.00")
     with col5:
         exp = st.date_input("Exp Date", value=None)
+    with col6:
+        premiums_str = st.text_input("Premiums", placeholder="e.g. 1.5K, 2.3M, 150")
+        premiums = parse_number_with_suffix(premiums_str) if premiums_str else 0.0
+    
+    # Show help text for premiums format
+    st.info("💡 Premiums format: Use K for thousands (1.5K = $1,500) or M for millions (2.3M = $2,300,000)")
     
     if st.button("➕ Add Ticker", type="primary", disabled=not ticker):
-        if manager.add_ticker(ticker, pdf_source, date_added, price if price > 0 else None, exp):
+        if manager.add_ticker(ticker, pdf_source, date_added, price if price > 0 else None, exp, premiums if premiums > 0 else None):
             st.success(f"✅ Added {ticker} successfully!")
             st.cache_data.clear()
         else:

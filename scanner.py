@@ -902,39 +902,6 @@ class StockScanner:
                 # Use ML prediction but include technical scores
                 current_price = scores.get('current_price', df.iloc[-1]['close'] if df is not None else 100)
                 
-                # Try to get existing option data from database first
-                existing_option_data = get_existing_option_data(ticker)
-                
-                if existing_option_data:
-                    # Use existing strike price and expiration from database
-                    strike_price = existing_option_data['strike_price']
-                    expiration_date = existing_option_data['expiration_date']
-                    dte = existing_option_data['dte']
-                    
-                    # Calculate OTM percentage based on current price vs existing strike
-                    otm_percentage = ((strike_price - current_price) / current_price) * 100
-                    
-                    # Use existing data but calculate current option premium estimate
-                    synthetic_data = calculate_option_data(current_price, ticker)
-                    option_price = synthetic_data['option_price']  # Still estimate premium
-                    
-                    option_data = {
-                        'option_price': option_price,
-                        'otm_percentage': round(otm_percentage, 1),
-                        'strike_price': strike_price,
-                        'expiration_date': expiration_date,
-                        'dte': dte,
-                        'option_type': 'CALL',
-                        'implied_volatility': synthetic_data['implied_volatility'],
-                        'source': 'database_strike'
-                    }
-                    logger.info(f"Using existing strike price ${strike_price:.2f} for {ticker} from database")
-                else:
-                    # Fall back to synthetic calculation if no existing data
-                    option_data = calculate_option_data(current_price, ticker)
-                    option_data['source'] = 'synthetic'
-                    logger.info(f"Using synthetic strike price ${option_data['strike_price']:.2f} for {ticker}")
-                
                 prediction = {
                     'ticker': ticker,
                     'signal': ml_prediction['signal'],
@@ -943,13 +910,8 @@ class StockScanner:
                     'current_price': current_price,
                     'predicted_price': round(ml_prediction['predicted_price'], 2),
                     'price_change': round(ml_prediction['price_change_pct'], 2),
-                    'price': option_data['option_price'],  # Option price for database
-                    'otm_percentage': option_data['otm_percentage'],
-                    'exp': option_data['expiration_date'],  # Expiration date for database
-                    'dte': option_data['dte'],
                     'timestamp': datetime.now().isoformat(),
                     'technical_scores': scores,
-                    'option_data': option_data,
                     'ml_prediction': {
                         'method': ml_prediction['method'],
                         'model_class': ml_prediction['model_class'],
@@ -990,39 +952,6 @@ class StockScanner:
             # HOLD signals predict minimal change (±2% based on confidence)
             price_prediction = current_price * (1 + ((confidence - 50) / 100) * 0.02)
         
-        # Try to get existing option data from database first
-        existing_option_data = get_existing_option_data(ticker)
-        
-        if existing_option_data:
-            # Use existing strike price and expiration from database
-            strike_price = existing_option_data['strike_price']
-            expiration_date = existing_option_data['expiration_date']
-            dte = existing_option_data['dte']
-            
-            # Calculate OTM percentage based on current price vs existing strike
-            otm_percentage = ((strike_price - current_price) / current_price) * 100
-            
-            # Use existing data but calculate current option premium estimate
-            synthetic_data = calculate_option_data(current_price, ticker)
-            option_price = synthetic_data['option_price']  # Still estimate premium
-            
-            option_data = {
-                'option_price': option_price,
-                'otm_percentage': round(otm_percentage, 1),
-                'strike_price': strike_price,
-                'expiration_date': expiration_date,
-                'dte': dte,
-                'option_type': 'CALL',
-                'implied_volatility': synthetic_data['implied_volatility'],
-                'source': 'database_strike'
-            }
-            logger.info(f"Using existing strike price ${strike_price:.2f} for {ticker} from database (fallback prediction)")
-        else:
-            # Fall back to synthetic calculation if no existing data
-            option_data = calculate_option_data(current_price, ticker)
-            option_data['source'] = 'synthetic'
-            logger.info(f"Using synthetic strike price ${option_data['strike_price']:.2f} for {ticker} (fallback prediction)")
-        
         prediction = {
             'ticker': ticker,
             'signal': signal,
@@ -1031,13 +960,8 @@ class StockScanner:
             'current_price': current_price,
             'predicted_price': round(price_prediction, 2),
             'price_change': round(((price_prediction - current_price) / current_price) * 100, 2),
-            'price': option_data['option_price'],  # Option price for database
-            'otm_percentage': option_data['otm_percentage'],
-            'exp': option_data['expiration_date'],  # Expiration date for database
-            'dte': option_data['dte'],
             'timestamp': datetime.now().isoformat(),
-            'technical_scores': scores,
-            'option_data': option_data
+            'technical_scores': scores
         }
         
         return prediction
@@ -1137,10 +1061,8 @@ class StockScanner:
         # Sort by confidence (highest first)
         predictions.sort(key=lambda x: x['confidence'], reverse=True)
         
-        # Save predictions to database with option data
-        if predictions:
-            saved_count = self.save_predictions_to_database(predictions)
-            logger.info(f"Saved {saved_count} predictions to seekingalpha database table")
+        # Note: Predictions are no longer saved to database automatically
+        # Database entries should only be managed manually through the watchlist interface
         
         logger.info(f"Scan complete: {len(predictions)} predictions generated")
         return predictions
@@ -1208,6 +1130,7 @@ class StockScanner:
                     ticker = prediction.get('ticker', '').upper()
                     price = prediction.get('price', 0.0)
                     exp_date = prediction.get('exp')
+                    premiums = prediction.get('price', 0.0)  # Use option price as premiums
                     
                     if not ticker:
                         logger.warning("Skipping prediction with empty ticker")
@@ -1221,13 +1144,14 @@ class StockScanner:
                     with conn.cursor() as cur:
                         # Insert or update record with option data
                         cur.execute("""
-                            INSERT INTO seekingalpha (ticker, price, exp, date_added)
-                            VALUES (%s, %s, %s, CURRENT_DATE)
+                            INSERT INTO seekingalpha (ticker, price, exp, premiums, date_added)
+                            VALUES (%s, %s, %s, %s, CURRENT_DATE)
                             ON CONFLICT (ticker, date_added) 
                             DO UPDATE SET 
                                 price = EXCLUDED.price,
-                                exp = EXCLUDED.exp
-                        """, (ticker, price, exp_date))
+                                exp = EXCLUDED.exp,
+                                premiums = EXCLUDED.premiums
+                        """, (ticker, price, exp_date, premiums))
                         
                         if cur.rowcount > 0:
                             saved_count += 1
@@ -1269,6 +1193,41 @@ class StockScanner:
         # Convert to DataFrame for easier processing
         df_predictions = pd.DataFrame(predictions)
         
+        # Fetch premiums from database for each ticker
+        try:
+            import psycopg2
+            conn = psycopg2.connect(**DB_CONFIG)
+            with conn.cursor() as cur:
+                # Get all tickers in the predictions
+                tickers = [pred['ticker'] for pred in predictions]
+                if tickers:
+                    cur.execute("""
+                        SELECT DISTINCT ON (ticker) ticker, premiums 
+                        FROM seekingalpha 
+                        WHERE ticker = ANY(%s)
+                        ORDER BY ticker, date_added DESC
+                    """, (tickers,))
+                    
+                    # Create a mapping of ticker -> premiums
+                    rows = cur.fetchall()
+                    db_premiums = {row[0]: row[1] for row in rows if row[1] is not None}
+                    
+                    logger.info(f"Found premiums for {len(db_premiums)} tickers in database: {list(db_premiums.keys())}")
+                    
+                    # Update predictions with database premiums only
+                    for pred in predictions:
+                        ticker = pred['ticker']
+                        premium = db_premiums.get(ticker, 0.0)
+                        pred['db_premiums'] = premium
+                        if premium > 0:
+                            logger.info(f"Using premium ${premium:.2f} for {ticker}")
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Error fetching premiums from database: {e}")
+            # Set default values
+            for pred in predictions:
+                pred['db_premiums'] = 0.0
+        
         # Flatten technical_scores for analysis
         if 'technical_scores' in df_predictions.columns:
             tech_scores_df = pd.json_normalize(df_predictions['technical_scores'])
@@ -1292,6 +1251,15 @@ class StockScanner:
         # Generate timestamp
         report_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Helper function to format numbers with K/M suffixes
+        def format_number(value):
+            if value >= 1000000:
+                return f"{value/1000000:.1f}M"
+            elif value >= 1000:
+                return f"{value/1000:.1f}K"
+            else:
+                return f"{value:.2f}"
         
         html_report = f"""
 <!DOCTYPE html>
@@ -1675,17 +1643,18 @@ class StockScanner:
                 <th onclick="sortTable(3, 'current_price')">Current Price</th>
                 <th onclick="sortTable(4, 'predicted_price')">Predicted Price</th>
                 <th onclick="sortTable(5, 'option_price')">Strike Price (OTM%)</th>
-                <th onclick="sortTable(6, 'exp_date')">Exp Date (DTE)</th>
-                <th onclick="sortTable(7, 'risk_amount')">Risk</th>
-                <th onclick="sortTable(8, 'reward_amount')">Reward</th>
-                <th onclick="sortTable(9, 'rr_ratio')">R/R Ratio</th>
-                <th onclick="sortTable(10, 'rsi')">RSI</th>
-                <th onclick="sortTable(11, 'atr_ratio')">ATR/Price</th>
-                <th onclick="sortTable(12, 'bb_position')">BB Position</th>
-                <th onclick="sortTable(13, 'trend_score')">Trend</th>
-                <th onclick="sortTable(14, 'ml_negative')">ML Negative</th>
-                <th onclick="sortTable(15, 'ml_positive')">ML Positive</th>
-                <th onclick="sortTable(16, 'ml_class')">ML Class</th>
+                <th onclick="sortTable(6, 'premiums')">Premiums</th>
+                <th onclick="sortTable(7, 'exp_date')">Exp Date (DTE)</th>
+                <th onclick="sortTable(8, 'risk_amount')">Risk</th>
+                <th onclick="sortTable(9, 'reward_amount')">Reward</th>
+                <th onclick="sortTable(10, 'rr_ratio')">R/R Ratio</th>
+                <th onclick="sortTable(11, 'rsi')">RSI</th>
+                <th onclick="sortTable(12, 'atr_ratio')">ATR/Price</th>
+                <th onclick="sortTable(13, 'bb_position')">BB Position</th>
+                <th onclick="sortTable(14, 'trend_score')">Trend</th>
+                <th onclick="sortTable(15, 'ml_negative')">ML Negative</th>
+                <th onclick="sortTable(16, 'ml_positive')">ML Positive</th>
+                <th onclick="sortTable(17, 'ml_class')">ML Class</th>
             </tr>
         </thead>
         <tbody>"""
@@ -1701,21 +1670,16 @@ class StockScanner:
             predicted_price = pred.get('predicted_price', 0)
             price_change = pred.get('price_change', 0)
             
-            # Get option data
-            option_premium = pred.get('price', 0.0)  # Option premium from prediction
-            otm_percentage = pred.get('otm_percentage', 0.0)
-            exp_date = pred.get('exp', 'N/A')
-            dte = pred.get('dte', 0)
+            # Get premiums from database only
+            option_premium = pred.get('db_premiums', 0.0)  # Premiums from database only
             
-            # Get strike price from option_data if available
-            option_data = pred.get('option_data', {})
-            strike_price = option_data.get('strike_price', 0.0)
+            # Option-related fields are no longer calculated during prediction
+            otm_percentage = 0.0
+            exp_date = 'N/A'
+            dte = 0
+            strike_price = 0.0
             
-            # If no strike price available, calculate it from current price and OTM%
-            if strike_price == 0.0 and otm_percentage > 0:
-                current_price = pred.get('current_price', 0)
-                if current_price > 0:
-                    strike_price = current_price * (1 + otm_percentage / 100)
+            # Strike price and option data are no longer calculated
             
             # Get technical scores
             tech_scores = pred.get('technical_scores', {})
@@ -1839,6 +1803,7 @@ class StockScanner:
                 <td>${current_price:.2f}</td>
                 <td class="{price_change_class}">${predicted_price:.2f}<br><small>({price_change:+.1f}%)</small></td>
                 <td>${strike_price:.2f}<br><small>({otm_percentage:.1f}% {'ITM' if otm_percentage < 0 else 'OTM'})</small></td>
+                <td>${format_number(option_premium)}</td>
                 <td>{exp_date}<br><small>({dte} DTE)</small></td>
                 <td class="risk-amount">${risk_amount:.2f}<br><small>({risk_percentage:.1f}%)</small></td>
                 <td class="reward-amount">${reward_amount:.2f}<br><small>({reward_percentage:.1f}%)</small></td>
