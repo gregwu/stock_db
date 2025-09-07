@@ -34,6 +34,7 @@ from io import StringIO
 import yfinance as yf
 from datetime import timedelta
 import datetime as dt
+from statsmodels.tsa.seasonal import seasonal_decompose
 #import psycopg2
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
@@ -68,7 +69,7 @@ from config import features
 
 # Technical Analysis Indicators Class
 
-def create_technical_analysis_chart(df, symbol):
+def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="line"):
     """Create comprehensive technical analysis chart"""
     if df is None or len(df) == 0:
         st.error("No data available for technical analysis")
@@ -84,7 +85,7 @@ def create_technical_analysis_chart(df, symbol):
     if len(df_chart) < 20:
         st.warning(f"⚠️ Limited data ({len(df_chart)} days) for technical analysis. Some indicators may not be available.")
         # Create a basic price chart without technical indicators
-        return create_basic_price_chart(df_chart, symbol)
+        return create_basic_price_chart(df_chart, symbol, chart_type)
     
     # Calculate indicators using the chart data
     close = df_chart['close']
@@ -103,6 +104,12 @@ def create_technical_analysis_chart(df, symbol):
     # PMA Threshold Bands
     pma_bands = TechnicalIndicators.pma_threshold_bands(pma_fast)
     
+    # MACD (12, 26, 9)
+    macd_line, macd_signal, macd_hist = TechnicalIndicators.macd(close, 12, 26, 9)
+    
+    # RSI (14-period)
+    rsi = TechnicalIndicators.rsi(close, 14)
+    
     # Create indicators dataframe
     indicators = pd.DataFrame({
         'bb_sma': bb_sma,
@@ -115,7 +122,11 @@ def create_technical_analysis_chart(df, symbol):
         'pma_upper_low': pma_bands['upper_low'],
         'pma_lower_low': pma_bands['lower_low'],
         'pma_upper_high': pma_bands['upper_high'],
-        'pma_lower_high': pma_bands['lower_high']
+        'pma_lower_high': pma_bands['lower_high'],
+        'macd_line': macd_line,
+        'macd_signal': macd_signal,
+        'macd_hist': macd_hist,
+        'rsi': rsi
     }, index=df_chart.index)
     
     # Create the chart
@@ -153,20 +164,35 @@ def create_technical_analysis_chart(df, symbol):
             f"Daily Change: {change_text}"
         )
     
-    fig.add_trace(
-        go.Candlestick(
-            x=df_chart.index,
-            open=df_chart['open'],
-            high=df_chart['high'],
-            low=df_chart['low'],
-            close=df_chart['close'],
-            name='Price',
-            increasing_line_color='#00ff88',
-            decreasing_line_color='#ff4444',
-            hovertext=hover_text,
-            hoverinfo='text'
+    # Price chart - either line or candlestick based on chart_type
+    if chart_type == "candlestick":
+        fig.add_trace(
+            go.Candlestick(
+                x=df_chart.index,
+                open=df_chart['open'],
+                high=df_chart['high'],
+                low=df_chart['low'],
+                close=df_chart['close'],
+                name='Price',
+                increasing_line_color='green',
+                decreasing_line_color='red',
+                hovertext=hover_text,
+                hoverinfo='text'
+            )
         )
-    )
+    else:
+        # Line chart
+        fig.add_trace(
+            go.Scatter(
+                x=df_chart.index,
+                y=df_chart['close'],
+                mode='lines',
+                line=dict(color='black', width=2),
+                name='Price',
+                hovertext=hover_text,
+                hoverinfo='text'
+            )
+        )
     
     # 2. Bollinger Bands
     fig.add_trace(
@@ -175,19 +201,8 @@ def create_technical_analysis_chart(df, symbol):
             y=indicators['bb_upper'],
             mode='lines',
             name='BB Upper',
-            line=dict(color='rgba(173, 216, 230, 0.8)', width=1),
+            line=dict(color='blue', width=1),
             hovertemplate='BB Upper: $%{y:.2f}<extra></extra>'
-        )
-    )
-    
-    fig.add_trace(
-        go.Scatter(
-            x=df_chart.index,
-            y=indicators['bb_sma'],
-            mode='lines',
-            name='BB Middle (SMA 20)',
-            line=dict(color='orange', width=2),
-            hovertemplate='BB Middle: $%{y:.2f}<extra></extra>'
         )
     )
     
@@ -197,10 +212,21 @@ def create_technical_analysis_chart(df, symbol):
             y=indicators['bb_lower'],
             mode='lines',
             name='BB Lower',
-            line=dict(color='rgba(173, 216, 230, 0.8)', width=1),
+            line=dict(color='blue', width=1),
             fill='tonexty',
-            fillcolor='rgba(173, 216, 230, 0.1)',
+            fillcolor='rgba(0,0,255,0.1)',
             hovertemplate='BB Lower: $%{y:.2f}<extra></extra>'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['bb_sma'],
+            mode='lines',
+            name='BB Middle (SMA 20)',
+            line=dict(color='orange', width=1),
+            hovertemplate='BB Middle: $%{y:.2f}<extra></extra>'
         )
     )
     
@@ -294,7 +320,7 @@ def create_technical_analysis_chart(df, symbol):
             y=indicators['pma_fast'],
             mode='lines',
             name='Price/MA %',
-            line=dict(color='red', width=2),
+            line=dict(color='blue', width=1),
             hovertemplate='Price/MA: %{y:.2f}%<extra></extra>',
             yaxis='y3'
         )
@@ -307,7 +333,7 @@ def create_technical_analysis_chart(df, symbol):
             y=indicators['pma_fast_signal'],
             mode='lines',
             name='Signal Line',
-            line=dict(color='blue', width=2),
+            line=dict(color='red', width=1),
             hovertemplate='Signal: %{y:.2f}%<extra></extra>',
             yaxis='y3'
         )
@@ -327,22 +353,191 @@ def create_technical_analysis_chart(df, symbol):
         )
     )
     
+    # 6. MACD indicator
+    # MACD line
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['macd_line'],
+            mode='lines',
+            name='MACD',
+            line=dict(color='blue', width=1),
+            hovertemplate='MACD: %{y:.4f}<extra></extra>',
+            yaxis='y4'
+        )
+    )
+    
+    # MACD Signal line
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['macd_signal'],
+            mode='lines',
+            name='MACD Signal',
+            line=dict(color='red', width=1),
+            hovertemplate='MACD Signal: %{y:.4f}<extra></extra>',
+            yaxis='y4'
+        )
+    )
+    
+    # MACD Histogram - separate positive and negative bars
+    positive_hist = indicators['macd_hist'].where(indicators['macd_hist'] > 0, 0)
+    negative_hist = indicators['macd_hist'].where(indicators['macd_hist'] <= 0, 0)
+    
+    fig.add_trace(
+        go.Bar(
+            x=df_chart.index,
+            y=positive_hist,
+            name='MACD Hist +',
+            marker_color='green',
+            opacity=0.5,
+            hovertemplate='MACD Hist: %{y:.4f}<extra></extra>',
+            yaxis='y4',
+            showlegend=False
+        )
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            x=df_chart.index,
+            y=negative_hist,
+            name='MACD Hist -',
+            marker_color='red',
+            opacity=0.5,
+            hovertemplate='MACD Hist: %{y:.4f}<extra></extra>',
+            yaxis='y4',
+            showlegend=False
+        )
+    )
+    
+    # 7. RSI indicator
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['rsi'],
+            mode='lines',
+            name='RSI',
+            line=dict(color='purple', width=2),
+            hovertemplate='RSI: %{y:.1f}<extra></extra>',
+            yaxis='y5'
+        )
+    )
+    
+    # Add reference lines using traces instead of add_hline
+    # MACD zero line
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=[0] * len(df_chart.index),
+            mode='lines',
+            line=dict(color='gray', width=1, dash='dot'),
+            name='MACD Zero',
+            yaxis='y4',
+            showlegend=False,
+            hoverinfo='skip'
+        )
+    )
+    
+    # RSI reference lines
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=[70] * len(df_chart.index),
+            mode='lines',
+            line=dict(color='red', width=1, dash='dot'),
+            name='RSI 70',
+            yaxis='y5',
+            showlegend=False,
+            hoverinfo='skip'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=[50] * len(df_chart.index),
+            mode='lines',
+            line=dict(color='gray', width=1, dash='dot'),
+            name='RSI 50',
+            yaxis='y5',
+            showlegend=False,
+            hoverinfo='skip'
+        )
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=[30] * len(df_chart.index),
+            mode='lines',
+            line=dict(color='green', width=1, dash='dot'),
+            name='RSI 30',
+            yaxis='y5',
+            showlegend=False,
+            hoverinfo='skip'
+        )
+    )
+    
+    # 8. Seasonal Component
+    try:
+        # Get seasonal decomposition for the displayed data period
+        close_series = df_chart['close']
+        stl_result, _ = get_daily_seasonal(close_series, seasonal_years)
+        seasonal_series = stl_result.seasonal
+        
+        # Scale to percentage for better visualization
+        seasonal_scaled = seasonal_series * 100
+        
+        # Add seasonal component as area chart
+        fig.add_trace(
+            go.Scatter(
+                x=seasonal_series.index,
+                y=seasonal_scaled,
+                mode='lines',
+                line=dict(color='cyan', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(0,255,255,0.2)',
+                name='Seasonal',
+                hovertemplate='Seasonal: %{y:.2f}%<extra></extra>',
+                yaxis='y6',
+                showlegend=False
+            )
+        )
+        
+        # Add zero line for seasonal reference
+        fig.add_trace(
+            go.Scatter(
+                x=seasonal_series.index,
+                y=[0] * len(seasonal_series.index),
+                mode='lines',
+                line=dict(color='gray', width=1, dash='dot'),
+                name='Seasonal Zero',
+                yaxis='y6',
+                showlegend=False,
+                hoverinfo='skip'
+            )
+        )
+        
+    except Exception as e:
+        # If seasonal analysis fails, add a placeholder message
+        st.info(f"Seasonal analysis unavailable: Not enough data for {seasonal_years} years of analysis")
+    
     # Update layout
     fig.update_layout(
         title=f'{symbol} - Comprehensive Technical Analysis',
         template='plotly_dark',
-        height=1000,
-        showlegend=True,
+        height=1200,
+        showlegend=False,
         hovermode='x unified',
         hoverdistance=100,
         spikedistance=1000,
         xaxis=dict(
             showspikes=True,
-            spikecolor="rgba(255,255,255,0.8)",
+            spikecolor="rgba(0,150,255,0.8)",
             spikesnap="cursor",
             spikemode="across",
             spikethickness=2,
-            spikedash="solid",
+            spikedash="dash",
             domain=[0.0, 1.0],
             anchor='y',
             rangebreaks=[
@@ -354,20 +549,47 @@ def create_technical_analysis_chart(df, symbol):
         ),
         yaxis=dict(
             title='Price ($)',
-            side='right',
-            domain=[0.4, 1.0] if volume_col else [0.2, 1.0]
+            side='left',
+            domain=[0.7, 1.0] if volume_col else [0.6, 1.0]
         ),
         yaxis2=dict(
             title='Volume',
             side='left',
             showgrid=False,
-            domain=[0.28, 0.38]
+            domain=[0.58, 0.68]
         ) if volume_col else None,
         yaxis3=dict(
             title='Price/MA (%)',
-            side='right',
+            side='left',
             showgrid=True,
-            domain=[0.0, 0.25] if volume_col else [0.0, 0.15],
+            domain=[0.45, 0.55] if volume_col else [0.45, 0.55],
+            zeroline=True,
+            zerolinecolor='gray',
+            zerolinewidth=1
+        ),
+        yaxis4=dict(
+            title='MACD',
+            side='left',
+            showgrid=True,
+            domain=[0.30, 0.42],
+            zeroline=True,
+            zerolinecolor='gray',
+            zerolinewidth=1
+        ),
+        yaxis5=dict(
+            title='RSI',
+            side='left',
+            showgrid=True,
+            domain=[0.15, 0.27],
+            range=[0, 100],
+            tickvals=[0, 30, 50, 70, 100],
+            zeroline=False
+        ),
+        yaxis6=dict(
+            title='Seasonal (%)',
+            side='left',
+            showgrid=True,
+            domain=[0.0, 0.12],
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
@@ -377,11 +599,11 @@ def create_technical_analysis_chart(df, symbol):
     # Apply enhanced crosshair settings
     fig.update_xaxes(
         showspikes=True,
-        spikecolor="rgba(255,255,255,0.8)",
+        spikecolor="rgba(0,150,255,0.8)",
         spikesnap="cursor",
         spikemode="across",
         spikethickness=2,
-        spikedash="solid"
+        spikedash="dash"
     )
     
     # Remove rangeslider
@@ -389,7 +611,7 @@ def create_technical_analysis_chart(df, symbol):
     
     return fig
 
-def create_basic_price_chart(df, symbol):
+def create_basic_price_chart(df, symbol, chart_type="line"):
     """Create a basic price chart when limited data is available"""
     if df is None or len(df) == 0:
         return None
@@ -421,20 +643,35 @@ def create_basic_price_chart(df, symbol):
             f"Daily Change: {change_text}"
         )
     
-    fig.add_trace(
-        go.Candlestick(
-            x=df.index,
-            open=df['open'],
-            high=df['high'],
-            low=df['low'],
-            close=df['close'],
-            name='Price',
-            increasing_line_color='#00ff88',
-            decreasing_line_color='#ff4444',
-            hovertext=hover_text,
-            hoverinfo='text'
+    # Price chart - either line or candlestick based on chart_type
+    if chart_type == "candlestick":
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df['open'],
+                high=df['high'],
+                low=df['low'],
+                close=df['close'],
+                name='Price',
+                increasing_line_color='green',
+                decreasing_line_color='red',
+                hovertext=hover_text,
+                hoverinfo='text'
+            )
         )
-    )
+    else:
+        # Line chart
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df['close'],
+                mode='lines',
+                line=dict(color='black', width=2),
+                name='Price',
+                hovertext=hover_text,
+                hoverinfo='text'
+            )
+        )
     
     # Add volume if available
     if 'volume' in df.columns:
@@ -458,15 +695,15 @@ def create_basic_price_chart(df, symbol):
         title=f'{symbol} - Basic Price Chart ({len(df)} days)',
         template='plotly_dark',
         height=600,
-        showlegend=True,
+        showlegend=False,
         hovermode='x unified',
         xaxis=dict(
             showspikes=True,
-            spikecolor="rgba(255,255,255,0.8)",
+            spikecolor="rgba(0,150,255,0.8)",
             spikesnap="cursor",
             spikemode="across",
             spikethickness=2,
-            spikedash="solid",
+            spikedash="dash",
             rangebreaks=[
                 dict(bounds=["sat", "mon"]),  # Hide weekends (Saturday and Sunday)
                 dict(values=["2023-01-02", "2023-01-16", "2023-02-20", "2023-04-07", "2023-05-29", "2023-06-19", "2023-07-04", "2023-09-04", "2023-10-09", "2023-11-23", "2023-12-25"]),  # US holidays 2023
@@ -476,7 +713,7 @@ def create_basic_price_chart(df, symbol):
         ),
         yaxis=dict(
             title='Price ($)',
-            side='right',
+            side='left',
             domain=[0.4, 1.0] if 'volume' in df.columns else [0.0, 1.0]
         ),
         yaxis2=dict(
@@ -489,6 +726,226 @@ def create_basic_price_chart(df, symbol):
     
     # Remove rangeslider
     fig.update_layout(xaxis_rangeslider_visible=False)
+    
+    return fig
+
+def get_seasonal_component(data: pd.Series, years: int = 1) -> pd.Series:
+    """Get seasonal component for any data series."""
+    # Get last N years of data
+    years_ago = data.index[-1] - pd.DateOffset(years=years)
+    recent_data = data[data.index >= years_ago].copy().dropna()
+    
+    min_days = years * 100  # Minimum days per year
+    if len(recent_data) < min_days:
+        raise ValueError(f"Not enough recent data for seasonal analysis (need at least {min_days} days for {years} year(s))")
+    
+    # Use business day frequency to handle weekends/holidays
+    daily_business = recent_data.asfreq("B").interpolate().dropna()
+    
+    # Adjust period based on available data
+    period = min(252, len(daily_business) // 4)
+    if period < 10:
+        raise ValueError("Not enough data for seasonal decomposition")
+    
+    # Perform STL decomposition
+    result = seasonal_decompose(daily_business, model="additive", period=period, extrapolate_trend="freq")
+    return result.seasonal
+
+def get_daily_seasonal(close: pd.Series, years: int = 1) -> tuple:
+    """Get daily seasonal decomposition for price data."""
+    # Get last N years of data
+    years_ago = close.index[-1] - pd.DateOffset(years=years)
+    recent_close = close[close.index >= years_ago].copy()
+    
+    min_days = years * 100  # Minimum days per year
+    if len(recent_close) < min_days:
+        raise ValueError(f"Not enough recent data for seasonal analysis (need at least {min_days} days for {years} year(s))")
+    
+    # Use business day frequency to handle weekends/holidays
+    daily_business = recent_close.asfreq("B").interpolate().dropna()
+    daily_log = np.log(daily_business)
+    
+    # Adjust period based on available data
+    period = min(252, len(daily_business) // 4)
+    if period < 10:
+        raise ValueError("Not enough data for seasonal decomposition")
+    
+    # Perform STL decomposition
+    result = seasonal_decompose(daily_log, model="additive", period=period, extrapolate_trend="freq")
+    return result, recent_close
+
+def create_seasonal_chart(df, symbol, years=2):
+    """Create a seasonal analysis chart with multiple subplots."""
+    if df is None or len(df) == 0:
+        st.error("No data available for seasonal analysis")
+        return None
+    
+    # Get the data we need
+    close = df['close']
+    volume = df.get('volume', df.get('vol', pd.Series()))
+    
+    try:
+        # Get seasonal decomposition
+        stl_result, recent_close = get_daily_seasonal(close, years)
+        
+        # Get corresponding volume data for the same period
+        recent_volume = volume[volume.index >= recent_close.index[0]] if not volume.empty else pd.Series()
+        
+        # Calculate technical indicators
+        macd_line, macd_signal, macd_hist = TechnicalIndicators.macd(recent_close, 12, 26, 9)
+        rsi = TechnicalIndicators.rsi(recent_close, 14)
+        bb_upper, bb_sma, bb_lower = TechnicalIndicators.bollinger_bands(recent_close, 20, 2)
+        
+        # Create the seasonal chart
+        fig = create_seasonal_plotly_chart(recent_close, recent_volume, stl_result, symbol, years, 
+                                         macd_line, macd_signal, macd_hist, rsi, bb_upper, bb_sma, bb_lower)
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating seasonal chart: {str(e)}")
+        return None
+
+def create_seasonal_plotly_chart(close, volume, stl_result, symbol, years, 
+                                macd_line, macd_signal, macd_hist, rsi, bb_upper, bb_sma, bb_lower):
+    """Create the seasonal chart using Plotly with separated sections."""
+    
+    # Create subplots with 5 rows (Price, Volume, Seasonal, MACD, RSI)
+    fig = make_subplots(
+        rows=5, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=['Price & Bollinger Bands', 'Volume', 'Seasonal Component', 'MACD', 'RSI'],
+        row_heights=[0.4, 0.15, 0.15, 0.15, 0.15],
+        specs=[[{"secondary_y": False}],
+               [{"secondary_y": False}],
+               [{"secondary_y": False}],
+               [{"secondary_y": False}],
+               [{"secondary_y": False}]]
+    )
+    
+    # 1. Price chart with Bollinger Bands
+    fig.add_trace(
+        go.Scatter(x=close.index, y=bb_upper, 
+                  mode='lines', line=dict(color='lightblue', width=1),
+                  name='BB Upper', showlegend=False), row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(x=close.index, y=bb_lower,
+                  mode='lines', line=dict(color='lightblue', width=1),
+                  fill='tonexty', fillcolor='rgba(173,216,230,0.1)',
+                  name='BB Lower', showlegend=False), row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(x=close.index, y=bb_sma,
+                  mode='lines', line=dict(color='orange', width=2),
+                  name='SMA 20', showlegend=False), row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(x=close.index, y=close,
+                  mode='lines', line=dict(color='black', width=2),
+                  name='Price', showlegend=False), row=1, col=1
+    )
+    
+    # 2. Volume chart
+    if not volume.empty:
+        colors = ['green' if i > 0 and close.iloc[i] > close.iloc[i-1] else 'red' 
+                 for i in range(len(volume))]
+        fig.add_trace(
+            go.Bar(x=volume.index, y=volume, 
+                  marker_color=colors, opacity=0.7,
+                  name='Volume', showlegend=False), row=2, col=1
+        )
+    
+    # 3. Seasonal component
+    seasonal_series = stl_result.seasonal
+    
+    # Ensure we have valid seasonal data
+    if len(seasonal_series) > 0:
+        # Scale seasonal values to make them more visible (multiply by 100 for percentage display)
+        seasonal_scaled = seasonal_series * 100
+        
+        # Add zero line for reference
+        fig.add_hline(y=0, line=dict(color='gray', dash='dot'), row=3, col=1)
+        
+        # Add seasonal component as area chart
+        fig.add_trace(
+            go.Scatter(x=seasonal_series.index, 
+                      y=seasonal_scaled,
+                      mode='lines+markers',
+                      line=dict(color='cyan', width=3),
+                      marker=dict(size=2, color='cyan'),
+                      fill='tozeroy',
+                      fillcolor='rgba(0,255,255,0.3)',
+                      name='Seasonal (%)', 
+                      showlegend=False,
+                      hovertemplate='Date: %{x}<br>Seasonal: %{y:.2f}%<extra></extra>'), 
+                      row=3, col=1
+        )
+    
+    # 4. MACD
+    fig.add_trace(
+        go.Scatter(x=macd_line.index, y=macd_line,
+                  mode='lines', line=dict(color='blue', width=2),
+                  name='MACD', showlegend=False), row=4, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(x=macd_signal.index, y=macd_signal,
+                  mode='lines', line=dict(color='red', width=2),
+                  name='Signal', showlegend=False), row=4, col=1
+    )
+    
+    # MACD Histogram
+    colors = ['green' if x > 0 else 'red' for x in macd_hist]
+    fig.add_trace(
+        go.Bar(x=macd_hist.index, y=macd_hist,
+              marker_color=colors, opacity=0.6,
+              name='MACD Hist', showlegend=False), row=4, col=1
+    )
+    
+    # 5. RSI
+    fig.add_trace(
+        go.Scatter(x=rsi.index, y=rsi,
+                  mode='lines', line=dict(color='purple', width=2),
+                  name='RSI', showlegend=False), row=5, col=1
+    )
+    
+    # Add RSI reference lines
+    fig.add_hline(y=70, line=dict(color='red', dash='dash'), row=5, col=1)
+    fig.add_hline(y=30, line=dict(color='green', dash='dash'), row=5, col=1)
+    fig.add_hline(y=50, line=dict(color='gray', dash='dot'), row=5, col=1)
+    
+    # Update layout
+    year_text = "Year" if years == 1 else "Years"
+    fig.update_layout(
+        title=f'{symbol} - Seasonal Analysis ({years} {year_text})',
+        template='plotly_dark',
+        height=1200,
+        showlegend=False,
+        hovermode='x unified',
+        xaxis5=dict(
+            showspikes=True,
+            spikecolor="rgba(0,150,255,0.8)",
+            spikesnap="cursor",
+            spikemode="across",
+            spikethickness=2,
+            spikedash="dash"
+        )
+    )
+    
+    # Update y-axis titles
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Volume", row=2, col=1)
+    fig.update_yaxes(title_text="Seasonal (%)", row=3, col=1)
+    fig.update_yaxes(title_text="MACD", row=4, col=1)
+    fig.update_yaxes(title_text="RSI", row=5, col=1)
+    
+    # Set RSI range
+    fig.update_yaxes(range=[0, 100], row=5, col=1)
     
     return fig
 
@@ -1079,6 +1536,26 @@ def main():
             st.query_params["pattern_length"] = str(pattern_length)
         
         st.markdown("---")
+        st.subheader("📊 Chart Display Settings")
+        chart_type = st.selectbox(
+            "Price Chart Type",
+            ["line", "candlestick"],
+            index=0,
+            help="Choose between line chart or candlestick chart for price display"
+        )
+        
+        st.markdown("---")
+        st.subheader("📅 Seasonal Analysis Settings")
+        seasonal_years = st.slider(
+            "Years for Seasonal Analysis",
+            min_value=1,
+            max_value=5,
+            value=2,
+            step=1,
+            help="Number of years of historical data to use for seasonal pattern analysis"
+        )
+        
+        st.markdown("---")
         
         # Technical Analysis Only option with URL parameter support (default: True)
         url_tech_only = st.query_params.get("tech_only", "true").lower() == "true"
@@ -1617,8 +2094,8 @@ def main():
             if df is not None and len(df) > 0:
                 st.subheader(f"📊 {ticker} Technical Analysis")
                 
-                # Create technical analysis chart
-                tech_chart = create_technical_analysis_chart(df, ticker)
+                # Create technical analysis chart (now includes seasonal component)
+                tech_chart = create_technical_analysis_chart(df, ticker, seasonal_years, chart_type)
                 
                 if tech_chart is not None:
                     st.plotly_chart(tech_chart, use_container_width=True)

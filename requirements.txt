@@ -16,3 +16,4 @@ lightgbm
 plotly
 scikit-learn
 imbalanced-learn
+statsmodels
