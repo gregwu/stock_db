@@ -69,7 +69,7 @@ from config import features
 
 # Technical Analysis Indicators Class
 
-def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="line"):
+def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="line", show_macd=True):
     """Create comprehensive technical analysis chart"""
     if df is None or len(df) == 0:
         st.error("No data available for technical analysis")
@@ -353,62 +353,63 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         )
     )
     
-    # 6. MACD indicator
-    # MACD line
-    fig.add_trace(
-        go.Scatter(
-            x=df_chart.index,
-            y=indicators['macd_line'],
-            mode='lines',
-            name='MACD',
-            line=dict(color='blue', width=1),
-            hovertemplate='MACD: %{y:.4f}<extra></extra>',
-            yaxis='y4'
+    # 6. MACD indicator (conditional)
+    if show_macd:
+        # MACD line
+        fig.add_trace(
+            go.Scatter(
+                x=df_chart.index,
+                y=indicators['macd_line'],
+                mode='lines',
+                name='MACD',
+                line=dict(color='blue', width=1),
+                hovertemplate='MACD: %{y:.4f}<extra></extra>',
+                yaxis='y4'
+            )
         )
-    )
-    
-    # MACD Signal line
-    fig.add_trace(
-        go.Scatter(
-            x=df_chart.index,
-            y=indicators['macd_signal'],
-            mode='lines',
-            name='MACD Signal',
-            line=dict(color='red', width=1),
-            hovertemplate='MACD Signal: %{y:.4f}<extra></extra>',
-            yaxis='y4'
+        
+        # MACD Signal line
+        fig.add_trace(
+            go.Scatter(
+                x=df_chart.index,
+                y=indicators['macd_signal'],
+                mode='lines',
+                name='MACD Signal',
+                line=dict(color='red', width=1),
+                hovertemplate='MACD Signal: %{y:.4f}<extra></extra>',
+                yaxis='y4'
+            )
         )
-    )
-    
-    # MACD Histogram - separate positive and negative bars
-    positive_hist = indicators['macd_hist'].where(indicators['macd_hist'] > 0, 0)
-    negative_hist = indicators['macd_hist'].where(indicators['macd_hist'] <= 0, 0)
-    
-    fig.add_trace(
-        go.Bar(
-            x=df_chart.index,
-            y=positive_hist,
-            name='MACD Hist +',
-            marker_color='green',
-            opacity=0.5,
-            hovertemplate='MACD Hist: %{y:.4f}<extra></extra>',
-            yaxis='y4',
-            showlegend=False
+        
+        # MACD Histogram - separate positive and negative bars
+        positive_hist = indicators['macd_hist'].where(indicators['macd_hist'] > 0, 0)
+        negative_hist = indicators['macd_hist'].where(indicators['macd_hist'] <= 0, 0)
+        
+        fig.add_trace(
+            go.Bar(
+                x=df_chart.index,
+                y=positive_hist,
+                name='MACD Hist +',
+                marker_color='green',
+                opacity=0.5,
+                hovertemplate='MACD Hist: %{y:.4f}<extra></extra>',
+                yaxis='y4',
+                showlegend=False
+            )
         )
-    )
-    
-    fig.add_trace(
-        go.Bar(
-            x=df_chart.index,
-            y=negative_hist,
-            name='MACD Hist -',
-            marker_color='red',
-            opacity=0.5,
-            hovertemplate='MACD Hist: %{y:.4f}<extra></extra>',
-            yaxis='y4',
-            showlegend=False
+        
+        fig.add_trace(
+            go.Bar(
+                x=df_chart.index,
+                y=negative_hist,
+                name='MACD Hist -',
+                marker_color='red',
+                opacity=0.5,
+                hovertemplate='MACD Hist: %{y:.4f}<extra></extra>',
+                yaxis='y4',
+                showlegend=False
+            )
         )
-    )
     
     # 7. RSI indicator
     fig.add_trace(
@@ -424,19 +425,20 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
     )
     
     # Add reference lines using traces instead of add_hline
-    # MACD zero line
-    fig.add_trace(
-        go.Scatter(
-            x=df_chart.index,
-            y=[0] * len(df_chart.index),
-            mode='lines',
-            line=dict(color='gray', width=1, dash='dot'),
-            name='MACD Zero',
-            yaxis='y4',
-            showlegend=False,
-            hoverinfo='skip'
+    # MACD zero line (conditional)
+    if show_macd:
+        fig.add_trace(
+            go.Scatter(
+                x=df_chart.index,
+                y=[0] * len(df_chart.index),
+                mode='lines',
+                line=dict(color='gray', width=1, dash='dot'),
+                name='MACD Zero',
+                yaxis='y4',
+                showlegend=False,
+                hoverinfo='skip'
+            )
         )
-    )
     
     # RSI reference lines
     fig.add_trace(
@@ -550,19 +552,19 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         yaxis=dict(
             title='Price ($)',
             side='left',
-            domain=[0.7, 1.0] if volume_col else [0.6, 1.0]
+            domain=[0.7, 1.0] if volume_col else ([0.6, 1.0] if show_macd else [0.65, 1.0])
         ),
         yaxis2=dict(
             title='Volume',
             side='left',
             showgrid=False,
-            domain=[0.58, 0.68]
+            domain=[0.58, 0.68] if show_macd else [0.53, 0.63]
         ) if volume_col else None,
         yaxis3=dict(
             title='Price/MA (%)',
             side='left',
             showgrid=True,
-            domain=[0.45, 0.55] if volume_col else [0.45, 0.55],
+            domain=[0.45, 0.55] if show_macd else ([0.38, 0.50] if volume_col else [0.38, 0.50]),
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
@@ -575,12 +577,12 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
-        ),
+        ) if show_macd else None,
         yaxis5=dict(
             title='RSI',
             side='left',
             showgrid=True,
-            domain=[0.15, 0.27],
+            domain=[0.15, 0.27] if show_macd else ([0.20, 0.35] if volume_col else [0.20, 0.35]),
             range=[0, 100],
             tickvals=[0, 30, 50, 70, 100],
             zeroline=False
@@ -589,7 +591,7 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
             title='Seasonal (%)',
             side='left',
             showgrid=True,
-            domain=[0.0, 0.12],
+            domain=[0.0, 0.12] if show_macd else ([0.0, 0.17] if volume_col else [0.0, 0.17]),
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
@@ -1540,8 +1542,14 @@ def main():
         chart_type = st.selectbox(
             "Price Chart Type",
             ["line", "candlestick"],
-            index=0,
+            index=1,
             help="Choose between line chart or candlestick chart for price display"
+        )
+        
+        show_macd = st.checkbox(
+            "Show MACD",
+            value=False,
+            help="Toggle MACD indicator visibility on the chart"
         )
         
         st.markdown("---")
@@ -2095,7 +2103,7 @@ def main():
                 st.subheader(f"📊 {ticker} Technical Analysis")
                 
                 # Create technical analysis chart (now includes seasonal component)
-                tech_chart = create_technical_analysis_chart(df, ticker, seasonal_years, chart_type)
+                tech_chart = create_technical_analysis_chart(df, ticker, seasonal_years, chart_type, show_macd)
                 
                 if tech_chart is not None:
                     st.plotly_chart(tech_chart, use_container_width=True)
