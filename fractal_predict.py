@@ -24,6 +24,7 @@ import os
 import warnings
 import json
 import tempfile
+import gc
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -748,6 +749,10 @@ def create_basic_price_chart(df, symbol, chart_type="line"):
     fig.update_layout(xaxis_rangeslider_visible=False)
     
     return fig
+
+def cleanup_memory():
+    """Force garbage collection to free up memory"""
+    gc.collect()
 
 def get_seasonal_component(data: pd.Series, years: int = 1) -> pd.Series:
     """Get seasonal component for any data series."""
@@ -1667,6 +1672,9 @@ def main():
             base_ticker = ticker.replace('.US', '')
             df, error = load_stock_data(ticker)
             
+            # Clean up memory after data loading
+            cleanup_memory()
+            
             if error:
                 st.error(f"Error loading data: {error}")
                 return
@@ -2120,6 +2128,9 @@ def main():
             5: "🚀 Gain >10%"
         }
         
+        # Clean up memory before displaying results
+        cleanup_memory()
+        
         # ========== DISPLAY RESULTS IN TABS ==========
         # ========== TECHNICAL ANALYSIS TAB ==========
         with tab1:
@@ -2137,6 +2148,10 @@ def main():
                 
                 if tech_chart is not None:
                     st.plotly_chart(tech_chart, use_container_width=True)
+                    
+                    # Clean up memory after chart rendering
+                    del tech_chart
+                    cleanup_memory()
                     
                     # Add Professional Analysis Criteria
                     if df is not None and len(df) > 0:
@@ -2813,6 +2828,9 @@ def main():
         with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction Results</div>', unsafe_allow_html=True)
             
+            # Clean up memory before intensive prediction tasks
+            cleanup_memory()
+            
             # Check if in tech-only mode
             is_tech_only = tech_only if 'tech_only' in locals() else st.session_state.analysis_results.get('tech_only', False)
             
@@ -3198,6 +3216,9 @@ def main():
         
         with tab3:
             st.markdown('<div class="section-header"><i class="fas fa-search"></i> Fractal Pattern Analysis Results</div>', unsafe_allow_html=True)
+            
+            # Clean up memory before intensive pattern matching tasks
+            cleanup_memory()
             
             # Check if in tech-only mode
             is_tech_only = tech_only if 'tech_only' in locals() else st.session_state.analysis_results.get('tech_only', False)
