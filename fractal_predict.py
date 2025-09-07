@@ -25,6 +25,8 @@ import warnings
 import json
 import tempfile
 import gc
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -753,6 +755,64 @@ def create_basic_price_chart(df, symbol, chart_type="line"):
 def cleanup_memory():
     """Force garbage collection to free up memory"""
     gc.collect()
+
+def prepare_technical_analysis_data(df, ticker, seasonal_years, chart_type, show_macd, performance_mode):
+    """Thread function to prepare technical analysis chart data"""
+    try:
+        if df is None or len(df) == 0:
+            return None
+        
+        chart_data = create_technical_analysis_chart(df, ticker, seasonal_years, chart_type, show_macd, performance_mode)
+        cleanup_memory()
+        return chart_data
+    except Exception as e:
+        return f"Error in technical analysis: {str(e)}"
+
+def prepare_prediction_data(results, tech_only):
+    """Thread function to prepare prediction analysis data"""
+    try:
+        if tech_only:
+            return {"tech_only": True, "message": "Technical Analysis Only Mode"}
+        
+        # Extract prediction data from results
+        prediction_data = {
+            "model": results.get('model'),
+            "proba": results.get('proba'),
+            "training_features": results.get('training_features', []),
+            "analysis_df": results.get('analysis_df'),
+            "current_price": results.get('current_price', 0),
+            "ticker": results.get('ticker', ''),
+            "tech_only": False
+        }
+        cleanup_memory()
+        return prediction_data
+    except Exception as e:
+        return f"Error in prediction analysis: {str(e)}"
+
+def prepare_pattern_data(results, tech_only):
+    """Thread function to prepare pattern matching data"""
+    try:
+        if tech_only:
+            return {"tech_only": True, "message": "Technical Analysis Only Mode"}
+        
+        # Extract pattern data from results
+        pattern_data = {
+            "matches": results.get('matches', []),
+            "matches_sorted": results.get('matches_sorted', []),
+            "price_series": results.get('price_series'),
+            "series_dates": results.get('series_dates'),
+            "reference_pattern": results.get('reference_pattern'),
+            "similarity_threshold": results.get('similarity_threshold', 0.7),
+            "pattern_length": results.get('pattern_length', 60),
+            "timeframe": results.get('timeframe', 'Daily'),
+            "timeframe_label": results.get('timeframe_label', 'days'),
+            "ticker": results.get('ticker', ''),
+            "tech_only": False
+        }
+        cleanup_memory()
+        return pattern_data
+    except Exception as e:
+        return f"Error in pattern analysis: {str(e)}"
 
 def get_seasonal_component(data: pd.Series, years: int = 1) -> pd.Series:
     """Get seasonal component for any data series."""
@@ -2131,97 +2191,158 @@ def main():
         # Clean up memory before displaying results
         cleanup_memory()
         
+        # ========== PARALLEL COMPUTATION FOR ALL TABS ==========
+        # Initialize thread-safe results storage
+        if 'threaded_results' not in st.session_state:
+            st.session_state.threaded_results = {}
+        
+        # Check if we need to recompute (only if analysis config changed)
+        current_thread_config = {
+            'ticker': ticker if 'ticker' in locals() else '',
+            'seasonal_years': seasonal_years,
+            'chart_type': chart_type,
+            'show_macd': show_macd,
+            'performance_mode': performance_mode,
+            'tech_only': tech_only if 'tech_only' in locals() else True
+        }
+        
+        # Get results for threading (use existing results or cached data)
+        if 'results' in locals():
+            thread_results = results
+        else:
+            thread_results = st.session_state.analysis_results
+        
+        # Run parallel computation for all tabs
+        if (st.session_state.threaded_results.get('config') != current_thread_config or 
+            'tab_data' not in st.session_state.threaded_results):
+            
+            with st.spinner("🚀 Processing all analyses in parallel..."):
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    # Submit all three tab computations simultaneously
+                    future_technical = executor.submit(
+                        prepare_technical_analysis_data,
+                        df if 'df' in locals() else None,
+                        ticker if 'ticker' in locals() else thread_results.get('ticker', ''),
+                        seasonal_years,
+                        chart_type,
+                        show_macd,
+                        performance_mode
+                    )
+                    
+                    future_prediction = executor.submit(
+                        prepare_prediction_data,
+                        thread_results,
+                        tech_only if 'tech_only' in locals() else True
+                    )
+                    
+                    future_pattern = executor.submit(
+                        prepare_pattern_data,
+                        thread_results,
+                        tech_only if 'tech_only' in locals() else True
+                    )
+                    
+                    # Collect results as they complete
+                    st.session_state.threaded_results = {
+                        'config': current_thread_config,
+                        'tab_data': {
+                            'technical': future_technical.result(),
+                            'prediction': future_prediction.result(),
+                            'pattern': future_pattern.result()
+                        }
+                    }
+        
         # ========== DISPLAY RESULTS IN TABS ==========
         # ========== TECHNICAL ANALYSIS TAB ==========
         with tab1:
             st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis Chart</div>', unsafe_allow_html=True)
             
-            if df is not None and len(df) > 0:
-                st.subheader(f"📊 {ticker} Technical Analysis")
+            # Use threaded results for technical analysis
+            tech_data = st.session_state.threaded_results.get('tab_data', {}).get('technical')
+            
+            if isinstance(tech_data, str) and tech_data.startswith("Error"):
+                st.error(tech_data)
+            elif tech_data is not None and df is not None and len(df) > 0:
+                st.subheader(f"📊 {ticker if 'ticker' in locals() else 'Stock'} Technical Analysis")
                 
                 # Show performance mode notice if enabled
                 if performance_mode:
                     st.info("🚀 **Performance Mode Enabled** - Using reduced data points and simplified calculations for better performance on limited resources.")
                 
-                # Create technical analysis chart (now includes seasonal component)
-                tech_chart = create_technical_analysis_chart(df, ticker, seasonal_years, chart_type, show_macd, performance_mode)
+                # Display the pre-computed chart
+                st.plotly_chart(tech_data, use_container_width=True)
                 
-                if tech_chart is not None:
-                    st.plotly_chart(tech_chart, use_container_width=True)
+                # Clean up memory after chart rendering
+                cleanup_memory()
+                
+                # Add Professional Analysis Criteria
+                if df is not None and len(df) > 0:
+                    st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Professional Analysis Criteria</div>', unsafe_allow_html=True)
                     
-                    # Clean up memory after chart rendering
-                    del tech_chart
-                    cleanup_memory()
+                    # Calculate professional metrics from current data
+                    current_data = df.iloc[-1]
+                    current_price_val = current_data['close']
                     
-                    # Add Professional Analysis Criteria
-                    if df is not None and len(df) > 0:
-                        st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Professional Analysis Criteria</div>', unsafe_allow_html=True)
+                    # Calculate metrics
+                    sma_144 = current_data.get('sma_144', 0)
+                    sma_50 = current_data.get('sma_50', 0)
+                    macd = current_data.get('macd', 0)
+                    macd_hist = current_data.get('macd_histogram', 0)
+                    rsi = current_data.get('rsi_14', 0)
+                    volume_sma = current_data.get('volume_sma', 0)
+                    volatility_20 = current_data.get('volatility_20', 0)
+                    
+                    # Calculate ATR/Price ratio (using volatility as proxy)
+                    atr_to_price = (volatility_20 / current_price_val) if current_price_val > 0 else 0
+                    
+                    # Calculate scores
+                    trend_score = 0
+                    safety_score = 0
+                    relative_strength_score = 0
+                    
+                    # Trend score calculation
+                    if sma_50 > 0 and sma_144 > 0:
+                        if current_price_val > sma_144 and sma_50 > sma_144:
+                            trend_score += 2
+                        if macd > 0 and macd_hist > 0:
+                            trend_score += 2
+                    
+                    # Safety score calculation
+                    if 40 <= rsi <= 75:
+                        safety_score += 2
+                    elif 30 <= rsi <= 80:
+                        safety_score += 1
+                    
+                    if atr_to_price < 0.02:
+                        safety_score += 3
+                    elif atr_to_price < 0.03:
+                        safety_score += 2
+                    elif atr_to_price < 0.05:
+                        safety_score += 1
+                    
+                    if volume_sma > 2000000:
+                        safety_score += 2
+                    elif volume_sma > 1000000:
+                        safety_score += 1
+                    
+                    col_prof1, col_prof2, col_prof3 = st.columns(3)
+                    
+                    with col_prof1:
+                        # Price > SMA144
+                        price_vs_sma144_ok = current_price_val > sma_144 if sma_144 > 0 else False
+                        class1 = "success" if price_vs_sma144_ok else "danger"
+                        color1 = "green" if price_vs_sma144_ok else "red"
                         
-                        # Calculate professional metrics from current data
-                        current_data = df.iloc[-1]
-                        current_price_val = current_data['close']
+                        # SMA50 > SMA144
+                        sma50_vs_sma144_ok = sma_50 > sma_144 if sma_50 > 0 and sma_144 > 0 else False
+                        class2 = "success" if sma50_vs_sma144_ok else "danger"
+                        color2 = "green" if sma50_vs_sma144_ok else "red"
                         
-                        # Calculate metrics
-                        sma_144 = current_data.get('sma_144', 0)
-                        sma_50 = current_data.get('sma_50', 0)
-                        macd = current_data.get('macd', 0)
-                        macd_hist = current_data.get('macd_histogram', 0)
-                        rsi = current_data.get('rsi_14', 0)
-                        volume_sma = current_data.get('volume_sma', 0)
-                        volatility_20 = current_data.get('volatility_20', 0)
+                        # MACD bullish
+                        macd_ok = macd > 0 and macd_hist > 0
+                        class3 = "success" if macd_ok else "danger"
+                        color3 = "green" if macd_ok else "red"
                         
-                        # Calculate ATR/Price ratio (using volatility as proxy)
-                        atr_to_price = (volatility_20 / current_price_val) if current_price_val > 0 else 0
-                        
-                        # Calculate scores
-                        trend_score = 0
-                        safety_score = 0
-                        relative_strength_score = 0
-                        
-                        # Trend score calculation
-                        if sma_50 > 0 and sma_144 > 0:
-                            if current_price_val > sma_144 and sma_50 > sma_144:
-                                trend_score += 2
-                            if macd > 0 and macd_hist > 0:
-                                trend_score += 2
-                        
-                        # Safety score calculation
-                        if 40 <= rsi <= 75:
-                            safety_score += 2
-                        elif 30 <= rsi <= 80:
-                            safety_score += 1
-                        
-                        if atr_to_price < 0.02:
-                            safety_score += 3
-                        elif atr_to_price < 0.03:
-                            safety_score += 2
-                        elif atr_to_price < 0.05:
-                            safety_score += 1
-                        
-                        if volume_sma > 2000000:
-                            safety_score += 2
-                        elif volume_sma > 1000000:
-                            safety_score += 1
-                        
-                        col_prof1, col_prof2, col_prof3 = st.columns(3)
-                        
-                        with col_prof1:
-                            # Price > SMA144
-                            price_vs_sma144_ok = current_price_val > sma_144 if sma_144 > 0 else False
-                            class1 = "success" if price_vs_sma144_ok else "danger"
-                            color1 = "green" if price_vs_sma144_ok else "red"
-                            
-                            # SMA50 > SMA144
-                            sma50_vs_sma144_ok = sma_50 > sma_144 if sma_50 > 0 and sma_144 > 0 else False
-                            class2 = "success" if sma50_vs_sma144_ok else "danger"
-                            color2 = "green" if sma50_vs_sma144_ok else "red"
-                            
-                            # MACD bullish
-                            macd_ok = macd > 0 and macd_hist > 0
-                            class3 = "success" if macd_ok else "danger"
-                            color3 = "green" if macd_ok else "red"
-                            
-                            st.markdown(f'''
+                        st.markdown(f'''
                             <div class="criteria-card">
                                 <div class="criteria-header">
                                     <i class="fas fa-arrow-trend-up"></i> Strong Trend Indicators
