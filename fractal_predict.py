@@ -69,15 +69,22 @@ from config import features
 
 # Technical Analysis Indicators Class
 
-def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="line", show_macd=True):
+def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="line", show_macd=True, performance_mode=False):
     """Create comprehensive technical analysis chart"""
     if df is None or len(df) == 0:
         st.error("No data available for technical analysis")
         return None
     
-    # Use last 200 days of data for the chart, or all available data if less than 200
-    if len(df) > 200:
-        df_chart = df.tail(200)
+    # Use different amounts of data based on performance mode
+    if performance_mode:
+        # Performance mode: use only last 100 days to reduce memory usage
+        chart_days = 100
+    else:
+        # Normal mode: use last 200 days
+        chart_days = 200
+    
+    if len(df) > chart_days:
+        df_chart = df.tail(chart_days)
     else:
         df_chart = df
     
@@ -89,6 +96,12 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
     
     # Calculate indicators using the chart data
     close = df_chart['close']
+    
+    # In performance mode, downsample data for chart rendering
+    if performance_mode and len(df_chart) > 50:
+        # Sample every other data point to reduce rendering load
+        df_chart = df_chart.iloc[::2]
+        close = df_chart['close']
     
     # Bollinger Bands (20-period, 2 std dev)
     bb_sma, bb_upper, bb_lower = TechnicalIndicators.bollinger_bands(close, 20, 2)
@@ -484,7 +497,9 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
     try:
         # Get seasonal decomposition for the displayed data period
         close_series = df_chart['close']
-        stl_result, _ = get_daily_seasonal(close_series, seasonal_years)
+        # In performance mode, use reduced years for seasonal analysis
+        seasonal_years_adjusted = min(seasonal_years, 1) if performance_mode else seasonal_years
+        stl_result, _ = get_daily_seasonal(close_series, seasonal_years_adjusted)
         seasonal_series = stl_result.seasonal
         
         # Scale to percentage for better visualization
@@ -522,13 +537,16 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         
     except Exception as e:
         # If seasonal analysis fails, add a placeholder message
-        st.info(f"Seasonal analysis unavailable: Not enough data for {seasonal_years} years of analysis")
+        if performance_mode:
+            st.info("Seasonal analysis disabled in Performance Mode")
+        else:
+            st.info(f"Seasonal analysis unavailable: Not enough data for {seasonal_years_adjusted} years of analysis")
     
     # Update layout
     fig.update_layout(
         title=f'{symbol} - Comprehensive Technical Analysis',
         template='plotly_dark',
-        height=1200,
+        height=900 if performance_mode else 1200,
         showlegend=False,
         hovermode='x unified',
         hoverdistance=100,
@@ -1538,6 +1556,14 @@ def main():
             st.query_params["pattern_length"] = str(pattern_length)
         
         st.markdown("---")
+        st.subheader("🚀 Performance Settings")
+        performance_mode = st.checkbox(
+            "Enable Performance Mode",
+            value=False,
+            help="Reduces computation and memory usage for limited resources (fewer data points, simplified calculations)"
+        )
+        
+        st.markdown("---")
         st.subheader("📊 Chart Display Settings")
         chart_type = st.selectbox(
             "Price Chart Type",
@@ -2102,8 +2128,12 @@ def main():
             if df is not None and len(df) > 0:
                 st.subheader(f"📊 {ticker} Technical Analysis")
                 
+                # Show performance mode notice if enabled
+                if performance_mode:
+                    st.info("🚀 **Performance Mode Enabled** - Using reduced data points and simplified calculations for better performance on limited resources.")
+                
                 # Create technical analysis chart (now includes seasonal component)
-                tech_chart = create_technical_analysis_chart(df, ticker, seasonal_years, chart_type, show_macd)
+                tech_chart = create_technical_analysis_chart(df, ticker, seasonal_years, chart_type, show_macd, performance_mode)
                 
                 if tech_chart is not None:
                     st.plotly_chart(tech_chart, use_container_width=True)
