@@ -78,13 +78,13 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         st.error("No data available for technical analysis")
         return None
     
-    # Use different amounts of data based on performance mode
+    # Use different amounts of data based on performance mode and seasonal_years
     if performance_mode:
-        # Performance mode: use only last 100 days to reduce memory usage
-        chart_days = 100
+        # Performance mode: use reduced data but respect seasonal_years
+        chart_days = max(100, seasonal_years * 100)  # At least 100 days per year requested
     else:
-        # Normal mode: use last 200 days
-        chart_days = 200
+        # Normal mode: use seasonal_years to determine chart period
+        chart_days = seasonal_years * 252  # ~252 trading days per year
     
     if len(df) > chart_days:
         df_chart = df.tail(chart_days)
@@ -543,7 +543,7 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         if performance_mode:
             st.info("Seasonal analysis disabled in Performance Mode")
         else:
-            st.info(f"Seasonal analysis unavailable: Not enough data for {seasonal_years_adjusted} years of analysis")
+            st.warning(f"Seasonal analysis unavailable: {str(e)}")
     
     # Update layout
     fig.update_layout(
@@ -822,7 +822,11 @@ def get_seasonal_component(data: pd.Series, years: int = 1) -> pd.Series:
     
     min_days = years * 100  # Minimum days per year
     if len(recent_data) < min_days:
-        raise ValueError(f"Not enough recent data for seasonal analysis (need at least {min_days} days for {years} year(s))")
+        # Fallback: use all available data if insufficient for requested years
+        if len(data) >= 200:  # Minimum 200 days for any seasonal analysis
+            recent_data = data.copy().dropna()
+        else:
+            raise ValueError(f"Not enough data for seasonal analysis (need at least 200 days, got {len(data)})")
     
     # Use business day frequency to handle weekends/holidays
     daily_business = recent_data.asfreq("B").interpolate().dropna()
@@ -844,7 +848,12 @@ def get_daily_seasonal(close: pd.Series, years: int = 1) -> tuple:
     
     min_days = years * 100  # Minimum days per year
     if len(recent_close) < min_days:
-        raise ValueError(f"Not enough recent data for seasonal analysis (need at least {min_days} days for {years} year(s))")
+        # Fallback: use all available data if insufficient for requested years
+        if len(close) >= 200:  # Minimum 200 days for any seasonal analysis
+            recent_close = close.copy()
+            years = max(1, len(recent_close) // 252)  # Approximate years from available data
+        else:
+            raise ValueError(f"Not enough data for seasonal analysis (need at least 200 days, got {len(close)})")
     
     # Use business day frequency to handle weekends/holidays
     daily_business = recent_close.asfreq("B").interpolate().dropna()
@@ -859,7 +868,7 @@ def get_daily_seasonal(close: pd.Series, years: int = 1) -> tuple:
     result = seasonal_decompose(daily_log, model="additive", period=period, extrapolate_trend="freq")
     return result, recent_close
 
-def create_seasonal_chart(df, symbol, years=2):
+def create_seasonal_chart(df, symbol, years):
     """Create a seasonal analysis chart with multiple subplots."""
     if df is None or len(df) == 0:
         st.error("No data available for seasonal analysis")
@@ -1644,12 +1653,12 @@ def main():
         )
         
         st.markdown("---")
-        st.subheader("📅 Seasonal Analysis Settings")
+        st.subheader("📊 Technical Analysis Settings")
         seasonal_years = st.slider(
-            "Years for Seasonal Analysis",
+            "Years",
             min_value=1,
             max_value=5,
-            value=2,
+            value=1,
             step=1,
             help="Number of years of historical data to use for seasonal pattern analysis"
         )
@@ -1713,7 +1722,8 @@ def main():
             'similarity_threshold': similarity_threshold,
             'timeframe': timeframe,
             'pattern_length': pattern_length,
-            'tech_only': tech_only
+            'tech_only': tech_only,
+            'seasonal_years': seasonal_years
         }
         
         # Run new analysis if button clicked or config changed
@@ -2205,6 +2215,10 @@ def main():
             'performance_mode': performance_mode,
             'tech_only': tech_only if 'tech_only' in locals() else True
         }
+        
+        # Force refresh if seasonal_years changed
+        if (st.session_state.threaded_results.get('config', {}).get('seasonal_years') != seasonal_years):
+            st.session_state.threaded_results = {}
         
         # Get results for threading (use existing results or cached data)
         if 'results' in locals():
