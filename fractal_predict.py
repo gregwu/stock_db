@@ -496,7 +496,7 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         )
     )
     
-    # 8. Seasonal Component
+    # 8. Seasonal Component (based on RSI data)
     try:
         # Get seasonal decomposition for the displayed data period
         close_series = df_chart['close']
@@ -517,8 +517,8 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
                 line=dict(color='cyan', width=2),
                 fill='tozeroy',
                 fillcolor='rgba(0,255,255,0.2)',
-                name='Seasonal',
-                hovertemplate='Seasonal: %{y:.2f}%<extra></extra>',
+                name='RSI Seasonal',
+                hovertemplate='RSI Seasonal: %{y:.2f}%<extra></extra>',
                 yaxis='y6',
                 showlegend=False
             )
@@ -541,9 +541,9 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
     except Exception as e:
         # If seasonal analysis fails, add a placeholder message
         if performance_mode:
-            st.info("Seasonal analysis disabled in Performance Mode")
+            st.info("RSI-based seasonal analysis disabled in Performance Mode")
         else:
-            st.warning(f"Seasonal analysis unavailable: {str(e)}")
+            st.warning(f"RSI-based seasonal analysis unavailable: {str(e)}")
     
     # Update layout
     fig.update_layout(
@@ -841,7 +841,7 @@ def get_seasonal_component(data: pd.Series, years: int = 1) -> pd.Series:
     return result.seasonal
 
 def get_daily_seasonal(close: pd.Series, years: int = 1) -> tuple:
-    """Get daily seasonal decomposition for price data."""
+    """Get daily seasonal decomposition for RSI data."""
     # Get last N years of data
     years_ago = close.index[-1] - pd.DateOffset(years=years)
     recent_close = close[close.index >= years_ago].copy()
@@ -855,21 +855,23 @@ def get_daily_seasonal(close: pd.Series, years: int = 1) -> tuple:
         else:
             raise ValueError(f"Not enough data for seasonal analysis (need at least 200 days, got {len(close)})")
     
+    # Calculate RSI from the close price data
+    rsi_data = TechnicalIndicators.rsi(recent_close, 14)
+    
     # Use business day frequency to handle weekends/holidays
-    daily_business = recent_close.asfreq("B").interpolate().dropna()
-    daily_log = np.log(daily_business)
+    daily_business = rsi_data.asfreq("B").interpolate().dropna()
     
     # Adjust period based on available data
     period = min(252, len(daily_business) // 4)
     if period < 10:
         raise ValueError("Not enough data for seasonal decomposition")
     
-    # Perform STL decomposition
-    result = seasonal_decompose(daily_log, model="additive", period=period, extrapolate_trend="freq")
+    # Perform STL decomposition on RSI data (no log transformation needed for RSI)
+    result = seasonal_decompose(daily_business, model="additive", period=period, extrapolate_trend="freq")
     return result, recent_close
 
 def create_seasonal_chart(df, symbol, years):
-    """Create a seasonal analysis chart with multiple subplots."""
+    """Create a seasonal analysis chart with multiple subplots based on RSI data."""
     if df is None or len(df) == 0:
         st.error("No data available for seasonal analysis")
         return None
@@ -879,7 +881,7 @@ def create_seasonal_chart(df, symbol, years):
     volume = df.get('volume', df.get('vol', pd.Series()))
     
     try:
-        # Get seasonal decomposition
+        # Get seasonal decomposition (now based on RSI data)
         stl_result, recent_close = get_daily_seasonal(close, years)
         
         # Get corresponding volume data for the same period
@@ -897,12 +899,12 @@ def create_seasonal_chart(df, symbol, years):
         return fig
         
     except Exception as e:
-        st.error(f"Error creating seasonal chart: {str(e)}")
+        st.error(f"Error creating RSI-based seasonal chart: {str(e)}")
         return None
 
 def create_seasonal_plotly_chart(close, volume, stl_result, symbol, years, 
                                 macd_line, macd_signal, macd_hist, rsi, bb_upper, bb_sma, bb_lower):
-    """Create the seasonal chart using Plotly with separated sections."""
+    """Create the seasonal chart using Plotly with separated sections (seasonal component based on RSI)."""
     
     # Create subplots with 5 rows (Price, Volume, Seasonal, MACD, RSI)
     fig = make_subplots(
@@ -954,7 +956,7 @@ def create_seasonal_plotly_chart(close, volume, stl_result, symbol, years,
                   name='Volume', showlegend=False), row=2, col=1
         )
     
-    # 3. Seasonal component
+    # 3. Seasonal component (based on RSI data)
     seasonal_series = stl_result.seasonal
     
     # Ensure we have valid seasonal data
@@ -974,9 +976,9 @@ def create_seasonal_plotly_chart(close, volume, stl_result, symbol, years,
                       marker=dict(size=2, color='cyan'),
                       fill='tozeroy',
                       fillcolor='rgba(0,255,255,0.3)',
-                      name='Seasonal (%)', 
+                      name='RSI Seasonal (%)', 
                       showlegend=False,
-                      hovertemplate='Date: %{x}<br>Seasonal: %{y:.2f}%<extra></extra>'), 
+                      hovertemplate='Date: %{x}<br>RSI Seasonal: %{y:.2f}%<extra></extra>'), 
                       row=3, col=1
         )
     
@@ -1660,7 +1662,7 @@ def main():
             max_value=5,
             value=1,
             step=1,
-            help="Number of years of historical data to use for seasonal pattern analysis"
+            help="Number of years of historical data to use for RSI-based seasonal pattern analysis"
         )
         
         st.markdown("---")

@@ -65,20 +65,26 @@ def main():
         ref_ticker = st.selectbox("Select reference ticker", all_tickers, index=all_tickers.index(default_ticker) if default_ticker in all_tickers else 0)
         ref_start = st.date_input("Reference start date", default_start)
         ref_end = st.date_input("Reference end date", default_end)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            scan_button = st.button("Start Scan", type="primary")
-        with col2:
-            clear_button = st.button("Clear Results")
+        scan_button = st.button("Start Scan")
 
 
+    # File to store scan results, include meta info
+    import pickle
+    def get_result_file(ticker, start, end):
+        return f"similarity_{ticker}_{start}_{end}.pkl"
 
-    # Handle clear button
-    if clear_button:
-        st.session_state['results_df'] = None
-        st.session_state['tickers_db'] = None
-        st.rerun()
+    result_file = get_result_file(ref_ticker, ref_start, ref_end)
+
+    # Load from file if exists and parameters match
+    if not scan_button:
+        try:
+            with open(result_file, "rb") as f:
+                data = pickle.load(f)
+                st.session_state['results_df'] = data['results_df']
+                st.session_state['tickers_db'] = data['tickers_db']
+        except Exception:
+            st.session_state['results_df'] = None
+            st.session_state['tickers_db'] = None
     if ref_start > ref_end:
         st.error("Start date must be before end date.")
         return
@@ -165,23 +171,24 @@ def main():
             progress_bar.progress((idx + 1) / len(tickers_db))
         progress_bar.empty()
         results_df = pd.DataFrame(results)
-        # Filter: match_end within 5 days of today
+        # Filter: match_end within 6 days of today
         if not results_df.empty:
             results_df = results_df[results_df['match_end'].notnull()]
-            results_df = results_df[results_df['match_end'].apply(lambda d: abs((d.date() - today).days) <= 5)]
+            results_df = results_df[results_df['match_end'].apply(lambda d: abs((d.date() - today).days) <= 6)]
             results_df = results_df.sort_values('similarity', ascending=False)
         st.session_state['results_df'] = results_df
         st.session_state['tickers_db'] = tickers_db
+        # Save to file with meta info
+        try:
+            with open(result_file, "wb") as f:
+                pickle.dump({'results_df': results_df, 'tickers_db': tickers_db}, f)
+        except Exception as e:
+            st.warning(f"Could not save results to file: {e}")
 
     # Always show results table if available
     results_df = st.session_state.get('results_df', None)
     tickers_db = st.session_state.get('tickers_db', None)
     if results_df is not None and tickers_db is not None and not results_df.empty:
-        # Apply date filtering to cached results as well
-        results_df = results_df[results_df['match_end'].notnull()]
-        results_df = results_df[results_df['match_end'].apply(lambda d: abs((d.date() - today).days) <= 5)]
-        
-    if results_df is not None and not results_df.empty:
         st.write("**Matches sorted by similarity (click on a row to view chart):**")
         event = st.dataframe(
             results_df,
