@@ -538,6 +538,106 @@ class StockScanner:
         
         return scores
     
+    def calculate_professional_analysis_score(self, df: pd.DataFrame) -> Dict[str, float]:
+        """
+        Calculate professional analysis criteria scores similar to fractal_predict.py
+        
+        Args:
+            df: DataFrame with stock data and technical indicators
+            
+        Returns:
+            Dictionary with trend_score, safety_score, relative_strength_score, and total_score
+        """
+        if df is None or len(df) == 0:
+            return {'trend_score': 0, 'safety_score': 0, 'relative_strength_score': 0, 'total_score': 0}
+        
+        current_data = df.iloc[-1]
+        current_price = current_data['close']
+        
+        # Get technical indicators
+        sma_144 = current_data.get('sma_144', 0)
+        sma_50 = current_data.get('sma_50', 0)
+        macd = current_data.get('macd', 0)
+        macd_hist = current_data.get('macd_histogram', 0)
+        rsi = current_data.get('rsi_14', 0)
+        volume_sma = current_data.get('volume_sma', 0)
+        volatility_20 = current_data.get('volatility_20', 0)
+        
+        # Calculate ATR/Price ratio (using volatility as proxy)
+        atr_to_price = (volatility_20 / current_price) if current_price > 0 else 0
+        
+        # Initialize scores
+        trend_score = 0
+        safety_score = 0
+        relative_strength_score = 0
+        
+        # Trend score calculation (0-4 points)
+        if sma_50 > 0 and sma_144 > 0:
+            if current_price > sma_144 and sma_50 > sma_144:
+                trend_score += 2
+            if macd > 0 and macd_hist > 0:
+                trend_score += 2
+        
+        # Safety score calculation (0-6 points)
+        if 40 <= rsi <= 75:
+            safety_score += 2
+        elif 30 <= rsi <= 80:
+            safety_score += 1
+        
+        if atr_to_price < 0.02:
+            safety_score += 3
+        elif atr_to_price < 0.03:
+            safety_score += 2
+        elif atr_to_price < 0.05:
+            safety_score += 1
+        
+        if volume_sma > 2000000:
+            safety_score += 2
+        elif volume_sma > 1000000:
+            safety_score += 1
+        
+        # Relative strength score calculation (0-6 points)
+        # 3M Momentum
+        if len(df) >= 60:
+            price_60d_ago = df['close'].iloc[-60]
+            momentum_3m = (current_price - price_60d_ago) / price_60d_ago if price_60d_ago > 0 else 0
+            if momentum_3m > 0.02:
+                relative_strength_score += 2
+        
+        # 52W High proximity
+        if len(df) >= 252:
+            high_52w = df['high'].tail(252).max()
+            distance_from_high = (current_price - high_52w) / high_52w
+            if distance_from_high > -0.50:
+                relative_strength_score += 2
+        else:
+            high_available = df['high'].max()
+            distance_from_high = (current_price - high_available) / high_available
+            if distance_from_high > -0.20:
+                relative_strength_score += 1
+        
+        # Recent price stability
+        if len(df) >= 5:
+            price_5d_ago = df['close'].iloc[-5]
+            recent_change = (current_price - price_5d_ago) / price_5d_ago
+            if -0.10 < recent_change < 0.20:
+                relative_strength_score += 1
+        
+        # Technical confirmation
+        macd_signal = current_data.get('macd_signal', 0)
+        if macd > macd_signal:
+            relative_strength_score += 1
+        
+        # Calculate total score
+        total_score = trend_score + safety_score + relative_strength_score
+        
+        return {
+            'trend_score': trend_score,
+            'safety_score': safety_score,
+            'relative_strength_score': relative_strength_score,
+            'total_score': total_score
+        }
+    
     def train_lightgbm_model(self, ticker: str, df: pd.DataFrame) -> Optional[object]:
         """
         Train a new LightGBM model for a ticker using the provided data
@@ -898,6 +998,9 @@ class StockScanner:
         Returns:
             Dictionary with prediction details
         """
+        # Calculate professional analysis scores
+        prof_scores = self.calculate_professional_analysis_score(df) if df is not None else {'trend_score': 0, 'safety_score': 0, 'relative_strength_score': 0, 'total_score': 0}
+        
         # Try ML prediction first if enabled
         if self.use_ml_predictions and df is not None:
             ml_prediction = self.predict_with_ml(ticker, df, scores)
@@ -915,6 +1018,7 @@ class StockScanner:
                     'price_change': round(ml_prediction['price_change_pct'], 2),
                     'timestamp': datetime.now().isoformat(),
                     'technical_scores': scores,
+                    'professional_scores': prof_scores,
                     'ml_prediction': {
                         'method': ml_prediction['method'],
                         'model_class': ml_prediction['model_class'],
@@ -964,7 +1068,8 @@ class StockScanner:
             'predicted_price': round(price_prediction, 2),
             'price_change': round(((price_prediction - current_price) / current_price) * 100, 2),
             'timestamp': datetime.now().isoformat(),
-            'technical_scores': scores
+            'technical_scores': scores,
+            'professional_scores': prof_scores
         }
         
         return prediction
@@ -1444,11 +1549,18 @@ class StockScanner:
             const maxATRRatioValue = document.getElementById('maxATRRatio').value.trim();
             const minBBPositionValue = document.getElementById('minBBPosition').value.trim();
             const maxBBPositionValue = document.getElementById('maxBBPosition').value.trim();
+            const minTotalScoreValue = document.getElementById('minTotalScore').value.trim();
+            const minTrendScoreValue = document.getElementById('minTrendScore').value.trim();
+            const maxTrendScoreValue = document.getElementById('maxTrendScore').value.trim();
+            const mlClassFilterValue = document.getElementById('mlClassFilter').value.trim();
             
             const minRRRatio = minRRRatioValue ? parseFloat(minRRRatioValue) : 0;
             const maxATRRatio = maxATRRatioValue ? parseFloat(maxATRRatioValue) : 0;
             const minBBPosition = minBBPositionValue ? parseFloat(minBBPositionValue) : 0;
             const maxBBPosition = maxBBPositionValue ? parseFloat(maxBBPositionValue) : 0;
+            const minTotalScore = minTotalScoreValue ? parseFloat(minTotalScoreValue) : 0;
+            const minTrendScore = minTrendScoreValue ? parseFloat(minTrendScoreValue) : 0;
+            const maxTrendScore = maxTrendScoreValue ? parseFloat(maxTrendScoreValue) : 0;
             
             const rows = document.querySelectorAll('#resultsTable tbody tr');
             let visibleCount = 0;
@@ -1478,10 +1590,10 @@ class StockScanner:
                         }}
                         
                         // Apply R/R Ratio filter
-                        const rrCell = cells[7];
+                        const rrCell = cells[10]; // R/R Ratio is column 10
                         if (rrCell && showRow) {{
                             const rrText = rrCell.textContent.trim();
-                            const rrMatch = rrText.match(/([0-9.-]+)/);
+                            const rrMatch = rrText.match(/([0-9.-]+)/); // Match first number (before space and status)
                             const rrRatio = rrMatch ? parseFloat(rrMatch[1]) : 0;
                             if (minRRRatioValue && rrRatio < minRRRatio) {{
                                 showRow = false;
@@ -1489,7 +1601,7 @@ class StockScanner:
                         }}
                         
                         // Apply ATR/Price filter
-                        const atrCell = cells[9];
+                        const atrCell = cells[12]; // ATR/Price is column 12
                         if (atrCell && showRow) {{
                             const atrText = atrCell.textContent.trim();
                             const atrMatch = atrText.match(/([0-9.-]+)%/);
@@ -1500,7 +1612,7 @@ class StockScanner:
                         }}
                         
                         // Apply BB Position filter
-                        const bbCell = cells[10];
+                        const bbCell = cells[13]; // BB Position is column 13
                         if (bbCell && showRow) {{
                             const bbText = bbCell.textContent.trim();
                             const bbMatch = bbText.match(/([0-9.-]+)%/);
@@ -1508,6 +1620,70 @@ class StockScanner:
                             if ((minBBPositionValue && bbPercent < minBBPosition) || 
                                 (maxBBPositionValue && bbPercent > maxBBPosition)) {{
                                 showRow = false;
+                            }}
+                        }}
+                        
+                        // Apply total score filter
+                        if (minTotalScoreValue && showRow) {{
+                            const totalScoreCell = cells[18]; // Total score is column 18
+                            if (totalScoreCell) {{
+                                const totalScoreText = totalScoreCell.textContent.trim();
+                                const totalScoreMatch = totalScoreText.match(/([0-9]+)\/16/);
+                                const totalScore = totalScoreMatch ? parseFloat(totalScoreMatch[1]) : 0;
+                                if (totalScore < minTotalScore) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
+                        // Apply trend score filter
+                        if ((minTrendScoreValue || maxTrendScoreValue) && showRow) {{
+                            const trendCell = cells[14]; // Trend score is column 14
+                            if (trendCell) {{
+                                const trendText = trendCell.textContent.trim();
+                                const trendMatch = trendText.match(/([0-9.-]+)%/);
+                                const trendPercent = trendMatch ? parseFloat(trendMatch[1]) : 0;
+                                if ((minTrendScoreValue && trendPercent < minTrendScore) || 
+                                    (maxTrendScoreValue && trendPercent > maxTrendScore)) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
+                        // Apply ML Class filter
+                        if (mlClassFilterValue && showRow) {{
+                            const mlClassCell = cells[17]; // ML Class is column 17
+                            if (mlClassCell) {{
+                                const mlClassText = mlClassCell.textContent.trim();
+                                let matchesFilter = false;
+                                
+                                if (mlClassFilterValue === 'drops') {{
+                                    // Check for drop classes (0-2)
+                                    matchesFilter = mlClassText.includes('Drop >10%') || 
+                                                  mlClassText.includes('Drop 5-10%') || 
+                                                  mlClassText.includes('Drop 0-5%');
+                                }} else if (mlClassFilterValue === 'gains') {{
+                                    // Check for gain classes (3-5)
+                                    matchesFilter = mlClassText.includes('Gain 0-5%') || 
+                                                  mlClassText.includes('Gain 5-10%') || 
+                                                  mlClassText.includes('Gain >10%');
+                                }} else {{
+                                    // Check for specific class number
+                                    const classLabels = {{
+                                        '0': 'Drop >10%',
+                                        '1': 'Drop 5-10%', 
+                                        '2': 'Drop 0-5%',
+                                        '3': 'Gain 0-5%',
+                                        '4': 'Gain 5-10%',
+                                        '5': 'Gain >10%'
+                                    }};
+                                    const expectedLabel = classLabels[mlClassFilterValue];
+                                    matchesFilter = expectedLabel && mlClassText.includes(expectedLabel);
+                                }}
+                                
+                                if (!matchesFilter) {{
+                                    showRow = false;
+                                }}
                             }}
                         }}
                     }}
@@ -1531,6 +1707,10 @@ class StockScanner:
             document.getElementById('maxATRRatio').value = '';
             document.getElementById('minBBPosition').value = '';
             document.getElementById('maxBBPosition').value = '';
+            document.getElementById('minTotalScore').value = '';
+            document.getElementById('minTrendScore').value = '';
+            document.getElementById('maxTrendScore').value = '';
+            document.getElementById('mlClassFilter').value = '';
             
             // Reset to current signal filter only
             filterTable(currentFilter);
@@ -1630,6 +1810,32 @@ class StockScanner:
                     <label for="maxBBPosition" style="font-weight: bold; display: block; margin-bottom: 5px;">🎈 Max BB Position %:</label>
                     <input type="number" id="maxBBPosition" placeholder="e.g., 80" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
                 </div>
+                <div>
+                    <label for="minTotalScore" style="font-weight: bold; display: block; margin-bottom: 5px;">⭐ Min Total Score:</label>
+                    <input type="number" id="minTotalScore" placeholder="e.g., 8" min="0" max="16" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minTrendScore" style="font-weight: bold; display: block; margin-bottom: 5px;">📈 Min Trend Score %:</label>
+                    <input type="number" id="minTrendScore" placeholder="e.g., 50" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxTrendScore" style="font-weight: bold; display: block; margin-bottom: 5px;">📈 Max Trend Score %:</label>
+                    <input type="number" id="maxTrendScore" placeholder="e.g., 90" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="mlClassFilter" style="font-weight: bold; display: block; margin-bottom: 5px;">🤖 ML Class:</label>
+                    <select id="mlClassFilter" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                        <option value="">All ML Classes</option>
+                        <option value="0">Drop >10% (Severe)</option>
+                        <option value="1">Drop 5-10% (Moderate)</option>
+                        <option value="2">Drop 0-5% (Mild)</option>
+                        <option value="3">Gain 0-5% (Mild)</option>
+                        <option value="4">Gain 5-10% (Moderate)</option>
+                        <option value="5">Gain >10% (Severe)</option>
+                        <option value="drops">All Drops (0-2)</option>
+                        <option value="gains">All Gains (3-5)</option>
+                    </select>
+                </div>
                 <div style="display: flex; align-items: end;">
                     <button onclick="clearAdvancedFilters()" style="padding: 8px 15px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%;">🗑️ Clear Filters</button>
                 </div>
@@ -1658,6 +1864,7 @@ class StockScanner:
                 <th onclick="sortTable(15, 'ml_negative')">ML Negative</th>
                 <th onclick="sortTable(16, 'ml_positive')">ML Positive</th>
                 <th onclick="sortTable(17, 'ml_class')">ML Class</th>
+                <th onclick="sortTable(18, 'total_score')">Total Score</th>
             </tr>
         </thead>
         <tbody>"""
@@ -1694,6 +1901,13 @@ class StockScanner:
             rr_status = tech_scores.get('rr_status', 'Unknown')
             atr_ratio = tech_scores.get('atr_to_price_ratio', 0)
             bb_position = tech_scores.get('bb_position', 0)
+            
+            # Get professional analysis scores
+            prof_scores = pred.get('professional_scores', {})
+            total_score = prof_scores.get('total_score', 0)
+            trend_prof_score = prof_scores.get('trend_score', 0)
+            safety_score = prof_scores.get('safety_score', 0)
+            strength_score = prof_scores.get('relative_strength_score', 0)
             
             # Calculate risk and reward percentages
             risk_percentage = (risk_amount / current_price * 100) if current_price > 0 else 0
@@ -1820,6 +2034,10 @@ class StockScanner:
                 <td class="{ml_class_css}">
                     {confidence:.1f}%
                     {f'<br><small class="ml-class-small">{ml_class}</small>' if has_ml_prediction and ml_class else ''}
+                </td>
+                <td class="{'good-ratio' if total_score >= 12 else 'decent-ratio' if total_score >= 8 else 'poor-ratio'}">
+                    <strong>{total_score}/16</strong>
+                    <br><small style="color: #666;">T:{trend_prof_score}/4 S:{safety_score}/6 R:{strength_score}/6</small>
                 </td>
             </tr>"""
         
