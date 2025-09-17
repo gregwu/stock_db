@@ -65,6 +65,9 @@ DB_CONFIG = {
     'password': os.getenv('DB_PASSWORD', 'password')
 }
 
+# Streamlit configuration
+STREAMLIT_URL = os.getenv('STREAMLIT_URL', '/ypredict/')
+
 # Fallback ticker list if database is unavailable
 FALLBACK_TICKERS = [
     'AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'BABA', 'V',
@@ -1798,7 +1801,7 @@ class StockScanner:
             html_report += f"""
             <tr>
                 <td><strong>{i}</strong></td>
-                <td class="ticker"><a href="/ypredict/?ticker={ticker}&pattern_length=60" target="_blank">{ticker}</a></td>
+                <td class="ticker"><a href="{STREAMLIT_URL}/?ticker={ticker}&pattern_length=60" target="_blank">{ticker}</a></td>
                 <td class="{signal_class}">{signal}</td>
                 <td>${current_price:.2f}</td>
                 <td class="{price_change_class}">${predicted_price:.2f}<br><small>({price_change:+.1f}%)</small></td>

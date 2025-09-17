@@ -1552,6 +1552,24 @@ def main():
         if ticker != st.query_params.get("ticker", "").upper():
             st.query_params["ticker"] = ticker
         
+        # Technical Analysis Only option with URL parameter support (default: True)
+        url_tech_only = st.query_params.get("tech_only", "true").lower() == "true"
+        tech_only = st.checkbox(
+            "📊 Technical Analysis Only",
+            value=url_tech_only,
+            help="Load only technical analysis charts and indicators (faster, no AI predictions or pattern matching)"
+        )
+        
+        # Update URL parameter when tech_only changes
+        if str(tech_only).lower() != st.query_params.get("tech_only", "true").lower():
+            st.query_params["tech_only"] = str(tech_only).lower()
+        
+        # Different button text based on mode
+        if tech_only:
+            run_analysis = st.button("📊 Load Technical Analysis", type="primary", use_container_width=True)
+        else:
+            run_analysis = st.button("🚀 Run Full Analysis", type="primary", use_container_width=True)
+        
         st.markdown("---")
         st.subheader("🔮 Prediction Settings")
         st.info("Uses existing trained models if available")
@@ -1666,24 +1684,6 @@ def main():
         )
         
         st.markdown("---")
-        
-        # Technical Analysis Only option with URL parameter support (default: True)
-        url_tech_only = st.query_params.get("tech_only", "true").lower() == "true"
-        tech_only = st.checkbox(
-            "📊 Technical Analysis Only",
-            value=url_tech_only,
-            help="Load only technical analysis charts and indicators (faster, no AI predictions or pattern matching)"
-        )
-        
-        # Update URL parameter when tech_only changes
-        if str(tech_only).lower() != st.query_params.get("tech_only", "true").lower():
-            st.query_params["tech_only"] = str(tech_only).lower()
-        
-        # Different button text based on mode
-        if tech_only:
-            run_analysis = st.button("📊 Load Technical Analysis", type="primary", use_container_width=True)
-        else:
-            run_analysis = st.button("🚀 Run Full Analysis", type="primary", use_container_width=True)
     
     # Create tabs for different views
     tab1, tab2, tab3 = st.tabs(["📊 Technical Analysis", "📈 Stock Prediction Results", "🔍 Fractal Pattern Results"])
