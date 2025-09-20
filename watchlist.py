@@ -541,7 +541,7 @@ def extract_symbols_from_text(text: str) -> List[str]:
     return sorted(list(set(filtered_symbols)))
 
 def run_predictions(date_filter: str = "latest", max_tickers: int = None, 
-                   background: bool = True) -> Dict:
+                   background: bool = True, rebuild_models: bool = False, use_ml: bool = True) -> Dict:
     """
     Run scanner.py predictions on the database tickers
     
@@ -549,6 +549,8 @@ def run_predictions(date_filter: str = "latest", max_tickers: int = None,
         date_filter: Date filter for predictions ("latest", "today", specific date)
         max_tickers: Maximum number of tickers to process (None = process all)
         background: Whether to run in background thread
+        rebuild_models: Force rebuild of ML models even if existing ones are found
+        use_ml: Use ML predictions instead of confidence-based predictions
         
     Returns:
         Dictionary with success status and results
@@ -570,6 +572,16 @@ def run_predictions(date_filter: str = "latest", max_tickers: int = None,
         
         if max_tickers:
             cmd.extend(["--max-tickers", str(max_tickers)])
+        
+        # Add ML prediction options
+        if use_ml:
+            cmd.append("--use-ml")
+        else:
+            cmd.append("--no-ml")
+        
+        # Add rebuild models option
+        if rebuild_models:
+            cmd.append("--rebuild-models")
         
         # Determine the correct working directory
         work_dir = DIRECTORIES['work_dir']
@@ -1419,6 +1431,30 @@ def predictions_page(manager):
             help="Run predictions in background (recommended for large batches)"
         )
     
+    # Add rebuild models option
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        rebuild_models = st.checkbox(
+            "🔨 Force Rebuild Models",
+            value=False,
+            help="Force rebuild of all ML models even if existing models are found"
+        )
+    
+    with col4:
+        use_ml = st.checkbox(
+            "🤖 Use ML Predictions",
+            value=True,
+            help="Use LightGBM ML predictions instead of confidence-based predictions"
+        )
+    
+    # Show status indicators
+    if rebuild_models:
+        st.info("🔨 **Rebuild Mode Active** - All ML models will be retrained from scratch")
+    
+    if not use_ml:
+        st.warning("⚠️ **ML Predictions Disabled** - Using confidence-based predictions instead")
+    
     # Show preview of what will be processed
     st.subheader("📋 Prediction Preview")
     try:
@@ -1458,7 +1494,9 @@ def predictions_page(manager):
                 result = run_predictions(
                     date_filter=date_filter,
                     max_tickers=None,
-                    background=background_mode
+                    background=background_mode,
+                    rebuild_models=rebuild_models,
+                    use_ml=use_ml
                 )
                 
                 if result['success']:
@@ -1485,6 +1523,16 @@ def predictions_page(manager):
             "--predict-only",
             "--date-filter", date_filter
         ]
+        
+        # Add ML prediction options to display
+        if use_ml:
+            cmd_parts.append("--use-ml")
+        else:
+            cmd_parts.append("--no-ml")
+        
+        # Add rebuild models option to display
+        if rebuild_models:
+            cmd_parts.append("--rebuild-models")
         
         st.info("**Command to execute (ALL tickers):**")
         st.code(" ".join(cmd_parts))

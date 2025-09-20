@@ -25,6 +25,14 @@ Usage:
     python scanner.py --min-rr-ratio 1.5                 # Only show R/R ratio >= 1.5
     python scanner.py --max-atr-price-ratio 0.03         # Only show ATR/Price <= 3%
     python scanner.py --min-bb-position 0.2 --max-bb-position 0.8  # BB position between 20%-80%
+    python scanner.py --min-vri-20 1.2 --max-vri-20 3.0  # VRI_20 between 1.2-3.0
+    python scanner.py --min-cmf-20 -0.1 --max-cmf-20 0.3 # CMF_20 between -0.1 to +0.3
+    python scanner.py --min-ad-momentum -5 --max-ad-momentum 10  # A/D momentum between -5% to +10%
+    
+    # ML model examples:
+    python scanner.py --use-ml                           # Use ML predictions
+    python scanner.py --rebuild-models                   # Force rebuild all ML models
+    python scanner.py --use-ml --rebuild-models          # Use ML with fresh models
 """
 
 import argparse
@@ -297,7 +305,7 @@ def load_tickers_from_database() -> List[str]:
 class StockScanner:
     """Stock scanner for technical analysis and predictions"""
     
-    def __init__(self, ticker_list: List[str] = None, use_database: bool = True, use_ml_predictions: bool = True):
+    def __init__(self, ticker_list: List[str] = None, use_database: bool = True, use_ml_predictions: bool = True, rebuild_models: bool = False):
         """Initialize scanner with ticker list and prediction method"""
         if ticker_list:
             self.ticker_list = ticker_list
@@ -312,6 +320,11 @@ class StockScanner:
         self.use_ml_predictions = use_ml_predictions and LIGHTGBM_AVAILABLE
         if use_ml_predictions and not LIGHTGBM_AVAILABLE:
             logger.warning("ML predictions requested but LightGBM not available. Using confidence-based predictions.")
+        
+        # Set model rebuild option
+        self.rebuild_models = rebuild_models
+        if rebuild_models:
+            logger.info("Model rebuild mode enabled - will retrain models even if existing ones are found")
         
         prediction_type = "ML-based" if self.use_ml_predictions else "confidence-based"
         logger.info(f"Scanner using {prediction_type} predictions")
@@ -352,7 +365,7 @@ class StockScanner:
         """
         try:
             # Download data from Yahoo Finance
-            data = yf.download(ticker, period=period, progress=False)
+            data = yf.download(ticker, period=period, progress=False, auto_adjust=True)
             
             if data.empty:
                 logger.warning(f"No data found for ticker: {ticker}")
@@ -379,11 +392,15 @@ class StockScanner:
                 df.set_index('date', inplace=True)
             
             # Ensure we have the basic OHLCV columns in both cases
-            df['OPEN'] = df['open']
-            df['HIGH'] = df['high']
-            df['LOW'] = df['low']
-            df['CLOSE'] = df['close']
-            df['VOL'] = df['vol']
+            # Use pd.concat to avoid DataFrame fragmentation warnings
+            ohlcv_columns = pd.DataFrame({
+                'OPEN': df['open'],
+                'HIGH': df['high'],
+                'LOW': df['low'],
+                'CLOSE': df['close'],
+                'VOL': df['vol']
+            })
+            df = pd.concat([df, ohlcv_columns], axis=1)
             
             return df
             
@@ -405,11 +422,22 @@ class StockScanner:
             return {}
         
         # Calculate additional indicators if needed
+        # Use pd.concat to avoid DataFrame fragmentation warnings
+        additional_indicators = {}
+        
         if 'RSI_14' not in df.columns:
-            df['RSI_14'] = TechnicalIndicators.rsi(df['CLOSE'], 14)
+            additional_indicators['RSI_14'] = TechnicalIndicators.rsi(df['CLOSE'], 14)
         
         if 'BB_Middle' not in df.columns:
-            df['BB_Middle'], df['BB_Upper'], df['BB_Lower'] = TechnicalIndicators.bollinger_bands(df['CLOSE'])
+            bb_middle, bb_upper, bb_lower = TechnicalIndicators.bollinger_bands(df['CLOSE'])
+            additional_indicators['BB_Middle'] = bb_middle
+            additional_indicators['BB_Upper'] = bb_upper
+            additional_indicators['BB_Lower'] = bb_lower
+        
+        # Add all additional indicators at once to avoid fragmentation
+        if additional_indicators:
+            indicators_df = pd.DataFrame(additional_indicators, index=df.index)
+            df = pd.concat([df, indicators_df], axis=1)
         
         # Get the latest values
         latest = df.iloc[-1]
@@ -502,6 +530,22 @@ class StockScanner:
             volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
             scores['volume_ratio'] = volume_ratio
             scores['volume_score'] = min(volume_ratio / 2.0, 1.0)  # Cap at 1.0
+        
+        # Volume Ratio Indicator (VRI) - using the new indicators
+        if 'vri_20' in latest and not pd.isna(latest['vri_20']):
+            scores['vri_20'] = latest['vri_20']
+        if 'vri_10' in latest and not pd.isna(latest['vri_10']):
+            scores['vri_10'] = latest['vri_10']
+        
+        # Chaikin Money Flow (CMF)
+        if 'cmf_20' in latest and not pd.isna(latest['cmf_20']):
+            scores['cmf_20'] = latest['cmf_20']
+        if 'cmf_10' in latest and not pd.isna(latest['cmf_10']):
+            scores['cmf_10'] = latest['cmf_10']
+        
+        # Accumulation/Distribution Line momentum
+        if 'ad_momentum' in latest and not pd.isna(latest['ad_momentum']):
+            scores['ad_momentum'] = latest['ad_momentum']
         
         # Moving average trend
         if all(col in latest for col in ['close', 'sma_20', 'sma_144']):
@@ -810,6 +854,11 @@ class StockScanner:
         if not LIGHTGBM_AVAILABLE:
             return None
         
+        # If rebuild_models is enabled, skip loading and go straight to training
+        if self.rebuild_models:
+            logger.info(f"🔄 Rebuild mode enabled - training new model for {ticker}")
+            return self.train_lightgbm_model(ticker, df)
+        
         # Check for model in various locations
         model_paths = [
             f"models/{ticker}_yahoo/lightgbm_model_yahoo.pkl",
@@ -863,25 +912,53 @@ class StockScanner:
         
         try:
             # Prepare features for ML prediction
-            # This assumes the model was trained with the same feature set
-            from config import features
+            # Use feature names from model metadata if available, otherwise fall back to config
+            if hasattr(model, '_scanner_metadata') and model._scanner_metadata and 'feature_names' in model._scanner_metadata:
+                # Use the exact feature names the model was trained with
+                model_feature_names = model._scanner_metadata['feature_names']
+                logger.debug(f"Using model feature names: {len(model_feature_names)} features")
+            else:
+                # Fall back to config features
+                from config import features
+                model_feature_names = features
+                logger.debug(f"Using config feature names: {len(model_feature_names)} features")
             
             # Get latest row for prediction
             latest_data = df.iloc[-1:].copy()
             
-            # Select features that exist in the data
-            available_features = [f for f in features if f.lower() in latest_data.columns]
+            # Select features that exist in the data (case-insensitive matching)
+            available_features = []
+            for feature in model_feature_names:
+                # Try exact match first, then case-insensitive
+                if feature in latest_data.columns:
+                    available_features.append(feature)
+                elif feature.lower() in latest_data.columns:
+                    available_features.append(feature.lower())
+                elif feature.upper() in latest_data.columns:
+                    available_features.append(feature.upper())
             
             if len(available_features) < 10:  # Minimum feature threshold
                 logger.warning(f"Insufficient features for ML prediction: {len(available_features)} available")
                 return None
             
-            # Prepare feature matrix
-            X = latest_data[available_features].values.reshape(1, -1)
+            # Prepare feature matrix with proper feature names
+            X = latest_data[available_features].copy()
+            
+            # Ensure feature names match what the model expects
+            if hasattr(model, 'feature_name_') and model.feature_name_:
+                # LightGBM model with feature names - ensure exact match
+                expected_features = model.feature_name_[:len(X.columns)]
+                X.columns = expected_features
+                logger.debug(f"Set feature names to match model: {expected_features[:5]}...")
             
             # Handle any NaN values
-            if np.isnan(X).any():
-                X = np.nan_to_num(X)
+            if X.isnull().any().any():
+                X = X.fillna(0)
+                logger.debug("Handled NaN values in feature matrix")
+            
+            # Log feature information for debugging
+            logger.debug(f"Feature matrix shape: {X.shape}")
+            logger.debug(f"Feature names: {list(X.columns)[:5]}...")
             
             # Get prediction probabilities
             if hasattr(model, 'predict_proba'):
@@ -1114,6 +1191,39 @@ class StockScanner:
             if filters.get('min_bb_position') and bb_position < filters['min_bb_position']:
                 continue
             if filters.get('max_bb_position') and bb_position > filters['max_bb_position']:
+                continue
+            
+            # Apply VRI filters
+            vri_20 = tech_scores.get('vri_20', 0)
+            if filters.get('min_vri_20') is not None and vri_20 < filters['min_vri_20']:
+                continue
+            if filters.get('max_vri_20') is not None and vri_20 > filters['max_vri_20']:
+                continue
+            
+            vri_10 = tech_scores.get('vri_10', 0)
+            if filters.get('min_vri_10') is not None and vri_10 < filters['min_vri_10']:
+                continue
+            if filters.get('max_vri_10') is not None and vri_10 > filters['max_vri_10']:
+                continue
+            
+            # Apply CMF filters
+            cmf_20 = tech_scores.get('cmf_20', 0)
+            if filters.get('min_cmf_20') is not None and cmf_20 < filters['min_cmf_20']:
+                continue
+            if filters.get('max_cmf_20') is not None and cmf_20 > filters['max_cmf_20']:
+                continue
+            
+            cmf_10 = tech_scores.get('cmf_10', 0)
+            if filters.get('min_cmf_10') is not None and cmf_10 < filters['min_cmf_10']:
+                continue
+            if filters.get('max_cmf_10') is not None and cmf_10 > filters['max_cmf_10']:
+                continue
+            
+            # Apply A/D Line momentum filter
+            ad_momentum = tech_scores.get('ad_momentum', 0)
+            if filters.get('min_ad_momentum') is not None and ad_momentum < filters['min_ad_momentum']:
+                continue
+            if filters.get('max_ad_momentum') is not None and ad_momentum > filters['max_ad_momentum']:
                 continue
             
             filtered_predictions.append(pred)
@@ -1433,6 +1543,15 @@ class StockScanner:
         .ml-class-gain-mild {{ color: #20c997; font-weight: bold; }}     /* Gain 0-5% - Class 3 */
         .ml-class-gain-moderate {{ color: #28a745; font-weight: bold; }} /* Gain 5-10% - Class 4 */
         .ml-class-gain-severe {{ color: #198754; font-weight: bold; }}   /* Gain >10% - Class 5 */
+        .vri-high {{ color: #28a745; font-weight: bold; }}               /* VRI > 1.5 */
+        .vri-normal {{ color: #6c757d; }}                                /* VRI 0.5-1.5 */
+        .vri-low {{ color: #dc3545; }}                                   /* VRI < 0.5 */
+        .cmf-positive {{ color: #28a745; font-weight: bold; }}           /* CMF > 0.1 */
+        .cmf-neutral {{ color: #6c757d; }}                               /* CMF -0.1 to 0.1 */
+        .cmf-negative {{ color: #dc3545; font-weight: bold; }}           /* CMF < -0.1 */
+        .ad-momentum-positive {{ color: #28a745; font-weight: bold; }}   /* A/D Momentum > 0 */
+        .ad-momentum-negative {{ color: #dc3545; font-weight: bold; }}   /* A/D Momentum < 0 */
+        .ad-momentum-neutral {{ color: #6c757d; }}                       /* A/D Momentum ≈ 0 */
         .sort-desc::after {{ content: ' ↓'; }}
         .sort-asc::after {{ content: ' ↑'; }}
         .footer {{ margin-top: 30px; text-align: center; color: #6c757d; font-size: 0.9em; }}
@@ -1549,6 +1668,16 @@ class StockScanner:
             const maxATRRatioValue = document.getElementById('maxATRRatio').value.trim();
             const minBBPositionValue = document.getElementById('minBBPosition').value.trim();
             const maxBBPositionValue = document.getElementById('maxBBPosition').value.trim();
+            const minVRI20Value = document.getElementById('minVRI20').value.trim();
+            const maxVRI20Value = document.getElementById('maxVRI20').value.trim();
+            const minVRI10Value = document.getElementById('minVRI10').value.trim();
+            const maxVRI10Value = document.getElementById('maxVRI10').value.trim();
+            const minCMF20Value = document.getElementById('minCMF20').value.trim();
+            const maxCMF20Value = document.getElementById('maxCMF20').value.trim();
+            const minCMF10Value = document.getElementById('minCMF10').value.trim();
+            const maxCMF10Value = document.getElementById('maxCMF10').value.trim();
+            const minADMomentumValue = document.getElementById('minADMomentum').value.trim();
+            const maxADMomentumValue = document.getElementById('maxADMomentum').value.trim();
             const minTotalScoreValue = document.getElementById('minTotalScore').value.trim();
             const minTrendScoreValue = document.getElementById('minTrendScore').value.trim();
             const maxTrendScoreValue = document.getElementById('maxTrendScore').value.trim();
@@ -1558,6 +1687,16 @@ class StockScanner:
             const maxATRRatio = maxATRRatioValue ? parseFloat(maxATRRatioValue) : 0;
             const minBBPosition = minBBPositionValue ? parseFloat(minBBPositionValue) : 0;
             const maxBBPosition = maxBBPositionValue ? parseFloat(maxBBPositionValue) : 0;
+            const minVRI20 = minVRI20Value ? parseFloat(minVRI20Value) : 0;
+            const maxVRI20 = maxVRI20Value ? parseFloat(maxVRI20Value) : 0;
+            const minVRI10 = minVRI10Value ? parseFloat(minVRI10Value) : 0;
+            const maxVRI10 = maxVRI10Value ? parseFloat(maxVRI10Value) : 0;
+            const minCMF20 = minCMF20Value ? parseFloat(minCMF20Value) : 0;
+            const maxCMF20 = maxCMF20Value ? parseFloat(maxCMF20Value) : 0;
+            const minCMF10 = minCMF10Value ? parseFloat(minCMF10Value) : 0;
+            const maxCMF10 = maxCMF10Value ? parseFloat(maxCMF10Value) : 0;
+            const minADMomentum = minADMomentumValue ? parseFloat(minADMomentumValue) : 0;
+            const maxADMomentum = maxADMomentumValue ? parseFloat(maxADMomentumValue) : 0;
             const minTotalScore = minTotalScoreValue ? parseFloat(minTotalScoreValue) : 0;
             const minTrendScore = minTrendScoreValue ? parseFloat(minTrendScoreValue) : 0;
             const maxTrendScore = maxTrendScoreValue ? parseFloat(maxTrendScoreValue) : 0;
@@ -1623,9 +1762,79 @@ class StockScanner:
                             }}
                         }}
                         
+                        // Apply VRI 20 filter
+                        if ((minVRI20Value || maxVRI20Value) && showRow) {{
+                            const vri20Cell = cells[14]; // VRI 20 is column 14
+                            if (vri20Cell) {{
+                                const vri20Text = vri20Cell.textContent.trim();
+                                const vri20Match = vri20Text.match(/([0-9.-]+)/);
+                                const vri20Value = vri20Match ? parseFloat(vri20Match[1]) : 0;
+                                if ((minVRI20Value && vri20Value < minVRI20) || 
+                                    (maxVRI20Value && vri20Value > maxVRI20)) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
+                        // Apply VRI 10 filter
+                        if ((minVRI10Value || maxVRI10Value) && showRow) {{
+                            const vri10Cell = cells[15]; // VRI 10 is column 15
+                            if (vri10Cell) {{
+                                const vri10Text = vri10Cell.textContent.trim();
+                                const vri10Match = vri10Text.match(/([0-9.-]+)/);
+                                const vri10Value = vri10Match ? parseFloat(vri10Match[1]) : 0;
+                                if ((minVRI10Value && vri10Value < minVRI10) || 
+                                    (maxVRI10Value && vri10Value > maxVRI10)) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
+                        // Apply CMF 20 filter
+                        if ((minCMF20Value || maxCMF20Value) && showRow) {{
+                            const cmf20Cell = cells[16]; // CMF 20 is column 16
+                            if (cmf20Cell) {{
+                                const cmf20Text = cmf20Cell.textContent.trim();
+                                const cmf20Match = cmf20Text.match(/([0-9.-]+)/);
+                                const cmf20Value = cmf20Match ? parseFloat(cmf20Match[1]) : 0;
+                                if ((minCMF20Value && cmf20Value < minCMF20) || 
+                                    (maxCMF20Value && cmf20Value > maxCMF20)) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
+                        // Apply CMF 10 filter
+                        if ((minCMF10Value || maxCMF10Value) && showRow) {{
+                            const cmf10Cell = cells[17]; // CMF 10 is column 17
+                            if (cmf10Cell) {{
+                                const cmf10Text = cmf10Cell.textContent.trim();
+                                const cmf10Match = cmf10Text.match(/([0-9.-]+)/);
+                                const cmf10Value = cmf10Match ? parseFloat(cmf10Match[1]) : 0;
+                                if ((minCMF10Value && cmf10Value < minCMF10) || 
+                                    (maxCMF10Value && cmf10Value > maxCMF10)) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
+                        // Apply A/D Momentum filter
+                        if ((minADMomentumValue || maxADMomentumValue) && showRow) {{
+                            const adMomentumCell = cells[18]; // A/D Momentum is column 18
+                            if (adMomentumCell) {{
+                                const adMomentumText = adMomentumCell.textContent.trim();
+                                const adMomentumMatch = adMomentumText.match(/([0-9.-]+)%/);
+                                const adMomentumValue = adMomentumMatch ? parseFloat(adMomentumMatch[1]) : 0;
+                                if ((minADMomentumValue && adMomentumValue < minADMomentum) || 
+                                    (maxADMomentumValue && adMomentumValue > maxADMomentum)) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
                         // Apply total score filter
                         if (minTotalScoreValue && showRow) {{
-                            const totalScoreCell = cells[18]; // Total score is column 18
+                            const totalScoreCell = cells[23]; // Total score is column 23
                             if (totalScoreCell) {{
                                 const totalScoreText = totalScoreCell.textContent.trim();
                                 const totalScoreMatch = totalScoreText.match(/([0-9]+)\/16/);
@@ -1638,7 +1847,7 @@ class StockScanner:
                         
                         // Apply trend score filter
                         if ((minTrendScoreValue || maxTrendScoreValue) && showRow) {{
-                            const trendCell = cells[14]; // Trend score is column 14
+                            const trendCell = cells[19]; // Trend score is column 19
                             if (trendCell) {{
                                 const trendText = trendCell.textContent.trim();
                                 const trendMatch = trendText.match(/([0-9.-]+)%/);
@@ -1652,7 +1861,7 @@ class StockScanner:
                         
                         // Apply ML Class filter
                         if (mlClassFilterValue && showRow) {{
-                            const mlClassCell = cells[17]; // ML Class is column 17
+                            const mlClassCell = cells[22]; // ML Class is column 22
                             if (mlClassCell) {{
                                 const mlClassText = mlClassCell.textContent.trim();
                                 let matchesFilter = false;
@@ -1707,6 +1916,16 @@ class StockScanner:
             document.getElementById('maxATRRatio').value = '';
             document.getElementById('minBBPosition').value = '';
             document.getElementById('maxBBPosition').value = '';
+            document.getElementById('minVRI20').value = '';
+            document.getElementById('maxVRI20').value = '';
+            document.getElementById('minVRI10').value = '';
+            document.getElementById('maxVRI10').value = '';
+            document.getElementById('minCMF20').value = '';
+            document.getElementById('maxCMF20').value = '';
+            document.getElementById('minCMF10').value = '';
+            document.getElementById('maxCMF10').value = '';
+            document.getElementById('minADMomentum').value = '';
+            document.getElementById('maxADMomentum').value = '';
             document.getElementById('minTotalScore').value = '';
             document.getElementById('minTrendScore').value = '';
             document.getElementById('maxTrendScore').value = '';
@@ -1811,6 +2030,46 @@ class StockScanner:
                     <input type="number" id="maxBBPosition" placeholder="e.g., 80" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
                 </div>
                 <div>
+                    <label for="minVRI20" style="font-weight: bold; display: block; margin-bottom: 5px;">📊 Min VRI_20:</label>
+                    <input type="number" id="minVRI20" placeholder="e.g., 1.2" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxVRI20" style="font-weight: bold; display: block; margin-bottom: 5px;">📊 Max VRI_20:</label>
+                    <input type="number" id="maxVRI20" placeholder="e.g., 3.0" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minVRI10" style="font-weight: bold; display: block; margin-bottom: 5px;">📊 Min VRI_10:</label>
+                    <input type="number" id="minVRI10" placeholder="e.g., 1.0" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxVRI10" style="font-weight: bold; display: block; margin-bottom: 5px;">📊 Max VRI_10:</label>
+                    <input type="number" id="maxVRI10" placeholder="e.g., 2.5" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minCMF20" style="font-weight: bold; display: block; margin-bottom: 5px;">💰 Min CMF_20:</label>
+                    <input type="number" id="minCMF20" placeholder="e.g., -0.1" step="0.01" min="-1" max="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxCMF20" style="font-weight: bold; display: block; margin-bottom: 5px;">💰 Max CMF_20:</label>
+                    <input type="number" id="maxCMF20" placeholder="e.g., 0.3" step="0.01" min="-1" max="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minCMF10" style="font-weight: bold; display: block; margin-bottom: 5px;">💰 Min CMF_10:</label>
+                    <input type="number" id="minCMF10" placeholder="e.g., -0.2" step="0.01" min="-1" max="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxCMF10" style="font-weight: bold; display: block; margin-bottom: 5px;">💰 Max CMF_10:</label>
+                    <input type="number" id="maxCMF10" placeholder="e.g., 0.4" step="0.01" min="-1" max="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minADMomentum" style="font-weight: bold; display: block; margin-bottom: 5px;">📈 Min A/D Momentum %:</label>
+                    <input type="number" id="minADMomentum" placeholder="e.g., -5" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxADMomentum" style="font-weight: bold; display: block; margin-bottom: 5px;">📈 Max A/D Momentum %:</label>
+                    <input type="number" id="maxADMomentum" placeholder="e.g., 10" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
                     <label for="minTotalScore" style="font-weight: bold; display: block; margin-bottom: 5px;">⭐ Min Total Score:</label>
                     <input type="number" id="minTotalScore" placeholder="e.g., 8" min="0" max="16" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
                 </div>
@@ -1860,11 +2119,16 @@ class StockScanner:
                 <th onclick="sortTable(11, 'rsi')">RSI</th>
                 <th onclick="sortTable(12, 'atr_ratio')">ATR/Price</th>
                 <th onclick="sortTable(13, 'bb_position')">BB Position</th>
-                <th onclick="sortTable(14, 'trend_score')">Trend</th>
-                <th onclick="sortTable(15, 'ml_negative')">ML Negative</th>
-                <th onclick="sortTable(16, 'ml_positive')">ML Positive</th>
-                <th onclick="sortTable(17, 'ml_class')">ML Class</th>
-                <th onclick="sortTable(18, 'total_score')">Total Score</th>
+                <th onclick="sortTable(14, 'vri_20')">VRI 20</th>
+                <th onclick="sortTable(15, 'vri_10')">VRI 10</th>
+                <th onclick="sortTable(16, 'cmf_20')">CMF 20</th>
+                <th onclick="sortTable(17, 'cmf_10')">CMF 10</th>
+                <th onclick="sortTable(18, 'ad_momentum')">A/D Momentum</th>
+                <th onclick="sortTable(19, 'trend_score')">Trend</th>
+                <th onclick="sortTable(20, 'ml_negative')">ML Negative</th>
+                <th onclick="sortTable(21, 'ml_positive')">ML Positive</th>
+                <th onclick="sortTable(22, 'ml_class')">ML Class</th>
+                <th onclick="sortTable(23, 'total_score')">Total Score</th>
             </tr>
         </thead>
         <tbody>"""
@@ -1901,6 +2165,13 @@ class StockScanner:
             rr_status = tech_scores.get('rr_status', 'Unknown')
             atr_ratio = tech_scores.get('atr_to_price_ratio', 0)
             bb_position = tech_scores.get('bb_position', 0)
+            
+            # Get new volume and money flow indicators
+            vri_20 = tech_scores.get('vri_20', 0)
+            vri_10 = tech_scores.get('vri_10', 0)
+            cmf_20 = tech_scores.get('cmf_20', 0)
+            cmf_10 = tech_scores.get('cmf_10', 0)
+            ad_momentum = tech_scores.get('ad_momentum', 0)
             
             # Get professional analysis scores
             prof_scores = pred.get('professional_scores', {})
@@ -1986,6 +2257,13 @@ class StockScanner:
             confidence_class = "confidence-high" if confidence >= 70 else "confidence-medium" if confidence >= 50 else "confidence-low"
             rsi_class = "rsi-oversold" if rsi_value < 30 else "rsi-overbought" if rsi_value > 70 else "rsi-neutral"
             
+            # CSS classes for new indicators
+            vri_20_class = "vri-high" if vri_20 > 1.5 else "vri-low" if vri_20 < 0.5 else "vri-normal"
+            vri_10_class = "vri-high" if vri_10 > 1.5 else "vri-low" if vri_10 < 0.5 else "vri-normal"
+            cmf_20_class = "cmf-positive" if cmf_20 > 0.1 else "cmf-negative" if cmf_20 < -0.1 else "cmf-neutral"
+            cmf_10_class = "cmf-positive" if cmf_10 > 0.1 else "cmf-negative" if cmf_10 < -0.1 else "cmf-neutral"
+            ad_momentum_class = "ad-momentum-positive" if ad_momentum > 0.01 else "ad-momentum-negative" if ad_momentum < -0.01 else "ad-momentum-neutral"
+            
             # Price change styling
             price_change_class = "price-positive" if price_change > 0 else "price-negative" if price_change < 0 else "price-neutral"
             
@@ -2028,6 +2306,11 @@ class StockScanner:
                 <td class="{rsi_class}">{rsi_value:.1f}</td>
                 <td>{atr_ratio:.1%}</td>
                 <td>{bb_position:.1%}</td>
+                <td class="{vri_20_class}">{vri_20:.2f}</td>
+                <td class="{vri_10_class}">{vri_10:.2f}</td>
+                <td class="{cmf_20_class}">{cmf_20:.3f}</td>
+                <td class="{cmf_10_class}">{cmf_10:.3f}</td>
+                <td class="{ad_momentum_class}">{ad_momentum:.1%}</td>
                 <td>{trend_score:.1%}</td>
                 <td><span class="ml-negative">{ml_negative_pct}</span></td>
                 <td><span class="ml-positive">{ml_positive_pct}</span></td>
@@ -2047,7 +2330,7 @@ class StockScanner:
     
     <div class="footer">
         <p><strong>Stock Scanner Report</strong> - Technical analysis powered by Yahoo Finance data</p>
-        <p>🔍 Scanner uses RSI, MACD, Bollinger Bands, Volume, and Trend analysis for predictions</p>
+        <p>🔍 Scanner uses RSI, MACD, Bollinger Bands, Volume Ratio (VRI), Chaikin Money Flow (CMF), A/D Momentum, and Trend analysis for predictions</p>
         <p>💰 Risk/Reward ratios calculated using 20-day support/resistance levels</p>
         <p>📈 Price predictions based on signal strength and confidence levels</p>
         <p>🤖 ML predictions use trained LightGBM models for 6-class price change forecasting</p>
@@ -2106,6 +2389,8 @@ def main():
                        help="Use LightGBM ML predictions instead of confidence-based predictions (requires trained models)")
     parser.add_argument("--no-ml", action="store_true",
                        help="Disable ML predictions even in predict-only mode")
+    parser.add_argument("--rebuild-models", action="store_true",
+                       help="Force rebuild of ML models even if existing models are found")
     parser.add_argument("--verbose", "-v", action="store_true",
                        help="Enable verbose logging")
     
@@ -2122,6 +2407,32 @@ def main():
                        help="Minimum Bollinger Band position filter (0.0-1.0)")
     parser.add_argument("--max-bb-position", type=float,
                        help="Maximum Bollinger Band position filter (0.0-1.0)")
+    
+    # Volume Ratio Indicator (VRI) filters
+    parser.add_argument("--min-vri-20", type=float,
+                       help="Minimum VRI_20 filter (volume ratio over 20 periods)")
+    parser.add_argument("--max-vri-20", type=float,
+                       help="Maximum VRI_20 filter (volume ratio over 20 periods)")
+    parser.add_argument("--min-vri-10", type=float,
+                       help="Minimum VRI_10 filter (volume ratio over 10 periods)")
+    parser.add_argument("--max-vri-10", type=float,
+                       help="Maximum VRI_10 filter (volume ratio over 10 periods)")
+    
+    # Chaikin Money Flow (CMF) filters
+    parser.add_argument("--min-cmf-20", type=float,
+                       help="Minimum CMF_20 filter (Chaikin Money Flow over 20 periods, range: -1 to +1)")
+    parser.add_argument("--max-cmf-20", type=float,
+                       help="Maximum CMF_20 filter (Chaikin Money Flow over 20 periods, range: -1 to +1)")
+    parser.add_argument("--min-cmf-10", type=float,
+                       help="Minimum CMF_10 filter (Chaikin Money Flow over 10 periods, range: -1 to +1)")
+    parser.add_argument("--max-cmf-10", type=float,
+                       help="Maximum CMF_10 filter (Chaikin Money Flow over 10 periods, range: -1 to +1)")
+    
+    # Accumulation/Distribution Line filters
+    parser.add_argument("--min-ad-momentum", type=float,
+                       help="Minimum A/D Line momentum filter (percentage change over 5 periods)")
+    parser.add_argument("--max-ad-momentum", type=float,
+                       help="Maximum A/D Line momentum filter (percentage change over 5 periods)")
     
     args = parser.parse_args()
     
@@ -2145,7 +2456,7 @@ def main():
         use_ml = (args.use_ml or args.predict_only) and not args.no_ml
         
         # Initialize scanner with specified tickers or database/fallback
-        scanner = StockScanner(ticker_list, use_database, use_ml_predictions=use_ml)
+        scanner = StockScanner(ticker_list, use_database, use_ml_predictions=use_ml, rebuild_models=args.rebuild_models)
         
         # Build filters dictionary
         filters = {}
@@ -2161,6 +2472,32 @@ def main():
             filters['min_bb_position'] = args.min_bb_position
         if args.max_bb_position is not None:
             filters['max_bb_position'] = args.max_bb_position
+        
+        # VRI filters
+        if args.min_vri_20 is not None:
+            filters['min_vri_20'] = args.min_vri_20
+        if args.max_vri_20 is not None:
+            filters['max_vri_20'] = args.max_vri_20
+        if args.min_vri_10 is not None:
+            filters['min_vri_10'] = args.min_vri_10
+        if args.max_vri_10 is not None:
+            filters['max_vri_10'] = args.max_vri_10
+        
+        # CMF filters
+        if args.min_cmf_20 is not None:
+            filters['min_cmf_20'] = args.min_cmf_20
+        if args.max_cmf_20 is not None:
+            filters['max_cmf_20'] = args.max_cmf_20
+        if args.min_cmf_10 is not None:
+            filters['min_cmf_10'] = args.min_cmf_10
+        if args.max_cmf_10 is not None:
+            filters['max_cmf_10'] = args.max_cmf_10
+        
+        # A/D Line filters
+        if args.min_ad_momentum is not None:
+            filters['min_ad_momentum'] = args.min_ad_momentum
+        if args.max_ad_momentum is not None:
+            filters['max_ad_momentum'] = args.max_ad_momentum
         
         if filters:
             logger.info(f"Applied filters: {filters}")

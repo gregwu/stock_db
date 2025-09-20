@@ -375,6 +375,84 @@ class TechnicalIndicators:
         slope = (n * np.sum(x * y) - np.sum(x) * np.sum(y)) / (n * np.sum(x * x) - np.sum(x) * np.sum(x))
         
         return slope
+    
+    @staticmethod
+    def volume_ratio_indicator(volume: pd.Series, window: int = 20) -> pd.Series:
+        """
+        Volume Ratio Indicator (VRI)
+        
+        VRI compares current volume to average volume over a specified period.
+        It helps identify volume spikes and unusual trading activity.
+        
+        Args:
+            volume: Volume series
+            window: Period for calculating average volume (default 20)
+            
+        Returns:
+            VRI values (current volume / average volume)
+        """
+        avg_volume = volume.rolling(window=window).mean()
+        vri = volume / avg_volume
+        return vri
+    
+    @staticmethod
+    def chaikin_money_flow(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, period: int = 20) -> pd.Series:
+        """
+        Chaikin Money Flow (CMF)
+        
+        CMF measures the accumulation/distribution of money flow over a specified period.
+        It combines price and volume to determine buying and selling pressure.
+        
+        Args:
+            high: High price series
+            low: Low price series
+            close: Close price series
+            volume: Volume series
+            period: Calculation period (default 20)
+            
+        Returns:
+            CMF values (ranging from -1 to +1)
+        """
+        # Calculate Money Flow Multiplier
+        mf_multiplier = ((close - low) - (high - close)) / (high - low)
+        mf_multiplier = mf_multiplier.fillna(0)  # Handle division by zero
+        
+        # Calculate Money Flow Volume
+        mf_volume = mf_multiplier * volume
+        
+        # Calculate CMF as sum of MF Volume over period / sum of Volume over period
+        cmf = mf_volume.rolling(window=period).sum() / volume.rolling(window=period).sum()
+        
+        return cmf
+    
+    @staticmethod
+    def accumulation_distribution(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
+        """
+        Accumulation/Distribution Line (A/D Line)
+        
+        The A/D Line is a cumulative indicator that uses volume and price to assess
+        whether a stock is being accumulated or distributed.
+        
+        Args:
+            high: High price series
+            low: Low price series
+            close: Close price series
+            volume: Volume series
+            
+        Returns:
+            A/D Line values (cumulative)
+        """
+        # Calculate Money Flow Multiplier
+        mf_multiplier = ((close - low) - (high - close)) / (high - low)
+        mf_multiplier = mf_multiplier.fillna(0)  # Handle division by zero
+        
+        # Calculate Money Flow Volume
+        mf_volume = mf_multiplier * volume
+        
+        # Calculate cumulative A/D Line
+        ad_line = mf_volume.cumsum()
+        
+        return ad_line
 
 
 def calculate_comprehensive_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -474,6 +552,19 @@ def calculate_comprehensive_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['OBV'] = TechnicalIndicators.obv(df['CLOSE'], df['VOL'])
     df['OBV_MOMENTUM'] = df['OBV'].pct_change(5)
     
+    # Volume Ratio Indicator (VRI)
+    df['VRI_20'] = TechnicalIndicators.volume_ratio_indicator(df['VOL'], 20)
+    df['VRI_10'] = TechnicalIndicators.volume_ratio_indicator(df['VOL'], 10)
+    df['VRI_5'] = TechnicalIndicators.volume_ratio_indicator(df['VOL'], 5)
+    
+    # Chaikin Money Flow (CMF)
+    df['CMF_20'] = TechnicalIndicators.chaikin_money_flow(df['HIGH'], df['LOW'], df['CLOSE'], df['VOL'], 20)
+    df['CMF_10'] = TechnicalIndicators.chaikin_money_flow(df['HIGH'], df['LOW'], df['CLOSE'], df['VOL'], 10)
+    
+    # Accumulation/Distribution Line
+    df['AD_LINE'] = TechnicalIndicators.accumulation_distribution(df['HIGH'], df['LOW'], df['CLOSE'], df['VOL'])
+    df['AD_MOMENTUM'] = df['AD_LINE'].pct_change(5)
+    
     # =================
     # VOLATILITY MEASURES
     # =================
@@ -545,6 +636,12 @@ def calculate_comprehensive_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['VOL_PRICE_MOMENTUM'] = df['VOLUME_RATIO'] * df['PRICE_CHANGE_ABS']
     df['OBV_MACD_INTERACT'] = df['OBV_MOMENTUM'] * df['MACD_MOMENTUM']
     
+    # VRI and CMF derived features
+    df['VRI_CMF_INTERACT'] = df['VRI_20'] * df['CMF_20']
+    df['VRI_PRICE_MOMENTUM'] = df['VRI_20'] * df['PRICE_CHANGE_ABS']
+    df['CMF_TREND_STRENGTH'] = df['CMF_20'] * df['MACD_MOMENTUM']
+    df['AD_CMF_DIVERGENCE'] = df['AD_MOMENTUM'] - df['CMF_20']
+    
     # Stochastic difference
     df['STOCH_DIFF'] = df['STOCH_K'] - df['STOCH_D']
     
@@ -600,3 +697,18 @@ def risk_reward_ratio(current_price: float, recent_high: float, recent_low: floa
 def support_resistance_levels(high: pd.Series, low: pd.Series, current_price: float, period: int = 20) -> Dict[str, any]:
     """Support/Resistance Levels - convenience function"""
     return TechnicalIndicators.support_resistance_levels(high, low, current_price, period)
+
+
+def volume_ratio_indicator(volume: pd.Series, window: int = 20) -> pd.Series:
+    """Volume Ratio Indicator - convenience function"""
+    return TechnicalIndicators.volume_ratio_indicator(volume, window)
+
+
+def chaikin_money_flow(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, period: int = 20) -> pd.Series:
+    """Chaikin Money Flow - convenience function"""
+    return TechnicalIndicators.chaikin_money_flow(high, low, close, volume, period)
+
+
+def accumulation_distribution(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
+    """Accumulation/Distribution Line - convenience function"""
+    return TechnicalIndicators.accumulation_distribution(high, low, close, volume)

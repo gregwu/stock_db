@@ -54,7 +54,7 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 sys.path.append('..')
-from util import calculate_all_technical_indicators
+from technical_indicators import calculate_comprehensive_indicators
 from technical_indicators import TechnicalIndicators
 from config import features
 
@@ -1470,7 +1470,7 @@ def create_derived_features(df):
 def load_stock_data(ticker, keep_uppercase=False):
     """Load and process stock data."""
     try:
-        data = yf.download(ticker, period='max')
+        data = yf.download(ticker, period='1y')
         if data.empty:
             return None, "No data found for ticker"
         
@@ -1481,7 +1481,7 @@ def load_stock_data(ticker, keep_uppercase=False):
         data.columns = [col.upper() for col in data.columns]
         data = data.rename(columns={'VOLUME': 'VOL'})
         
-        df = calculate_all_technical_indicators(data)
+        df = calculate_comprehensive_indicators(data)
         
         # Only convert to lowercase if not keeping uppercase (for training compatibility)
         if not keep_uppercase:
@@ -2737,14 +2737,186 @@ def main():
                             st.metric("20-Day Volatility", f"{volatility_20d:.2f}%")
                             st.metric("60-Day Volatility", f"{volatility_60d:.2f}%")
                             
-                            if volatility_20d > volatility_60d:
-                                vol_status = "🔴 Increasing"
-                            else:
-                                vol_status = "🟢 Decreasing"
+                    # Add new volume and money flow indicators
+                    st.subheader("📈 Volume & Money Flow Indicators")
+                    col_new1, col_new2, col_new3 = st.columns(3)
+                    
+                    with col_new1:
+                        # Volume Ratio Indicator (VRI)
+                        if 'vol' in df.columns:
+                            # Calculate VRI 20 and VRI 10
+                            vri_20 = TechnicalIndicators.volume_ratio_indicator(df['vol'], 20)
+                            vri_10 = TechnicalIndicators.volume_ratio_indicator(df['vol'], 10)
                             
-                            st.metric("Volatility Trend", vol_status)
-                    else:
-                        # Show price change and volatility analysis without volume
+                            current_vri_20 = vri_20.iloc[-1] if not vri_20.empty else 0
+                            current_vri_10 = vri_10.iloc[-1] if not vri_10.empty else 0
+                            # Handle NaN values
+                            if pd.isna(current_vri_20):
+                                current_vri_20 = 0
+                            if pd.isna(current_vri_10):
+                                current_vri_10 = 0
+                            
+                            # VRI 20 analysis
+                            if current_vri_20 > 1.5:
+                                vri_20_class = "success"
+                                vri_20_color = "green"
+                                vri_20_status = "High Volume"
+                            elif current_vri_20 < 0.5:
+                                vri_20_class = "danger"
+                                vri_20_color = "red"
+                                vri_20_status = "Low Volume"
+                            else:
+                                vri_20_class = "warning"
+                                vri_20_color = "orange"
+                                vri_20_status = "Normal Volume"
+                            
+                            # VRI 10 analysis
+                            if current_vri_10 > 1.5:
+                                vri_10_class = "success"
+                                vri_10_color = "green"
+                                vri_10_status = "High Volume"
+                            elif current_vri_10 < 0.5:
+                                vri_10_class = "danger"
+                                vri_10_color = "red"
+                                vri_10_status = "Low Volume"
+                            else:
+                                vri_10_class = "warning"
+                                vri_10_color = "orange"
+                                vri_10_status = "Normal Volume"
+                            
+                            st.markdown(f'''
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-chart-bar"></i> Volume Ratio Indicator (VRI)
+                                </div>
+                                <div class="criteria-item {vri_20_class}">
+                                    <strong><i class="fas fa-percentage"></i> VRI 20:</strong>
+                                    <span style='color: {vri_20_color}; font-weight: 600;'>{current_vri_20:.2f} ({vri_20_status})</span>
+                                </div>
+                                <div class="criteria-item {vri_10_class}">
+                                    <strong><i class="fas fa-percentage"></i> VRI 10:</strong>
+                                    <span style='color: {vri_10_color}; font-weight: 600;'>{current_vri_10:.2f} ({vri_10_status})</span>
+                                </div>
+                                <div class="criteria-item">
+                                    <strong><i class="fas fa-info-circle"></i> Interpretation:</strong>
+                                    <span style='color: #666; font-weight: 600;'>VRI > 1.5 = High volume activity</span>
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
+                        else:
+                            st.info("Volume data not available for VRI calculation")
+                    
+                    with col_new2:
+                        # Chaikin Money Flow (CMF)
+                        if all(col in df.columns for col in ['high', 'low', 'close', 'vol']):
+                            # Calculate CMF 20 and CMF 10
+                            cmf_20 = TechnicalIndicators.chaikin_money_flow(df['high'], df['low'], df['close'], df['vol'], 20)
+                            cmf_10 = TechnicalIndicators.chaikin_money_flow(df['high'], df['low'], df['close'], df['vol'], 10)
+                            
+                            current_cmf_20 = cmf_20.iloc[-1] if not cmf_20.empty else 0
+                            current_cmf_10 = cmf_10.iloc[-1] if not cmf_10.empty else 0
+                            # Handle NaN values
+                            if pd.isna(current_cmf_20):
+                                current_cmf_20 = 0
+                            if pd.isna(current_cmf_10):
+                                current_cmf_10 = 0
+                            
+                            # CMF 20 analysis
+                            if current_cmf_20 > 0.1:
+                                cmf_20_class = "success"
+                                cmf_20_color = "green"
+                                cmf_20_status = "Buying Pressure"
+                            elif current_cmf_20 < -0.1:
+                                cmf_20_class = "danger"
+                                cmf_20_color = "red"
+                                cmf_20_status = "Selling Pressure"
+                            else:
+                                cmf_20_class = "warning"
+                                cmf_20_color = "orange"
+                                cmf_20_status = "Neutral"
+                            
+                            # CMF 10 analysis
+                            if current_cmf_10 > 0.1:
+                                cmf_10_class = "success"
+                                cmf_10_color = "green"
+                                cmf_10_status = "Buying Pressure"
+                            elif current_cmf_10 < -0.1:
+                                cmf_10_class = "danger"
+                                cmf_10_color = "red"
+                                cmf_10_status = "Selling Pressure"
+                            else:
+                                cmf_10_class = "warning"
+                                cmf_10_color = "orange"
+                                cmf_10_status = "Neutral"
+                            
+                            st.markdown(f'''
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-money-bill-wave"></i> Chaikin Money Flow (CMF)
+                                </div>
+                                <div class="criteria-item {cmf_20_class}">
+                                    <strong><i class="fas fa-percentage"></i> CMF 20:</strong>
+                                    <span style='color: {cmf_20_color}; font-weight: 600;'>{current_cmf_20:.3f} ({cmf_20_status})</span>
+                                </div>
+                                <div class="criteria-item {cmf_10_class}">
+                                    <strong><i class="fas fa-percentage"></i> CMF 10:</strong>
+                                    <span style='color: {cmf_10_color}; font-weight: 600;'>{current_cmf_10:.3f} ({cmf_10_status})</span>
+                                </div>
+                                <div class="criteria-item">
+                                    <strong><i class="fas fa-info-circle"></i> Interpretation:</strong>
+                                    <span style='color: #666; font-weight: 600;'>CMF > 0.1 = Strong buying pressure</span>
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
+                    
+                    with col_new3:
+                        # Accumulation/Distribution Momentum
+                        # Use pre-calculated A/D momentum from the DataFrame (consistent with scanner.py)
+                        if 'ad_momentum' in df.columns:
+                            # Use pre-calculated A/D momentum from the DataFrame
+                            current_ad_momentum = df['ad_momentum'].iloc[-1] if not pd.isna(df['ad_momentum'].iloc[-1]) else 0
+                            current_ad_line = df['ad_line'].iloc[-1] if 'ad_line' in df.columns and not pd.isna(df['ad_line'].iloc[-1]) else 0
+                        else:
+                            # Fallback: calculate if not pre-calculated
+                            current_ad_momentum = 0
+                            current_ad_line = 0
+                        
+                        # A/D Momentum analysis
+                        if current_ad_momentum > 0.01:  # > 1%
+                            ad_class = "success"
+                            ad_color = "green"
+                            ad_status = "Accumulation"
+                        elif current_ad_momentum < -0.01:  # < -1%
+                            ad_class = "danger"
+                            ad_color = "red"
+                            ad_status = "Distribution"
+                        else:
+                            ad_class = "warning"
+                            ad_color = "orange"
+                            ad_status = "Neutral"
+                        
+                        st.markdown(f'''
+                            <div class="criteria-card">
+                                <div class="criteria-header">
+                                    <i class="fas fa-chart-line"></i> A/D Momentum
+                                </div>
+                                <div class="criteria-item {ad_class}">
+                                    <strong><i class="fas fa-percentage"></i> A/D Momentum:</strong>
+                                    <span style='color: {ad_color}; font-weight: 600;'>{current_ad_momentum:.1%} ({ad_status})</span>
+                                </div>
+                                <div class="criteria-item">
+                                    <strong><i class="fas fa-info-circle"></i> Interpretation:</strong>
+                                    <span style='color: #666; font-weight: 600;'>Positive = Institutional buying</span>
+                                </div>
+                                <div class="criteria-item">
+                                    <strong><i class="fas fa-chart-area"></i> A/D Line:</strong>
+                                    <span style='color: #666; font-weight: 600;'>{current_ad_line:,.0f}</span>
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
+                    
+                    # Add fallback section for when volume data is not available
+                    if 'volume' not in df.columns:
                         st.markdown('<div class="section-header"><i class="fas fa-chart-area"></i> Price & Volatility Analysis</div>', unsafe_allow_html=True)
                         col_price, col_vol = st.columns(2)
                         
@@ -3778,6 +3950,192 @@ def main():
         with tab1:
             st.markdown('<div class="section-header"><i class="fas fa-chart-line"></i> Technical Analysis</div>', unsafe_allow_html=True)
             st.info("👆 Click 'Run Prediction' in the sidebar to see technical analysis chart.")
+            
+            # Show new indicators even when no analysis has been run (if we have basic data)
+            # Get ticker from session state or query params
+            current_ticker = st.query_params.get("ticker", "").upper()
+            if current_ticker:
+                try:
+                    # Get basic stock data for the new indicators
+                    import yfinance as yf
+                    stock_data = yf.download(current_ticker, period="6mo", progress=False, auto_adjust=True)
+                    
+                    if not stock_data.empty and len(stock_data) > 20:
+                        st.markdown('<div class="section-header"><i class="fas fa-chart-bar"></i> Volume & Money Flow Indicators</div>', unsafe_allow_html=True)
+                        
+                        # Prepare data
+                        df_basic = stock_data.copy()
+                        # Handle multi-level columns from yfinance
+                        if isinstance(df_basic.columns, pd.MultiIndex):
+                            df_basic.columns = [col[0].lower() for col in df_basic.columns]
+                        else:
+                            df_basic.columns = [col.lower() for col in df_basic.columns]
+                        
+                        col_new1, col_new2, col_new3 = st.columns(3)
+                        
+                        with col_new1:
+                            # Volume Ratio Indicator (VRI)
+                            if 'volume' in df_basic.columns:
+                                vri_20 = TechnicalIndicators.volume_ratio_indicator(df_basic['volume'], 20)
+                                vri_10 = TechnicalIndicators.volume_ratio_indicator(df_basic['volume'], 10)
+                                
+                                current_vri_20 = vri_20.iloc[-1] if not vri_20.empty else 0
+                                current_vri_10 = vri_10.iloc[-1] if not vri_10.empty else 0
+                                
+                                # VRI 20 analysis
+                                if current_vri_20 > 1.5:
+                                    vri_20_class = "success"
+                                    vri_20_color = "green"
+                                    vri_20_status = "High Volume"
+                                elif current_vri_20 < 0.5:
+                                    vri_20_class = "danger"
+                                    vri_20_color = "red"
+                                    vri_20_status = "Low Volume"
+                                else:
+                                    vri_20_class = "warning"
+                                    vri_20_color = "orange"
+                                    vri_20_status = "Normal Volume"
+                                
+                                # VRI 10 analysis
+                                if current_vri_10 > 1.5:
+                                    vri_10_class = "success"
+                                    vri_10_color = "green"
+                                    vri_10_status = "High Volume"
+                                elif current_vri_10 < 0.5:
+                                    vri_10_class = "danger"
+                                    vri_10_color = "red"
+                                    vri_10_status = "Low Volume"
+                                else:
+                                    vri_10_class = "warning"
+                                    vri_10_color = "orange"
+                                    vri_10_status = "Normal Volume"
+                                
+                                st.markdown(f'''
+                                <div class="criteria-card">
+                                    <div class="criteria-header">
+                                        <i class="fas fa-chart-bar"></i> Volume Ratio Indicator (VRI)
+                                    </div>
+                                    <div class="criteria-item {vri_20_class}">
+                                        <strong><i class="fas fa-percentage"></i> VRI 20:</strong>
+                                        <span style='color: {vri_20_color}; font-weight: 600;'>{current_vri_20:.2f} ({vri_20_status})</span>
+                                    </div>
+                                    <div class="criteria-item {vri_10_class}">
+                                        <strong><i class="fas fa-percentage"></i> VRI 10:</strong>
+                                        <span style='color: {vri_10_color}; font-weight: 600;'>{current_vri_10:.2f} ({vri_10_status})</span>
+                                    </div>
+                                    <div class="criteria-item">
+                                        <strong><i class="fas fa-info-circle"></i> Interpretation:</strong>
+                                        <span style='color: #666; font-weight: 600;'>VRI > 1.5 = High volume activity</span>
+                                    </div>
+                                </div>
+                                ''', unsafe_allow_html=True)
+                        
+                        with col_new2:
+                            # Chaikin Money Flow (CMF)
+                            if all(col in df_basic.columns for col in ['high', 'low', 'close', 'volume']):
+                                cmf_20 = TechnicalIndicators.chaikin_money_flow(df_basic['high'], df_basic['low'], df_basic['close'], df_basic['volume'], 20)
+                                cmf_10 = TechnicalIndicators.chaikin_money_flow(df_basic['high'], df_basic['low'], df_basic['close'], df_basic['volume'], 10)
+                                
+                                current_cmf_20 = cmf_20.iloc[-1] if not cmf_20.empty else 0
+                                current_cmf_10 = cmf_10.iloc[-1] if not cmf_10.empty else 0
+                                
+                                # CMF 20 analysis
+                                if current_cmf_20 > 0.1:
+                                    cmf_20_class = "success"
+                                    cmf_20_color = "green"
+                                    cmf_20_status = "Buying Pressure"
+                                elif current_cmf_20 < -0.1:
+                                    cmf_20_class = "danger"
+                                    cmf_20_color = "red"
+                                    cmf_20_status = "Selling Pressure"
+                                else:
+                                    cmf_20_class = "warning"
+                                    cmf_20_color = "orange"
+                                    cmf_20_status = "Neutral"
+                                
+                                # CMF 10 analysis
+                                if current_cmf_10 > 0.1:
+                                    cmf_10_class = "success"
+                                    cmf_10_color = "green"
+                                    cmf_10_status = "Buying Pressure"
+                                elif current_cmf_10 < -0.1:
+                                    cmf_10_class = "danger"
+                                    cmf_10_color = "red"
+                                    cmf_10_status = "Selling Pressure"
+                                else:
+                                    cmf_10_class = "warning"
+                                    cmf_10_color = "orange"
+                                    cmf_10_status = "Neutral"
+                                
+                                st.markdown(f'''
+                                <div class="criteria-card">
+                                    <div class="criteria-header">
+                                        <i class="fas fa-money-bill-wave"></i> Chaikin Money Flow (CMF)
+                                    </div>
+                                    <div class="criteria-item {cmf_20_class}">
+                                        <strong><i class="fas fa-percentage"></i> CMF 20:</strong>
+                                        <span style='color: {cmf_20_color}; font-weight: 600;'>{current_cmf_20:.3f} ({cmf_20_status})</span>
+                                    </div>
+                                    <div class="criteria-item {cmf_10_class}">
+                                        <strong><i class="fas fa-percentage"></i> CMF 10:</strong>
+                                        <span style='color: {cmf_10_color}; font-weight: 600;'>{current_cmf_10:.3f} ({cmf_10_status})</span>
+                                    </div>
+                                    <div class="criteria-item">
+                                        <strong><i class="fas fa-info-circle"></i> Interpretation:</strong>
+                                        <span style='color: #666; font-weight: 600;'>CMF > 0.1 = Strong buying pressure</span>
+                                    </div>
+                                </div>
+                                ''', unsafe_allow_html=True)
+                        
+                        with col_new3:
+                            # Accumulation/Distribution Momentum
+                            if all(col in df_basic.columns for col in ['high', 'low', 'close', 'volume']):
+                                ad_line = TechnicalIndicators.accumulation_distribution(df_basic['high'], df_basic['low'], df_basic['close'], df_basic['volume'])
+                                ad_momentum = ad_line.pct_change(5)  # 5-period momentum
+                                
+                                current_ad_momentum = ad_momentum.iloc[-1] if not ad_momentum.empty else 0
+                                
+                                # A/D Momentum analysis
+                                if current_ad_momentum > 0.01:  # > 1%
+                                    ad_class = "success"
+                                    ad_color = "green"
+                                    ad_status = "Accumulation"
+                                elif current_ad_momentum < -0.01:  # < -1%
+                                    ad_class = "danger"
+                                    ad_color = "red"
+                                    ad_status = "Distribution"
+                                else:
+                                    ad_class = "warning"
+                                    ad_color = "orange"
+                                    ad_status = "Neutral"
+                                
+                                st.markdown(f'''
+                                <div class="criteria-card">
+                                    <div class="criteria-header">
+                                        <i class="fas fa-chart-line"></i> A/D Momentum
+                                    </div>
+                                    <div class="criteria-item {ad_class}">
+                                        <strong><i class="fas fa-percentage"></i> A/D Momentum:</strong>
+                                        <span style='color: {ad_color}; font-weight: 600;'>{current_ad_momentum:.1%} ({ad_status})</span>
+                                    </div>
+                                    <div class="criteria-item">
+                                        <strong><i class="fas fa-info-circle"></i> Interpretation:</strong>
+                                        <span style='color: #666; font-weight: 600;'>Positive = Institutional buying</span>
+                                    </div>
+                                    <div class="criteria-item">
+                                        <strong><i class="fas fa-chart-area"></i> A/D Line:</strong>
+                                        <span style='color: #666; font-weight: 600;'>{ad_line.iloc[-1]:,.0f}</span>
+                                    </div>
+                                </div>
+                                ''', unsafe_allow_html=True)
+                        
+                        st.info("💡 **Quick Preview**: These indicators are calculated from recent market data. Run full analysis for comprehensive technical analysis with charts and predictions.")
+                        
+                except Exception as e:
+                    st.warning(f"⚠️ Could not load basic indicators: {str(e)}")
+                    st.info("👆 Run full analysis to see all technical indicators and charts.")
+            else:
+                st.info("👆 Enter a ticker in the sidebar to see basic indicators.")
         
         with tab2:
             st.markdown('<div class="section-header"><i class="fas fa-crystal-ball"></i> AI Stock Prediction</div>', unsafe_allow_html=True)
