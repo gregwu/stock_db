@@ -1,0 +1,81 @@
+//@version=6
+indicator("RSI + MACD Next-30m Trend Bias (v6)", shorttitle="RSI•MACD 30m Bias v6", overlay=false)
+
+// ── Helpers ──
+f_clamp(x, lo, hi) =>
+    x < lo ? lo : x > hi ? hi : x
+
+// ── Inputs ──
+horizonMin   = input.int(30,  "Forecast Horizon (minutes)", minval=1)
+rsiLen       = input.int(14,  "RSI Length", minval=2)
+macdFast     = input.int(12,  "MACD Fast", minval=1)
+macdSlow     = input.int(26,  "MACD Slow", minval=2)
+macdSignal   = input.int(9,   "MACD Signal", minval=1)
+normLookback = input.int(200, "Normalization Lookback (MACD z-score)", minval=50)
+rsiWeight    = input.float(0.5, "RSI Weight (0–1)", minval=0, maxval=1, step=0.05)
+threshold    = input.float(0.25,"Bias Threshold (0–1)",   minval=0.05, maxval=0.9, step=0.05)
+projLenMult  = input.float(3.0, "Projection Slope Lookback = barsAhead ×", minval=1, step=0.5)
+slopeMethod  = input.string("LinReg", "Slope Method", options=["LinReg", "Delta/Length"])
+showLabels   = input.bool(true,  "Show Bias Label")
+showProj     = input.bool(true,  "Show Price Projection (offset into future)")
+
+// ── Horizon → barsAhead (auto; uses actual seconds per bar) ──
+secPerBar = timeframe.in_seconds(timeframe.period)
+barsAhead = math.max(1, int(math.round(horizonMin * 60.0 / math.max(1, secPerBar))))
+
+// ── RSI scaled to −1..+1 ──
+rsiVal   = ta.rsi(close, rsiLen)
+rsiScore = (rsiVal - 50.0) / 50.0
+
+// ── MACD histogram z-score mapped to −1..+1 ──
+macdLine    = ta.ema(close, macdFast) - ta.ema(close, macdSlow)
+macdSignalL = ta.ema(macdLine, macdSignal)
+macdHist    = macdLine - macdSignalL
+histMean    = ta.sma(macdHist, normLookback)
+histStdev   = ta.stdev(macdHist, normLookback)
+z           = histStdev == 0.0 ? 0.0 : (macdHist - histMean) / histStdev
+macdScore   = f_clamp(z, -3.0, 3.0) / 3.0
+
+// ── Combined bias score ──
+score  = f_clamp(rsiWeight * rsiScore + (1.0 - rsiWeight) * macdScore, -1.0, 1.0)
+isBull = score >  threshold
+isBear = score < -threshold
+
+// ── Score plot & zones ──
+plot(score, title="Bias Score (−1..+1)", linewidth=2,
+     color=isBull ? color.new(color.lime, 0) : isBear ? color.new(color.red, 0) : color.new(color.orange, 0))
+hUp   = hline(+threshold, "Bull Threshold", color=color.new(color.lime, 50))
+hDn   = hline(-threshold, "Bear Threshold", color=color.new(color.red, 50))
+hZero = hline(0, "Zero", color=color.new(color.gray, 70))
+fill(hUp, hZero, color=color.new(color.lime, 90))
+fill(hDn, hZero, color=color.new(color.red, 90))
+plotshape(isBull, title="Bull Signal", style=shape.triangleup,   location=location.bottom, color=color.new(color.lime, 0), size=size.tiny, text="B")
+plotshape(isBear, title="Bear Signal", style=shape.triangledown, location=location.top,    color=color.new(color.red, 0),  size=size.tiny, text="S")
+
+// ── Projection series (global plot; gated by na) ──
+projLen     = math.max(5, int(math.round(projLenMult * barsAhead)))
+lrNow       = ta.linreg(close, projLen, 0)
+lrPrev      = ta.linreg(close, projLen, 1)
+slopeLinReg = lrNow - lrPrev
+slopeDelta  = na(close[projLen]) ? 0.0 : (close - close[projLen]) / projLen
+pxSlope     = slopeMethod == "LinReg" ? slopeLinReg : slopeDelta
+projPx      = showProj ? close + pxSlope * barsAhead : na
+plot(projPx, offset=barsAhead, title="Projected Price (slope-based)",
+     style=plot.style_cross, linewidth=2,
+     color=color.new(isBull ? color.lime : isBear ? color.red : color.orange, 0))
+
+// ── Status label (table) ──
+var table t = na
+if showLabels
+    if barstate.isfirst
+        t := table.new(position.top_right, 1, 1, border_width=1)
+    biasTxt = isBull ? "Bullish" : isBear ? "Bearish" : "Neutral"
+    conf    = str.tostring(math.round(math.abs(score) * 100.0)) + "%"
+    col     = isBull ? color.new(color.lime, 0) : isBear ? color.new(color.red, 0) : color.new(color.orange, 0)
+    txt     = "Next ~" + str.tostring(horizonMin) + "m Bias: " + biasTxt + " (" + conf + ")"
+    table.cell(t, 0, 0, txt, text_color=color.black, bgcolor=col)
+
+// ── Alerts (const messages) ──
+alertcondition(isBull, title="Bullish Bias", message="RSI+MACD bias → Bullish")
+alertcondition(isBear, title="Bearish Bias", message="RSI+MACD bias → Bearish")
+
