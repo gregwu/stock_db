@@ -573,19 +573,19 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         yaxis=dict(
             title='Price ($)',
             side='left',
-            domain=[0.7, 1.0] if volume_col else ([0.6, 1.0] if show_macd else [0.65, 1.0])
+            domain=[0.6, 1.0] if volume_col else ([0.4, 1.0] if show_macd else [0.5, 1.0])
         ),
         yaxis2=dict(
             title='Volume',
             side='left',
             showgrid=False,
-            domain=[0.58, 0.68] if show_macd else [0.53, 0.63]
+            domain=[0.48, 0.58] if show_macd else [0.43, 0.53]
         ) if volume_col else None,
         yaxis3=dict(
             title='Price/MA (%)',
             side='left',
             showgrid=True,
-            domain=[0.45, 0.55] if show_macd else ([0.38, 0.50] if volume_col else [0.38, 0.50]),
+            domain=[0.35, 0.45] if show_macd else ([0.30, 0.40] if volume_col else [0.30, 0.40]),
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
@@ -594,7 +594,7 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
             title='MACD',
             side='left',
             showgrid=True,
-            domain=[0.30, 0.42],
+            domain=[0.25, 0.35],
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
@@ -603,7 +603,7 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
             title='RSI',
             side='left',
             showgrid=True,
-            domain=[0.15, 0.27] if show_macd else ([0.20, 0.35] if volume_col else [0.20, 0.35]),
+            domain=[0.15, 0.25] if show_macd else ([0.15, 0.30] if volume_col else [0.15, 0.30]),
             range=[0, 100],
             tickvals=[0, 30, 50, 70, 100],
             zeroline=False
@@ -612,7 +612,7 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
             title='Seasonal (%)',
             side='left',
             showgrid=True,
-            domain=[0.0, 0.12] if show_macd else ([0.0, 0.17] if volume_col else [0.0, 0.17]),
+            domain=[0.0, 0.15] if show_macd else ([0.0, 0.15] if volume_col else [0.0, 0.15]),
             zeroline=True,
             zerolinecolor='gray',
             zerolinewidth=1
@@ -910,9 +910,8 @@ def create_seasonal_plotly_chart(close, volume, stl_result, symbol, years,
     fig = make_subplots(
         rows=5, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.05,
+        vertical_spacing=0,
         subplot_titles=['Price & Bollinger Bands', 'Volume', 'Seasonal Component', 'MACD', 'RSI'],
-        row_heights=[0.4, 0.15, 0.15, 0.15, 0.15],
         specs=[[{"secondary_y": False}],
                [{"secondary_y": False}],
                [{"secondary_y": False}],
