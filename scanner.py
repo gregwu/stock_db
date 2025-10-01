@@ -28,6 +28,7 @@ Usage:
     python scanner.py --min-vri-20 1.2 --max-vri-20 3.0  # VRI_20 between 1.2-3.0
     python scanner.py --min-cmf-20 -0.1 --max-cmf-20 0.3 # CMF_20 between -0.1 to +0.3
     python scanner.py --min-ad-momentum -5 --max-ad-momentum 10  # A/D momentum between -5% to +10%
+    python scanner.py --min-rsi 30 --max-rsi 70          # RSI between 30-70 (neutral zone)
     
     # ML model examples:
     python scanner.py --use-ml                           # Use ML predictions
@@ -1224,6 +1225,13 @@ class StockScanner:
             if filters.get('min_ad_momentum') is not None and ad_momentum < filters['min_ad_momentum']:
                 continue
             if filters.get('max_ad_momentum') is not None and ad_momentum > filters['max_ad_momentum']:
+                continue
+            
+            # Apply RSI filter
+            rsi_value = tech_scores.get('rsi_value', 0)
+            if filters.get('min_rsi') is not None and rsi_value < filters['min_rsi']:
+                continue
+            if filters.get('max_rsi') is not None and rsi_value > filters['max_rsi']:
                 continue
             
             filtered_predictions.append(pred)
@@ -2434,6 +2442,12 @@ def main():
     parser.add_argument("--max-ad-momentum", type=float,
                        help="Maximum A/D Line momentum filter (percentage change over 5 periods)")
     
+    # RSI filters
+    parser.add_argument("--min-rsi", type=float,
+                       help="Minimum RSI filter (range: 0-100, typical: 30-70)")
+    parser.add_argument("--max-rsi", type=float,
+                       help="Maximum RSI filter (range: 0-100, typical: 30-70)")
+    
     args = parser.parse_args()
     
     # Setup logging level
@@ -2498,6 +2512,12 @@ def main():
             filters['min_ad_momentum'] = args.min_ad_momentum
         if args.max_ad_momentum is not None:
             filters['max_ad_momentum'] = args.max_ad_momentum
+        
+        # RSI filters
+        if args.min_rsi is not None:
+            filters['min_rsi'] = args.min_rsi
+        if args.max_rsi is not None:
+            filters['max_rsi'] = args.max_rsi
         
         if filters:
             logger.info(f"Applied filters: {filters}")
