@@ -60,7 +60,7 @@ def main():
         # Remove .US for display
         all_tickers = [t[:-3] if t.endswith('.US') else t for t in all_tickers_db]
         default_ticker = 'OPEN'
-        default_start = datetime(2025, 5, 1).date()
+        default_start = datetime(2025, 5, 9).date()
         default_end = datetime(2025, 7, 8).date()
         ref_ticker = st.selectbox("Select reference ticker", all_tickers, index=all_tickers.index(default_ticker) if default_ticker in all_tickers else 0)
         ref_start = st.date_input("Reference start date", default_start)
