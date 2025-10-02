@@ -59,9 +59,9 @@ def main():
         all_tickers_db = pd.read_sql("SELECT DISTINCT ticker FROM stock_data ORDER BY ticker", engine)['ticker'].tolist()
         # Remove .US for display
         all_tickers = [t[:-3] if t.endswith('.US') else t for t in all_tickers_db]
-        default_ticker = 'DEVS'
-        default_start = datetime(2025, 2, 1).date()
-        default_end = datetime(2025, 5, 7).date()
+        default_ticker = 'OPEN'
+        default_start = datetime(2025, 5, 12).date()
+        default_end = datetime(2025, 7, 16).date()
         ref_ticker = st.selectbox("Select reference ticker", all_tickers, index=all_tickers.index(default_ticker) if default_ticker in all_tickers else 0)
         ref_start = st.date_input("Reference start date", default_start)
         ref_end = st.date_input("Reference end date", default_end)
@@ -190,13 +190,27 @@ def main():
     tickers_db = st.session_state.get('tickers_db', None)
     if results_df is not None and tickers_db is not None and not results_df.empty:
         st.write("**Matches sorted by similarity (click on a row to view chart):**")
+        
+        # Create a copy of results_df with clickable ticker links
+        display_df = results_df.copy()
+        display_df['ticker_link'] = display_df['ticker'].apply(
+            lambda x: f"/ypredict/?ticker={x}"
+        )
+        
         event = st.dataframe(
-            results_df,
+            display_df,
             hide_index=True,
             use_container_width=True,
             on_select="rerun",
             selection_mode="single-row",
-            key="result_table"
+            key="result_table",
+            column_config={
+                "ticker_link": st.column_config.LinkColumn(
+                    "Ticker",
+                    help="Click to open in ypredict",
+                    display_text="ticker"
+                )
+            }
         )
         selected_row = None
         if hasattr(event, 'selection') and hasattr(event.selection, 'rows') and event.selection.rows:
