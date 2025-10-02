@@ -11,6 +11,9 @@ from scipy.spatial.distance import cosine
 # Load environment variables from .env file
 load_dotenv()
 
+# Get Streamlit URL from environment variable
+STREAMLIT_URL = os.getenv('STREAMLIT_URL', 'http://localhost:8501')
+
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'port': int(os.getenv('DB_PORT', 5433)),
@@ -56,27 +59,24 @@ def main():
     # 1. Select reference ticker and date range (SIDEBAR)
     with st.sidebar:
         st.header("Reference Pattern Selection")
-        all_tickers_db = pd.read_sql("SELECT DISTINCT ticker FROM stock_data ORDER BY ticker", engine)['ticker'].tolist()
-        # Remove .US for display
-        all_tickers = [t[:-3] if t.endswith('.US') else t for t in all_tickers_db]
         default_ticker = 'OPEN'
         default_start = datetime(2025, 5, 9).date()
         default_end = datetime(2025, 7, 8).date()
-        ref_ticker = st.selectbox("Select reference ticker", all_tickers, index=all_tickers.index(default_ticker) if default_ticker in all_tickers else 0)
+        ref_ticker = st.text_input("Enter reference ticker", value=default_ticker)
         ref_start = st.date_input("Reference start date", default_start)
         ref_end = st.date_input("Reference end date", default_end)
         scan_button = st.button("Start Scan")
 
+    # Only run processing when button is clicked
+    if scan_button:
+        # File to store scan results, include meta info
+        import pickle
+        def get_result_file(ticker, start, end):
+            return f"similarity_{ticker}_{start}_{end}.pkl"
 
-    # File to store scan results, include meta info
-    import pickle
-    def get_result_file(ticker, start, end):
-        return f"similarity_{ticker}_{start}_{end}.pkl"
+        result_file = get_result_file(ref_ticker, ref_start, ref_end)
 
-    result_file = get_result_file(ref_ticker, ref_start, ref_end)
-
-    # Load from file if exists and parameters match
-    if not scan_button:
+        # Load from file if exists and parameters match
         try:
             with open(result_file, "rb") as f:
                 data = pickle.load(f)
@@ -85,46 +85,53 @@ def main():
         except Exception:
             st.session_state['results_df'] = None
             st.session_state['tickers_db'] = None
-    if ref_start > ref_end:
-        st.error("Start date must be before end date.")
-        return
-    # Add .US back for DB query
-    ref_ticker_db = ref_ticker + '.US' if (ref_ticker + '.US') in all_tickers_db else ref_ticker
-    ref_df = fetch_ticker_data(engine, ref_ticker_db, ref_start, ref_end)
-    st.write(f"Reference pattern: {ref_ticker} ({ref_start} to {ref_end})")
-    # Reference chart: candlestick + BB + volume (no duplicate subplot)
-    close = ref_df['close']
-    sma = close.rolling(window=20, min_periods=1).mean()
-    std = close.rolling(window=20, min_periods=1).std()
-    upper_bb = sma + 2 * std
-    lower_bb = sma - 2 * std
-    import plotly.graph_objs as go
-    from plotly.subplots import make_subplots
-    ref_fig = make_subplots(specs=[[{"secondary_y": True}]])
-    ref_fig.add_trace(go.Candlestick(
-        x=ref_df.index,
-        open=ref_df['open'], high=ref_df['high'], low=ref_df['low'], close=ref_df['close'],
-        name='Candlestick',
-        increasing_line_color='green', decreasing_line_color='red',
-        showlegend=False
-    ), secondary_y=False)
-    ref_fig.add_trace(go.Scatter(x=ref_df.index, y=upper_bb, mode='lines', name='BB Upper', line=dict(color='rgba(200,0,0,0.4)', dash='dot')),
-                      secondary_y=False)
-    ref_fig.add_trace(go.Scatter(x=ref_df.index, y=lower_bb, mode='lines', name='BB Lower', line=dict(color='rgba(0,0,200,0.4)', dash='dot')),
-                      secondary_y=False)
-    ref_fig.add_trace(go.Scatter(x=ref_df.index, y=sma, mode='lines', name='SMA20', line=dict(color='gray', dash='dash')),
-                      secondary_y=False)
-    if 'volume' in ref_df.columns:
-        ref_fig.add_trace(go.Bar(x=ref_df.index, y=ref_df['volume'], name='Volume', marker_color='rgba(100,100,100,0.3)'), secondary_y=True)
-    ref_fig.update_layout(
-        yaxis=dict(title='Price'),
-        yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-        bargap=0,
-        xaxis_rangeslider_visible=False,
-        xaxis=dict(rangebreaks=[dict(bounds=["sat", "mon"])])
-    )
-    st.plotly_chart(ref_fig, use_container_width=True)
+
+        # Validate dates
+        if ref_start > ref_end:
+            st.error("Start date must be before end date.")
+            return
+
+        # Get all tickers from database
+        all_tickers_db = pd.read_sql("SELECT DISTINCT ticker FROM stock_data ORDER BY ticker", engine)['ticker'].tolist()
+        # Remove .US for display
+        all_tickers = [t[:-3] if t.endswith('.US') else t for t in all_tickers_db]
+        # Add .US back for DB query
+        ref_ticker_db = ref_ticker + '.US' if (ref_ticker + '.US') in all_tickers_db else ref_ticker
+        ref_df = fetch_ticker_data(engine, ref_ticker_db, ref_start, ref_end)
+        st.write(f"Reference pattern: {ref_ticker} ({ref_start} to {ref_end})")
+        # Reference chart: candlestick + BB + volume (no duplicate subplot)
+        close = ref_df['close']
+        sma = close.rolling(window=20, min_periods=1).mean()
+        std = close.rolling(window=20, min_periods=1).std()
+        upper_bb = sma + 2 * std
+        lower_bb = sma - 2 * std
+        import plotly.graph_objs as go
+        from plotly.subplots import make_subplots
+        ref_fig = make_subplots(specs=[[{"secondary_y": True}]])
+        ref_fig.add_trace(go.Candlestick(
+            x=ref_df.index,
+            open=ref_df['open'], high=ref_df['high'], low=ref_df['low'], close=ref_df['close'],
+            name='Candlestick',
+            increasing_line_color='green', decreasing_line_color='red',
+            showlegend=False
+        ), secondary_y=False)
+        ref_fig.add_trace(go.Scatter(x=ref_df.index, y=upper_bb, mode='lines', name='BB Upper', line=dict(color='rgba(200,0,0,0.4)', dash='dot')),
+                          secondary_y=False)
+        ref_fig.add_trace(go.Scatter(x=ref_df.index, y=lower_bb, mode='lines', name='BB Lower', line=dict(color='rgba(0,0,200,0.4)', dash='dot')),
+                          secondary_y=False)
+        ref_fig.add_trace(go.Scatter(x=ref_df.index, y=sma, mode='lines', name='SMA20', line=dict(color='gray', dash='dash')),
+                          secondary_y=False)
+        if 'volume' in ref_df.columns:
+            ref_fig.add_trace(go.Bar(x=ref_df.index, y=ref_df['volume'], name='Volume', marker_color='rgba(100,100,100,0.3)'), secondary_y=True)
+        ref_fig.update_layout(
+            yaxis=dict(title='Price'),
+            yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            bargap=0,
+            xaxis_rangeslider_visible=False,
+            xaxis=dict(rangebreaks=[dict(bounds=["sat", "mon"])])
+        )
+        st.plotly_chart(ref_fig, use_container_width=True)
 
     # 2. Scan all tickers with latest date = today
     st.header("Cosine Similarity Scan")
@@ -197,7 +204,7 @@ def main():
             
             with col1:
                 # Create a clickable link using markdown
-                link_url = f"/ypredict/?ticker={row['ticker']}"
+                link_url = f"{STREAMLIT_URL}/?ticker={row['ticker']}"
                 st.markdown(f"[ {row['ticker']}]({link_url})")
             
             with col2:
