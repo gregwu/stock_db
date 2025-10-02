@@ -112,6 +112,9 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
     # SMA 144 - calculated on full dataset
     sma_144 = TechnicalIndicators.sma(close, 144)
     
+    # SMA 50 - calculated on full dataset
+    sma_50 = TechnicalIndicators.sma(close, 50)
+    
     # Price Distance to MA (Fast: 20-period)
     pma_fast, pma_fast_signal, pma_fast_cycle = TechnicalIndicators.price_distance_to_ma(
         close, ma_length=20, signal_length=9, exponential=False
@@ -132,6 +135,7 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         'bb_upper': bb_upper,
         'bb_lower': bb_lower,
         'sma_144': sma_144,
+        'sma_50': sma_50,
         'pma_fast': pma_fast,
         'pma_fast_signal': pma_fast_signal,
         'pma_fast_cycle': pma_fast_cycle,
@@ -258,7 +262,19 @@ def create_technical_analysis_chart(df, symbol, seasonal_years=2, chart_type="li
         )
     )
     
-    # 4. Volume chart (using secondary y-axis) - only if volume data exists
+    # 4. SMA 50 trend line
+    fig.add_trace(
+        go.Scatter(
+            x=df_chart.index,
+            y=indicators['sma_50'],
+            mode='lines',
+            name='SMA 50',
+            line=dict(color='blue', width=2),
+            hovertemplate='SMA 50: $%{y:.2f}<extra></extra>'
+        )
+    )
+    
+    # 5. Volume chart (using secondary y-axis) - only if volume data exists
     if volume_col:
         colors = ['red' if close < open else 'green' 
                  for close, open in zip(df_chart['close'], df_chart['open'])]

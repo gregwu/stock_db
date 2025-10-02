@@ -1686,6 +1686,8 @@ class StockScanner:
             const maxCMF10Value = document.getElementById('maxCMF10').value.trim();
             const minADMomentumValue = document.getElementById('minADMomentum').value.trim();
             const maxADMomentumValue = document.getElementById('maxADMomentum').value.trim();
+            const minRSIValue = document.getElementById('minRSI').value.trim();
+            const maxRSIValue = document.getElementById('maxRSI').value.trim();
             const minTotalScoreValue = document.getElementById('minTotalScore').value.trim();
             const minTrendScoreValue = document.getElementById('minTrendScore').value.trim();
             const maxTrendScoreValue = document.getElementById('maxTrendScore').value.trim();
@@ -1835,6 +1837,20 @@ class StockScanner:
                                 const adMomentumValue = adMomentumMatch ? parseFloat(adMomentumMatch[1]) : 0;
                                 if ((minADMomentumValue && adMomentumValue < minADMomentum) || 
                                     (maxADMomentumValue && adMomentumValue > maxADMomentum)) {{
+                                    showRow = false;
+                                }}
+                            }}
+                        }}
+                        
+                        // Apply RSI filter
+                        if ((minRSIValue || maxRSIValue) && showRow) {{
+                            const rsiCell = cells[11]; // RSI is column 11
+                            if (rsiCell) {{
+                                const rsiText = rsiCell.textContent.trim();
+                                const rsiMatch = rsiText.match(/([0-9.-]+)/);
+                                const rsiValue = rsiMatch ? parseFloat(rsiMatch[1]) : 0;
+                                if ((minRSIValue && rsiValue < parseFloat(minRSIValue)) || 
+                                    (maxRSIValue && rsiValue > parseFloat(maxRSIValue))) {{
                                     showRow = false;
                                 }}
                             }}
@@ -2076,6 +2092,14 @@ class StockScanner:
                 <div>
                     <label for="maxADMomentum" style="font-weight: bold; display: block; margin-bottom: 5px;">📈 Max A/D Momentum %:</label>
                     <input type="number" id="maxADMomentum" placeholder="e.g., 10" step="0.1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="minRSI" style="font-weight: bold; display: block; margin-bottom: 5px;">📊 Min RSI:</label>
+                    <input type="number" id="minRSI" placeholder="e.g., 30" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                <div>
+                    <label for="maxRSI" style="font-weight: bold; display: block; margin-bottom: 5px;">📊 Max RSI:</label>
+                    <input type="number" id="maxRSI" placeholder="e.g., 70" min="0" max="100" step="1" onchange="applyAdvancedFilters()" style="width: 100%; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
                 </div>
                 <div>
                     <label for="minTotalScore" style="font-weight: bold; display: block; margin-bottom: 5px;">⭐ Min Total Score:</label>
