@@ -191,68 +191,28 @@ def main():
     if results_df is not None and tickers_db is not None and not results_df.empty:
         st.write("**Matches sorted by similarity (click on a row to view chart):**")
         
-        # Create a copy of results_df with clickable ticker links
-        display_df = results_df.copy()
-        
-        # Make ticker look like normal text but be clickable
-        display_df['ticker'] = display_df['ticker'].apply(
-            lambda x: f'<a href="/ypredict/?ticker={x}" style="text-decoration: none; color: inherit;">{x}</a>'
-        )
-        
-        event = st.dataframe(
-            display_df,
-            hide_index=True,
-            use_container_width=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="result_table"
-        )
-        selected_row = None
-        if hasattr(event, 'selection') and hasattr(event.selection, 'rows') and event.selection.rows:
-            idx = event.selection.rows[0]
-            if idx < len(results_df):
-                selected_row = results_df.iloc[idx]
-        if selected_row is not None:
-            ticker_display = selected_row['ticker']
-            ticker_db = ticker_display + '.US' if (ticker_display + '.US') in tickers_db else ticker_display
-            match_start = selected_row['match_start']
-            match_end = selected_row['match_end']
-            if pd.notnull(match_start) and pd.notnull(match_end):
-                df = fetch_ticker_data(engine, ticker_db, match_start, match_end)
-                st.write(f"**{ticker_display}**: {match_start.date()} to {match_end.date()} (match window)")
-                # Compute Bollinger Bands
-                close = df['close']
-                sma = close.rolling(window=20, min_periods=1).mean()
-                std = close.rolling(window=20, min_periods=1).std()
-                upper_bb = sma + 2 * std
-                lower_bb = sma - 2 * std
-                import plotly.graph_objs as go
-                from plotly.subplots import make_subplots
-                fig = make_subplots(specs=[[{"secondary_y": True}]])
-                fig.add_trace(go.Candlestick(
-                    x=df.index,
-                    open=df['open'], high=df['high'], low=df['low'], close=df['close'],
-                    name='Candlestick',
-                    increasing_line_color='green', decreasing_line_color='red',
-                    showlegend=False
-                ), secondary_y=False)
-                fig.add_trace(go.Scatter(x=df.index, y=upper_bb, mode='lines', name='BB Upper', line=dict(color='rgba(200,0,0,0.4)', dash='dot')),
-                              secondary_y=False)
-                fig.add_trace(go.Scatter(x=df.index, y=lower_bb, mode='lines', name='BB Lower', line=dict(color='rgba(0,0,200,0.4)', dash='dot')),
-                              secondary_y=False)
-                fig.add_trace(go.Scatter(x=df.index, y=sma, mode='lines', name='SMA20', line=dict(color='gray', dash='dash')),
-                              secondary_y=False)
-                if 'volume' in df.columns:
-                    fig.add_trace(go.Bar(x=df.index, y=df['volume'], name='Volume', marker_color='rgba(100,100,100,0.3)'), secondary_y=True)
-                fig.update_layout(
-                    yaxis=dict(title='Price'),
-                    yaxis2=dict(title='Volume', rangemode='tozero', showgrid=False),
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-                    bargap=0,
-                    xaxis_rangeslider_visible=False,
-                    xaxis=dict(rangebreaks=[dict(bounds=["sat", "mon"])])
-                )
-                st.plotly_chart(fig, use_container_width=True)
+        # Display results with clickable ticker links
+        for idx, row in results_df.iterrows():
+            col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 2])
+            
+            with col1:
+                # Create a clickable link using markdown
+                link_url = f"/ypredict/?ticker={row['ticker']}"
+                st.markdown(f"[ {row['ticker']}]({link_url})")
+            
+            with col2:
+                st.write(f"{row['similarity']:.3f}")
+            
+            with col3:
+                st.write(f"{row['match_start'].date()}")
+            
+            with col4:
+                st.write(f"{row['match_end'].date()}")
+            
+            with col5:
+                st.write(f"${row['latest_close']:.2f}")
+            
+            st.divider()
 
 if __name__ == "__main__":
     main()
