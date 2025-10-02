@@ -193,8 +193,10 @@ def main():
         
         # Create a copy of results_df with clickable ticker links
         display_df = results_df.copy()
+        
+        # Make ticker look like normal text but be clickable
         display_df['ticker'] = display_df['ticker'].apply(
-            lambda x: f"/ypredict/?ticker={x}"
+            lambda x: f'<a href="/ypredict/?ticker={x}" style="text-decoration: none; color: inherit;">{x}</a>'
         )
         
         event = st.dataframe(
@@ -203,13 +205,7 @@ def main():
             use_container_width=True,
             on_select="rerun",
             selection_mode="single-row",
-            key="result_table",
-            column_config={
-                "ticker": st.column_config.LinkColumn(
-                    "Ticker",
-                    help="Click to open in ypredict"
-                )
-            }
+            key="result_table"
         )
         selected_row = None
         if hasattr(event, 'selection') and hasattr(event.selection, 'rows') and event.selection.rows:
