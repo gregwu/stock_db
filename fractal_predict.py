@@ -1556,24 +1556,26 @@ def main():
         # Get ticker from URL parameter or use default
         url_ticker = st.query_params.get("ticker", "").upper()
         
-        # Initialize session state for ticker if not exists
+        # Initialize session state for ticker if not exists - only on first load
         if 'user_ticker' not in st.session_state:
             st.session_state.user_ticker = url_ticker if url_ticker else "AAPL"
         
-        # Use session state ticker as default, but allow URL parameter to override on first load
-        if url_ticker and st.session_state.user_ticker == "AAPL":
-            st.session_state.user_ticker = url_ticker
+        # Callback function to handle ticker changes
+        def on_ticker_change():
+            st.session_state.user_ticker = st.session_state.ticker_input.upper()
+            st.query_params["ticker"] = st.session_state.user_ticker
         
+        # Text input with on_change callback
         ticker = st.text_input(
             "Enter Stock Ticker", 
             value=st.session_state.user_ticker,
+            key="ticker_input",
+            on_change=on_ticker_change,
             help="Enter a valid stock ticker symbol (e.g., AAPL, TSLA, MSFT). You can also use URL: ?ticker=SYMBOL"
         ).upper()
         
-        # Update session state and URL parameter when ticker changes
-        if ticker != st.session_state.user_ticker:
-            st.session_state.user_ticker = ticker
-            st.query_params["ticker"] = ticker
+        # Use the ticker value for processing
+        ticker = st.session_state.user_ticker
         
         # Technical Analysis Only option with URL parameter support (default: True)
         url_tech_only = st.query_params.get("tech_only", "true").lower() == "true"
