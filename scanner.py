@@ -2179,13 +2179,12 @@ class StockScanner:
             # Get premiums from database only
             option_premium = pred.get('db_premiums', 0.0)  # Premiums from database only
             
-            # Option-related fields are no longer calculated during prediction
-            otm_percentage = 0.0
-            exp_date = 'N/A'
-            dte = 0
-            strike_price = 0.0
-            
-            # Strike price and option data are no longer calculated
+            # Calculate option data for the report
+            option_data = calculate_option_data(current_price, ticker)
+            otm_percentage = option_data.get('otm_percentage', 0.0)
+            exp_date = option_data.get('expiration_date', 'N/A')
+            dte = option_data.get('dte', 0)
+            strike_price = option_data.get('strike_price', 0.0)
             
             # Get technical scores
             tech_scores = pred.get('technical_scores', {})
