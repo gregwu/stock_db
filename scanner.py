@@ -1080,33 +1080,42 @@ class StockScanner:
         prof_scores = self.calculate_professional_analysis_score(df) if df is not None else {'trend_score': 0, 'safety_score': 0, 'relative_strength_score': 0, 'total_score': 0}
         
         # Try ML prediction first if enabled
+        ml_prediction = None
+        ml_failed = False
         if self.use_ml_predictions and df is not None:
-            ml_prediction = self.predict_with_ml(ticker, df, scores)
-            if ml_prediction is not None:
-                # Use ML prediction but include technical scores
-                current_price = scores.get('current_price', df.iloc[-1]['close'] if df is not None else 100)
-                
-                prediction = {
-                    'ticker': ticker,
-                    'signal': ml_prediction['signal'],
-                    'confidence': round(ml_prediction['confidence'], 2),
-                    'composite_score': round(scores.get('composite_score', 0), 3),
-                    'current_price': current_price,
-                    'predicted_price': round(ml_prediction['predicted_price'], 2),
-                    'price_change': round(ml_prediction['price_change_pct'], 2),
-                    'timestamp': datetime.now().isoformat(),
-                    'technical_scores': scores,
-                    'professional_scores': prof_scores,
-                    'ml_prediction': {
-                        'method': ml_prediction['method'],
-                        'model_class': ml_prediction['model_class'],
-                        'class_label': ml_prediction['class_label'],
-                        'probabilities': ml_prediction['probabilities'],
-                        'model_classes': ml_prediction.get('model_classes')
+            try:
+                ml_prediction = self.predict_with_ml(ticker, df, scores)
+                if ml_prediction is not None:
+                    # Use ML prediction but include technical scores
+                    current_price = scores.get('current_price', df.iloc[-1]['close'] if df is not None else 100)
+                    
+                    prediction = {
+                        'ticker': ticker,
+                        'signal': ml_prediction['signal'],
+                        'confidence': round(ml_prediction['confidence'], 2),
+                        'composite_score': round(scores.get('composite_score', 0), 3),
+                        'current_price': current_price,
+                        'predicted_price': round(ml_prediction['predicted_price'], 2),
+                        'price_change': round(ml_prediction['price_change_pct'], 2),
+                        'timestamp': datetime.now().isoformat(),
+                        'technical_scores': scores,
+                        'professional_scores': prof_scores,
+                        'ml_prediction': {
+                            'method': ml_prediction['method'],
+                            'model_class': ml_prediction['model_class'],
+                            'class_label': ml_prediction['class_label'],
+                            'probabilities': ml_prediction['probabilities'],
+                            'model_classes': ml_prediction.get('model_classes')
+                        }
                     }
-                }
-                
-                return prediction
+                    
+                    return prediction
+                else:
+                    ml_failed = True
+                    logger.warning(f"ML prediction returned None for {ticker}, falling back to confidence-based prediction")
+            except Exception as e:
+                ml_failed = True
+                logger.warning(f"ML prediction failed for {ticker}: {e}, falling back to confidence-based prediction")
         
         # Fallback to confidence-based prediction
         composite_score = scores.get('composite_score', 0)
@@ -1147,7 +1156,9 @@ class StockScanner:
             'price_change': round(((price_prediction - current_price) / current_price) * 100, 2),
             'timestamp': datetime.now().isoformat(),
             'technical_scores': scores,
-            'professional_scores': prof_scores
+            'professional_scores': prof_scores,
+            'ml_failed': ml_failed,
+            'prediction_method': 'confidence-based' if ml_failed else 'ml-based'
         }
         
         return prediction
@@ -1471,6 +1482,10 @@ class StockScanner:
         buy_count = len(buy_signals)
         sell_count = len(sell_signals)
         hold_count = len(hold_signals)
+        
+        # Count ML failures
+        ml_failed_count = sum(1 for p in predictions if p.get('ml_failed', False))
+        ml_failure_info = f" | {ml_failed_count} ML failures" if ml_failed_count > 0 else ""
         
         avg_confidence = df_predictions['confidence'].mean() if not df_predictions.empty else 0
         
@@ -1999,7 +2014,7 @@ class StockScanner:
 <body>
     <div class="header">
         <h1>📊 Stock Scanner Report</h1>
-        <p>Generated on {report_time} | {total_predictions} stocks analyzed</p>
+        <p>Generated on {report_time} | {total_predictions} stocks analyzed{ml_failure_info}</p>
     </div>
     
     <div class="stats">
@@ -2179,12 +2194,24 @@ class StockScanner:
             # Get premiums from database only
             option_premium = pred.get('db_premiums', 0.0)  # Premiums from database only
             
-            # Calculate option data for the report
-            option_data = calculate_option_data(current_price, ticker)
-            otm_percentage = option_data.get('otm_percentage', 0.0)
-            exp_date = option_data.get('expiration_date', 'N/A')
-            dte = option_data.get('dte', 0)
-            strike_price = option_data.get('strike_price', 0.0)
+            # Get strike price from database, calculate OTM percentage
+            existing_option_data = get_existing_option_data(ticker)
+            if existing_option_data:
+                strike_price = existing_option_data.get('strike_price', 0.0)
+                exp_date = existing_option_data.get('expiration_date', 'N/A')
+                dte = existing_option_data.get('dte', 0)
+                # Calculate OTM percentage from database strike price
+                if current_price > 0 and strike_price > 0:
+                    otm_percentage = ((strike_price - current_price) / current_price) * 100
+                else:
+                    otm_percentage = 0.0
+            else:
+                # Fallback to calculated values if no database data
+                option_data = calculate_option_data(current_price, ticker)
+                otm_percentage = option_data.get('otm_percentage', 0.0)
+                exp_date = option_data.get('expiration_date', 'N/A')
+                dte = option_data.get('dte', 0)
+                strike_price = option_data.get('strike_price', 0.0)
             
             # Get technical scores
             tech_scores = pred.get('technical_scores', {})
@@ -2325,7 +2352,7 @@ class StockScanner:
             <tr>
                 <td><strong>{i}</strong></td>
                 <td class="ticker"><a href="{STREAMLIT_URL}/?ticker={ticker}&pattern_length=60" target="_blank">{ticker}</a></td>
-                <td class="{signal_class}">{signal}</td>
+                <td class="{signal_class}">{signal}{'<br><small style="color: orange;">(ML Failed)</small>' if pred.get('ml_failed', False) else ''}</td>
                 <td>${current_price:.2f}</td>
                 <td class="{price_change_class}">${predicted_price:.2f}<br><small>({price_change:+.1f}%)</small></td>
                 <td>${strike_price:.2f}<br><small>({otm_percentage:.1f}% {'ITM' if otm_percentage < 0 else 'OTM'})</small></td>
@@ -2432,8 +2459,8 @@ def main():
                        help="Minimum risk/reward ratio filter")
     parser.add_argument("--max-rr-ratio", type=float,
                        help="Maximum risk/reward ratio filter")
-    parser.add_argument("--max-atr-price-ratio", type=float, default=0.05,
-                       help="Maximum ATR/Price ratio filter (default: 0.05 for 5%%)")
+    parser.add_argument("--max-atr-price-ratio", type=float, default=0.5,
+                       help="Maximum ATR/Price ratio filter (default: 0.5 for 50%%)")
     parser.add_argument("--min-bb-position", type=float,
                        help="Minimum Bollinger Band position filter (0.0-1.0)")
     parser.add_argument("--max-bb-position", type=float,
@@ -2566,6 +2593,11 @@ def main():
             print(f"\n📊 SCAN RESULTS SUMMARY")
             print("=" * 60)
             print(f"Total predictions: {len(predictions)}")
+            
+            # Count ML failures
+            ml_failed_count = sum(1 for p in predictions if p.get('ml_failed', False))
+            if ml_failed_count > 0:
+                print(f"ML model failures: {ml_failed_count} (using confidence-based predictions)")
             
             buy_signals = [p for p in predictions if p['signal'] == 'BUY']
             sell_signals = [p for p in predictions if p['signal'] == 'SELL']
