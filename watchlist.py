@@ -202,6 +202,14 @@ class StreamlitSeekingAlphaManager:
                         ALTER TABLE seekingalpha 
                         ADD COLUMN IF NOT EXISTS premiums DECIMAL(10,2)
                     """)
+                    cur.execute("""
+                        ALTER TABLE seekingalpha 
+                        ADD COLUMN IF NOT EXISTS notional_value DECIMAL(15,2)
+                    """)
+                    cur.execute("""
+                        ALTER TABLE seekingalpha 
+                        ADD COLUMN IF NOT EXISTS strike DECIMAL(10,2)
+                    """)
                     
                     conn.commit()
                     return True
@@ -247,7 +255,8 @@ class StreamlitSeekingAlphaManager:
             return pd.DataFrame()
     
     def add_ticker(self, ticker: str, pdf_source: str = None, 
-                   date_added: date = None, price: float = None, exp: date = None, premiums: float = None) -> bool:
+                   date_added: date = None, price: float = None, exp: date = None, 
+                   premiums: float = None, strike: float = None, notional_value: float = None) -> bool:
         """Add a single ticker to the database"""
         # Check if ticker already exists in database
         if self.ticker_exists(ticker):
@@ -257,10 +266,10 @@ class StreamlitSeekingAlphaManager:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO seekingalpha (ticker, date_added, pdf_source, price, exp, premiums)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO seekingalpha (ticker, date_added, pdf_source, price, exp, premiums, strike, notional_value)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (ticker, date_added) DO NOTHING
-                    """, (ticker.upper().strip(), date_added or datetime.now().date(), pdf_source, price, exp, premiums))
+                    """, (ticker.upper().strip(), date_added or datetime.now().date(), pdf_source, price, exp, premiums, strike, notional_value))
                     
                     if cur.rowcount > 0:
                         conn.commit()
@@ -338,7 +347,8 @@ class StreamlitSeekingAlphaManager:
     
     def update_record(self, record_id: int, ticker: str = None, 
                      pdf_source: str = None, date_added: date = None,
-                     price: float = None, exp: date = None, premiums: float = None) -> bool:
+                     price: float = None, exp: date = None, premiums: float = None,
+                     strike: float = None, notional_value: float = None) -> bool:
         """Update an existing record"""
         try:
             with self.get_connection() as conn:
@@ -364,6 +374,12 @@ class StreamlitSeekingAlphaManager:
                     if premiums is not None:  # Allow 0 as valid premiums
                         updates.append("premiums = %s")
                         params.append(premiums)
+                    if strike is not None:
+                        updates.append("strike = %s")
+                        params.append(strike)
+                    if notional_value is not None:
+                        updates.append("notional_value = %s")
+                        params.append(notional_value)
                     
                     if not updates:
                         return False
@@ -379,6 +395,54 @@ class StreamlitSeekingAlphaManager:
                     
         except Exception as e:
             st.error(f"❌ Error updating record: {e}")
+            return False
+    
+    def upsert_record(self, ticker: str, pdf_source: str = None, 
+                     date_added: date = None, price: float = None, exp: date = None, 
+                     premiums: float = None, strike: float = None, notional_value: float = None) -> bool:
+        """Create or update a record based on ticker and date_added"""
+        date_added = date_added or datetime.now().date()
+        ticker = ticker.upper().strip()
+        
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Try to update existing record first
+                    cur.execute("""
+                        UPDATE seekingalpha 
+                        SET pdf_source = COALESCE(%s, pdf_source),
+                            price = COALESCE(%s, price),
+                            exp = COALESCE(%s, exp),
+                            premiums = COALESCE(%s, premiums),
+                            strike = COALESCE(%s, strike),
+                            notional_value = COALESCE(%s, notional_value)
+                        WHERE ticker = %s AND date_added = %s
+                    """, (pdf_source, price, exp, premiums, strike, notional_value, ticker, date_added))
+                    
+                    if cur.rowcount > 0:
+                        conn.commit()
+                        return True
+                    
+                    # If no update, insert new record
+                    cur.execute("""
+                        INSERT INTO seekingalpha 
+                        (ticker, date_added, pdf_source, price, exp, premiums, strike, notional_value)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (ticker, date_added) 
+                        DO UPDATE SET
+                            pdf_source = COALESCE(EXCLUDED.pdf_source, seekingalpha.pdf_source),
+                            price = COALESCE(EXCLUDED.price, seekingalpha.price),
+                            exp = COALESCE(EXCLUDED.exp, seekingalpha.exp),
+                            premiums = COALESCE(EXCLUDED.premiums, seekingalpha.premiums),
+                            strike = COALESCE(EXCLUDED.strike, seekingalpha.strike),
+                            notional_value = COALESCE(EXCLUDED.notional_value, seekingalpha.notional_value)
+                    """, (ticker, date_added, pdf_source, price, exp, premiums, strike, notional_value))
+                    
+                    conn.commit()
+                    return True
+                    
+        except Exception as e:
+            st.error(f"❌ Error upserting record: {e}")
             return False
     
     @st.cache_data(ttl=60)
@@ -499,6 +563,806 @@ def extract_symbols_from_image(image_file) -> List[str]:
         
     except Exception as e:
         st.error(f"❌ Error processing image: {e}")
+        return []
+
+def parse_date(date_str: str) -> Optional[date]:
+    """Parse date string in various formats"""
+    if not date_str or not date_str.strip():
+        return None
+    
+    date_str = date_str.strip()
+    
+    # Common date formats
+    formats = [
+        '%Y-%m-%d',
+        '%m/%d/%Y',
+        '%d/%m/%Y',
+        '%Y/%m/%d',
+        '%m-%d-%Y',
+        '%d-%m-%Y',
+        '%Y.%m.%d',
+        '%m.%d.%Y',
+        '%B %d, %Y',  # January 15, 2024
+        '%b %d, %Y',  # Jan 15, 2024
+        '%d %B %Y',   # 15 January 2024
+        '%d %b %Y',   # 15 Jan 2024
+    ]
+    
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except ValueError:
+            continue
+    
+    # Try parsing common variations
+    # Handle dates like "01/15/2024" or "15/01/2024"
+    try:
+        parts = re.split(r'[/\-\.]', date_str)
+        if len(parts) == 3:
+            # Try MM/DD/YYYY first
+            try:
+                month, day, year = int(parts[0]), int(parts[1]), int(parts[2])
+                if 1 <= month <= 12 and 1 <= day <= 31:
+                    return date(year if year > 1900 else year + 2000, month, day)
+            except:
+                pass
+            # Try DD/MM/YYYY
+            try:
+                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+                if 1 <= month <= 12 and 1 <= day <= 31:
+                    return date(year if year > 1900 else year + 2000, month, day)
+            except:
+                pass
+    except:
+        pass
+    
+    return None
+
+def parse_number(num_str: str) -> Optional[float]:
+    """Parse number string, handling K/M suffixes and commas"""
+    if not num_str or not num_str.strip():
+        return None
+    
+    num_str = num_str.strip().replace(',', '').replace('$', '').replace(' ', '')
+    
+    try:
+        # Handle K/M suffixes
+        if num_str.upper().endswith('K'):
+            return float(num_str[:-1]) * 1000
+        elif num_str.upper().endswith('M'):
+            return float(num_str[:-1]) * 1000000
+        elif num_str.upper().endswith('B'):
+            return float(num_str[:-1]) * 1000000000
+        else:
+            return float(num_str)
+    except ValueError:
+        return None
+
+def extract_table_data_from_image(image_file) -> List[Dict]:
+    """Extract structured table data (symbol, strike, expiration date, notional value) from image"""
+    if not OCR_AVAILABLE:
+        st.error("❌ OCR libraries not available. Please install: `pip install pytesseract` and `brew install tesseract` (macOS)")
+        return []
+    
+    try:
+        # Open the image
+        image = Image.open(image_file)
+        
+        # Try structured data extraction first (tesseract with table structure)
+        # Store OCR data with coordinates for position-based alignment
+        ocr_data_dict = None
+        text_lines = []
+        
+        try:
+            # Use pytesseract with structured output
+            ocr_data_dict = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+            
+            # Extract all text with positions
+            current_line = []
+            prev_y = None
+            
+            for i in range(len(ocr_data_dict['text'])):
+                text = ocr_data_dict['text'][i].strip()
+                if text:
+                    y = ocr_data_dict['top'][i]
+                    if prev_y is None or abs(y - prev_y) < 5:  # Same line
+                        current_line.append(text)
+                    else:  # New line
+                        if current_line:
+                            text_lines.append(' '.join(current_line))
+                        current_line = [text]
+                    prev_y = y
+            
+            if current_line:
+                text_lines.append(' '.join(current_line))
+            
+            # If structured extraction didn't work well, fallback to simple text extraction
+            if not text_lines or len(text_lines) < 2:
+                full_text = pytesseract.image_to_string(image)
+                text_lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+                ocr_data_dict = None  # Clear coordinate data if we fall back
+            
+        except Exception as ocr_error:
+            st.error(f"❌ OCR Error: {ocr_error}")
+            st.info("💡 Make sure Tesseract is installed: `brew install tesseract` (macOS) or `apt-get install tesseract-ocr` (Linux)")
+            return []
+        
+        # Parse table - handle both columnar (vertical) and row-based formats
+        records = []
+        
+        # First, try to detect if data is in columnar format (vertical columns)
+        # This handles OCR output where columns are listed vertically
+        ticker_values = []
+        strike_values = []
+        expiration_values = []
+        notional_values = []
+        
+        current_column = None
+        parsing_data = False
+        
+        for i, line in enumerate(text_lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            line_upper = line.upper()
+            
+            # Detect column headers
+            if 'TICKER' in line_upper or 'SYMBOL' in line_upper:
+                current_column = 'ticker'
+                parsing_data = True
+                continue
+            elif 'STRIKE' in line_upper:
+                current_column = 'strike'
+                parsing_data = True
+                continue
+            elif 'EXPIR' in line_upper or ('EXP' in line_upper and 'DATE' in line_upper):
+                current_column = 'expiration'
+                parsing_data = True
+                continue
+            elif 'NOTIONAL' in line_upper or ('VALUE' in line_upper and 'NOTIONAL' in line_upper):
+                current_column = 'notional'
+                parsing_data = True
+                continue
+            elif any(keyword in line_upper for keyword in ['TYPE', 'PUT', 'CALL']):
+                # Skip option type column
+                current_column = None
+                parsing_data = True
+                continue
+            
+            # Skip empty lines or header-like lines
+            if len(line) < 2:
+                continue
+            
+            # Collect data based on current column
+            if current_column == 'ticker':
+                # Handle $ prefix: $AAL -> AAL
+                cleaned = line.replace('$', '').strip()
+                if re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', cleaned.upper()):
+                    ticker_values.append(cleaned.upper())
+            elif current_column == 'strike':
+                # Parse strike price, be more lenient to catch missing values
+                # Try multiple extraction methods
+                strike_val = None
+                
+                # Method 1: Direct number match
+                clean_line = line.replace(',', '').replace('$', '').strip()
+                if re.match(r'^\d+\.?\d*$', clean_line):
+                    strike_val = parse_number(clean_line)
+                    if strike_val and 1 <= strike_val <= 10000:
+                        strike_values.append(strike_val)
+                        continue
+                
+                # Method 2: Extract first valid number from line (handles "13 35" or "40 525")
+                number_match = re.search(r'\b(\d{1,2}\.?\d*)\b', clean_line)
+                if number_match:
+                    try:
+                        potential_strike = float(number_match.group(1))
+                        if 1 <= potential_strike <= 10000:
+                            strike_val = potential_strike
+                            strike_values.append(strike_val)
+                            continue
+                    except:
+                        pass
+                
+                # Method 3: Look for numbers that might be split across characters (OCR errors)
+                # Extract all digit sequences
+                all_numbers = re.findall(r'\d+\.?\d*', clean_line)
+                for num_str in all_numbers:
+                    try:
+                        num_val = float(num_str)
+                        if 1 <= num_val <= 10000:
+                            strike_val = num_val
+                            strike_values.append(strike_val)
+                            break
+                    except:
+                        continue
+            elif current_column == 'expiration':
+                parsed_date = parse_date(line)
+                if parsed_date:
+                    expiration_values.append(parsed_date)
+            elif current_column == 'notional':
+                notional_val = parse_number(line)
+                if notional_val and notional_val >= 100:
+                    notional_values.append(notional_val)
+        
+        # Post-process: If we have tickers but fewer strikes, try to find missing strikes
+        # by scanning all text lines for potential strike values
+        if ticker_values and len(strike_values) < len(ticker_values):
+            # Collect all potential strikes from the entire OCR text
+            all_potential_strikes = []
+            
+            # Re-scan text lines looking for numbers in the strike range
+            in_strike_section = False
+            for line in text_lines:
+                line_upper = line.upper().strip()
+                if 'STRIKE' in line_upper:
+                    in_strike_section = True
+                    continue
+                elif in_strike_section and any(keyword in line_upper for keyword in ['EXPIR', 'NOTIONAL', 'TICKER', 'TYPE']):
+                    in_strike_section = False
+                
+                if in_strike_section or 'STRIKE' in line_upper:
+                    # Extract all numbers from this line (including lines with partial OCR)
+                    # Look for standalone numbers or numbers that might be part of a sequence
+                    numbers = re.findall(r'\b(\d{1,4}\.?\d*)\b', line.replace(',', '').replace('$', '').replace("'", ''))
+                    for num_str in numbers:
+                        try:
+                            num_val = float(num_str)
+                            if 1 <= num_val <= 10000:  # Reasonable strike range
+                                all_potential_strikes.append(num_val)
+                        except:
+                            continue
+                    
+                    # Also check for numbers that might be in OCR gibberish (like "Q91'90'")
+                    # Extract any 2-digit sequences that could be strikes
+                    two_digit_patterns = re.findall(r'\b(\d{2})\b', line.replace(',', '').replace('$', ''))
+                    for num_str in two_digit_patterns:
+                        try:
+                            num_val = float(num_str)
+                            if 10 <= num_val <= 1000:  # Two-digit strikes like 13, 40
+                                all_potential_strikes.append(num_val)
+                        except:
+                            continue
+                    
+                    # Also check single digits that might be part of larger numbers
+                    # (like "4" could be "40" or part of "13")
+                    single_digits = re.findall(r'\b(\d)\b(?!\.)', line.replace(',', '').replace('$', ''))
+                    # Look for context - if there's a single digit followed by something, might be part of a number
+                    for match in re.finditer(r'(\d)', line):
+                        digit = match.group(1)
+                        # Check surrounding context
+                        start = max(0, match.start() - 2)
+                        end = min(len(line), match.end() + 2)
+                        context = line[start:end]
+                        # If it's a standalone digit (not part of a larger number), consider it
+                        if re.search(r'[^\d]' + re.escape(digit) + r'[^\d]', context):
+                            try:
+                                num_val = float(digit)
+                                if 1 <= num_val <= 9:  # Single digit strikes (rare but possible)
+                                    all_potential_strikes.append(num_val)
+                            except:
+                                pass
+            
+            # Also scan entire text for any numbers that could be missing strikes
+            # Sometimes OCR misaligns columns
+            for line in text_lines:
+                # Look for patterns that might indicate a strike value
+                # Check for numbers that appear near ticker symbols or in isolation
+                numbers = re.findall(r'\b(\d{1,3}\.?\d*)\b', line.replace(',', '').replace('$', ''))
+                for num_str in numbers:
+                    try:
+                        num_val = float(num_str)
+                        # Look for values that are likely strikes (small to medium numbers)
+                        # and not likely to be dates (not in common date ranges) or notional (too small)
+                        if 1 <= num_val <= 1000 and num_val not in all_potential_strikes:
+                            # Check if it's not part of a date (avoid matching year parts)
+                            if not re.search(r'\d{4}', line):  # Not near a 4-digit number (year)
+                                all_potential_strikes.append(num_val)
+                    except:
+                        continue
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_strikes = []
+            for strike in all_potential_strikes:
+                if strike not in seen:
+                    seen.add(strike)
+                    unique_strikes.append(strike)
+            
+            # If we found more strikes than before, try to intelligently merge
+            # Prioritize known good strikes (those already captured), then add missing ones
+            if len(unique_strikes) >= len(ticker_values):
+                # We have enough strikes - merge intelligently
+                # Start with known good strikes
+                merged_strikes = []
+                strike_set = set(strike_values)
+                
+                # Add original strikes first
+                for orig_strike in strike_values:
+                    merged_strikes.append(orig_strike)
+                
+                # Then add missing ones from unique_strikes
+                for potential_strike in unique_strikes:
+                    if potential_strike not in strike_set and len(merged_strikes) < len(ticker_values):
+                        merged_strikes.append(potential_strike)
+                
+                # Fill any remaining slots
+                while len(merged_strikes) < len(ticker_values) and len(unique_strikes) > len(merged_strikes):
+                    for potential_strike in unique_strikes:
+                        if potential_strike not in merged_strikes:
+                            merged_strikes.append(potential_strike)
+                            break
+                
+                strike_values = merged_strikes[:len(ticker_values)]
+            elif len(unique_strikes) > len(strike_values):
+                # Merge: preserve order of original strikes, add missing ones
+                merged_strikes = []
+                strike_set = set(strike_values)
+                
+                # Build merged list maintaining relative order where possible
+                for orig_strike in strike_values:
+                    merged_strikes.append(orig_strike)
+                
+                # Add missing strikes from unique_strikes
+                for potential_strike in unique_strikes:
+                    if potential_strike not in strike_set and len(merged_strikes) < len(ticker_values):
+                        merged_strikes.append(potential_strike)
+                
+                strike_values = merged_strikes
+        
+        # If we found columnar data, match by index with offset detection
+        if ticker_values:
+            max_rows = len(ticker_values)
+            
+            # Use coordinate-based alignment if we have OCR coordinate data
+            ticker_rows = []
+            strike_rows = []
+            rows_dict = {}
+            sorted_rows = []
+            
+            if ocr_data_dict:
+                # Group OCR words by their Y position (rows) and X position (columns)
+                rows_dict = {}  # {y_position: {column_x: value}}
+                
+                for i in range(len(ocr_data_dict['text'])):
+                    text = ocr_data_dict['text'][i].strip()
+                    if not text:
+                        continue
+                    
+                    x = ocr_data_dict['left'][i]
+                    y = ocr_data_dict['top'][i]
+                    conf = ocr_data_dict['conf'][i]
+                    
+                    # Skip low confidence results
+                    if conf < 30:
+                        continue
+                    
+                    # Round Y to group into rows (within 5 pixels = same row)
+                    y_rounded = round(y / 5) * 5
+                    
+                    if y_rounded not in rows_dict:
+                        rows_dict[y_rounded] = {}
+                    
+                    rows_dict[y_rounded][x] = text
+                
+                # Find the row positions for tickers and strikes
+                sorted_rows = sorted(rows_dict.keys())
+                
+                for row_y in sorted_rows:
+                    row_data = rows_dict[row_y]
+                    row_values = sorted(row_data.items())  # Sort by X position
+                    
+                    for x, text in row_values:
+                        text_upper = text.upper().replace('$', '')
+                        # Check if this row contains a ticker
+                        if re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', text_upper):
+                            ticker_rows.append((row_y, text_upper))
+                        # Check if this row contains a strike (number in valid range)
+                        elif re.match(r'^\d+\.?\d*$', text.replace(',', '').replace('$', '')):
+                            try:
+                                strike_val = float(text.replace(',', '').replace('$', ''))
+                                if 1 <= strike_val <= 10000:
+                                    strike_rows.append((row_y, strike_val))
+                            except:
+                                pass
+                
+                # Sort both by Y position
+                ticker_rows.sort(key=lambda x: x[0])
+                strike_rows.sort(key=lambda x: x[0])
+                
+                # Detect missing first strike - ALWAYS check if we have fewer strikes than tickers
+                if len(ticker_rows) > 0 and len(strike_rows) < len(ticker_values):
+                    # First strike is likely missing - scan for it aggressively
+                    first_ticker_y = ticker_rows[0][0] if ticker_rows else None
+                    first_strike_y = strike_rows[0][0] if strike_rows else None
+                    
+                    # Identify strike column X position by analyzing where strikes appear
+                    strike_x_positions = []
+                    for strike_y, strike_val in strike_rows:
+                        # Find the X position of this strike in OCR data
+                        for i in range(len(ocr_data_dict['text'])):
+                            text = ocr_data_dict['text'][i].strip()
+                            if not text:
+                                continue
+                            try:
+                                clean_text = text.replace(',', '').replace('$', '').strip()
+                                if abs(ocr_data_dict['top'][i] - strike_y) < 10:
+                                    if float(clean_text) == strike_val:
+                                        strike_x_positions.append(ocr_data_dict['left'][i])
+                                        break
+                            except:
+                                pass
+                    
+                    # Average strike column X position
+                    avg_strike_x = sum(strike_x_positions) / len(strike_x_positions) if strike_x_positions else None
+                    
+                    # Look for a number that matches the first ticker's row
+                    best_candidate = None
+                    best_y = None
+                    best_score = float('inf')
+                    
+                    for i in range(len(ocr_data_dict['text'])):
+                        text = ocr_data_dict['text'][i].strip()
+                        if not text:
+                            continue
+                        
+                        y = ocr_data_dict['top'][i]
+                        x = ocr_data_dict['left'][i]
+                        conf = ocr_data_dict['conf'][i]
+                        
+                        if conf < 30:
+                            continue
+                        
+                        # Check if it's a valid strike number (broader range for first strike)
+                        clean_text = text.replace(',', '').replace('$', '').strip()
+                        if re.match(r'^\d{1,4}\.?\d*$', clean_text):
+                            try:
+                                strike_val = float(clean_text)
+                                # First strike is usually smaller, but allow up to 1000
+                                if 1 <= strike_val <= 1000 and strike_val not in strike_values:
+                                    score = float('inf')
+                                    
+                                    # Prefer numbers that:
+                                    # 1. Are on the same row as first ticker (Y position match)
+                                    if first_ticker_y:
+                                        y_distance = abs(y - first_ticker_y)
+                                        if y_distance < 30:  # Within 30 pixels = same row
+                                            score = y_distance
+                                    
+                                    # 2. Are in the strike column area (X position match)
+                                    if avg_strike_x:
+                                        x_distance = abs(x - avg_strike_x)
+                                        if score != float('inf'):
+                                            score += x_distance * 0.1  # Prefer same column but not critical
+                                        elif abs(x - avg_strike_x) < 100:  # If no Y match, use X
+                                            score = abs(x - avg_strike_x) + 1000
+                                    
+                                    # 3. Are positioned before the first known strike
+                                    if first_strike_y and y < first_strike_y:
+                                        if score != float('inf'):
+                                            score -= 50  # Bonus for being before first strike
+                                        else:
+                                            score = abs(y - first_ticker_y) + 100 if first_ticker_y else 200
+                                    
+                                    # Pick the best candidate (lowest score)
+                                    if score < best_score:
+                                        best_candidate = strike_val
+                                        best_y = y
+                                        best_score = score
+                            except:
+                                pass
+                    
+                    # If we found a candidate, add it
+                    if best_candidate is not None:
+                        strike_values.insert(0, best_candidate)
+                        strike_rows.insert(0, (best_y, best_candidate))
+                        # Re-sort strike_rows after insertion
+                        strike_rows.sort(key=lambda x: x[0])
+                    
+                    # Final fallback: If still missing, do an even more aggressive search
+                    if len(strike_values) < len(ticker_values) and first_ticker_y:
+                        # Scan ALL numbers near the first ticker row, regardless of column
+                        for i in range(len(ocr_data_dict['text'])):
+                            text = ocr_data_dict['text'][i].strip()
+                            if not text:
+                                continue
+                            
+                            y = ocr_data_dict['top'][i]
+                            conf = ocr_data_dict['conf'][i]
+                            
+                            if conf < 20:  # Even lower confidence threshold
+                                continue
+                            
+                            # If it's very close to first ticker row, check if it's a number
+                            if abs(y - first_ticker_y) < 40:
+                                clean_text = text.replace(',', '').replace('$', '').strip()
+                                if re.match(r'^\d{1,3}\.?\d*$', clean_text):
+                                    try:
+                                        num_val = float(clean_text)
+                                        if 1 <= num_val <= 500 and num_val not in strike_values:
+                                            # Found a number on first ticker row - likely the missing strike
+                                            strike_values.insert(0, num_val)
+                                            strike_rows.insert(0, (y, num_val))
+                                            strike_rows.sort(key=lambda x: x[0])
+                                            break  # Found it, stop searching
+                                    except:
+                                        pass
+            
+            # Fallback: If we still have fewer strikes and no coordinate data, try text-based search
+            if len(strike_values) < len(ticker_values) and not ocr_data_dict:
+                # Scan for potential first strike values
+                potential_first_strikes = []
+                for line in text_lines[:50]:
+                    numbers = re.findall(r'\b(\d{1,2}\.?\d*)\b', line.replace(',', '').replace('$', ''))
+                    for num_str in numbers:
+                        try:
+                            num_val = float(num_str)
+                            if 1 <= num_val <= 100 and num_val not in strike_values:
+                                potential_first_strikes.append(num_val)
+                        except:
+                            continue
+                
+                if potential_first_strikes and len(strike_values) == len(ticker_values) - 1:
+                    first_strike_candidate = min([s for s in potential_first_strikes if 1 <= s <= 100])
+                    if first_strike_candidate:
+                        strike_values.insert(0, first_strike_candidate)
+            
+            # Match records with proper alignment using coordinate-based matching if available
+            if ocr_data_dict and ticker_rows and strike_rows:
+                # Use coordinate-based matching: match tickers and strikes by row Y position
+                matched_records = {}
+                
+                # Create maps of ticker and strike positions
+                for ticker_y, ticker_name in ticker_rows:
+                    # Find the strike on the same row (or nearest row)
+                    best_strike = None
+                    best_distance = float('inf')
+                    
+                    for strike_y, strike_val in strike_rows:
+                        distance = abs(strike_y - ticker_y)
+                        if distance < best_distance and distance < 20:  # Within 20 pixels = same row
+                            best_distance = distance
+                            best_strike = strike_val
+                    
+                    matched_records[ticker_name] = best_strike
+                
+                # Also match expiration and notional by row
+                expiration_rows = []
+                notional_rows = []
+                
+                for row_y in sorted_rows:
+                    row_data = rows_dict[row_y]
+                    row_values = sorted(row_data.items())
+                    
+                    for x, text in row_values:
+                        # Check for expiration date
+                        parsed_date = parse_date(text)
+                        if parsed_date:
+                            expiration_rows.append((row_y, parsed_date))
+                        # Check for notional value
+                        notional_val = parse_number(text)
+                        if notional_val and notional_val >= 100:
+                            notional_rows.append((row_y, notional_val))
+                
+                # Build records using coordinate-matched values
+                for i, ticker in enumerate(ticker_values):
+                    # Find strike for this ticker using coordinate matching
+                    strike_val = matched_records.get(ticker.upper())
+                    
+                    # If first ticker has no strike and we have one fewer strikes, try to find it
+                    if i == 0 and strike_val is None and len(ticker_values) > len(strike_rows):
+                        # Last resort: find any number on the first ticker's row
+                        first_ticker_y = ticker_rows[0][0] if ticker_rows else None
+                        if first_ticker_y:
+                            for j in range(len(ocr_data_dict['text'])):
+                                text = ocr_data_dict['text'][j].strip()
+                                if not text:
+                                    continue
+                                y = ocr_data_dict['top'][j]
+                                conf = ocr_data_dict['conf'][j]
+                                if conf < 20:
+                                    continue
+                                if abs(y - first_ticker_y) < 40:
+                                    clean_text = text.replace(',', '').replace('$', '').strip()
+                                    if re.match(r'^\d{1,3}\.?\d*$', clean_text):
+                                        try:
+                                            num_val = float(clean_text)
+                                            if 1 <= num_val <= 500:
+                                                strike_val = num_val
+                                                break
+                                        except:
+                                            pass
+                    
+                    # Find expiration and notional on same row
+                    ticker_pos = None
+                    for ticker_y, ticker_name in ticker_rows:
+                        if ticker_name == ticker.upper():
+                            ticker_pos = ticker_y
+                            break
+                    
+                    exp_val = None
+                    notional_val = None
+                    if ticker_pos:
+                        # Find closest expiration and notional on similar row
+                        for exp_y, exp_date in expiration_rows:
+                            if abs(exp_y - ticker_pos) < 20:
+                                exp_val = exp_date
+                                break
+                        
+                        for not_y, not_val in notional_rows:
+                            if abs(not_y - ticker_pos) < 20:
+                                notional_val = not_val
+                                break
+                    
+                    record = {
+                        'symbol': ticker,
+                        'strike': strike_val,
+                        'expiration': exp_val,
+                        'notional_value': notional_val
+                    }
+                    records.append(record)
+            else:
+                # Fallback to index-based matching
+                for i in range(max_rows):
+                    if i < len(ticker_values):
+                        # Calculate strike index - handle offset if strikes start from index 1
+                        strike_idx = i
+                        # If we have one fewer strike than tickers, and we're at index 0, strike might be None
+                        if len(strike_values) == len(ticker_values) - 1 and i == 0:
+                            strike_val = None
+                        elif i < len(strike_values):
+                            strike_idx = i
+                            strike_val = strike_values[strike_idx]
+                        else:
+                            strike_val = None
+                        
+                        record = {
+                            'symbol': ticker_values[i],
+                            'strike': strike_val,
+                            'expiration': expiration_values[i] if i < len(expiration_values) else None,
+                            'notional_value': notional_values[i] if i < len(notional_values) else None
+                        }
+                        records.append(record)
+        
+        # If columnar parsing didn't work, try row-based parsing
+        if not records:
+            # Look for header row to identify column positions
+            header_found = False
+            header_line_idx = -1
+            column_order = []  # Track column order from header
+            
+            for i, line in enumerate(text_lines):
+                line_upper = line.upper()
+                # Check if this line contains table headers
+                if any(keyword in line_upper for keyword in ['TICKER', 'SYMBOL', 'STRIKE', 'EXPIR', 'EXP', 'NOTIONAL', 'VALUE']):
+                    header_found = True
+                    header_line_idx = i
+                    
+                    # Try to identify column positions
+                    header_parts = re.split(r'\t+|\s{2,}|\||,', line)
+                    header_parts = [p.strip().upper() for p in header_parts if p.strip()]
+                    
+                    for part in header_parts:
+                        if 'TICKER' in part or 'SYMBOL' in part:
+                            column_order.append('ticker')
+                        elif 'STRIKE' in part:
+                            column_order.append('strike')
+                        elif 'TYPE' in part:
+                            column_order.append('type')
+                        elif 'EXPIR' in part or 'EXP' in part:
+                            column_order.append('expiration')
+                        elif 'NOTIONAL' in part or 'VALUE' in part:
+                            column_order.append('notional')
+                    
+                    break
+            
+            # Start parsing from after header (or from beginning if no header found)
+            start_idx = header_line_idx + 1 if header_found else 0
+            
+            for line in text_lines[start_idx:]:
+                line = line.strip()
+                if not line or len(line) < 2:
+                    continue
+                
+                # Skip lines that look like headers or separators
+                if any(keyword in line.upper() for keyword in ['TICKER', 'SYMBOL', 'STRIKE', 'EXPIR', 'TYPE', 'NOTIONAL', 'VALUE', '---', '===']):
+                    continue
+                
+                # Try to split line into columns (handle various separators)
+                # Common separators: tabs, multiple spaces, pipes, commas
+                parts = re.split(r'\t+|\s{2,}|\|', line)
+                # If split didn't work well, try splitting on single space but only if we have many parts
+                if len(parts) < 3:
+                    # Try splitting on any whitespace but preserve multi-space separators
+                    parts = re.split(r'\s{2,}|(?<=\$)(?=\w)|(?<=\d)(?=\$)', line)
+                
+                parts = [p.strip() for p in parts if p.strip()]
+                
+                if len(parts) < 2:  # Need at least symbol and one other field
+                    continue
+                
+                record = {}
+                
+                # If we have column order from header, use positional mapping
+                if column_order and len(parts) >= len(column_order):
+                    for idx, col_type in enumerate(column_order):
+                        if idx < len(parts):
+                            part = parts[idx].strip()
+                            if col_type == 'ticker':
+                                # Handle $ prefix: $AAL -> AAL
+                                part = part.replace('$', '').strip()
+                                if re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', part.upper()):
+                                    record['symbol'] = part.upper()
+                            elif col_type == 'strike':
+                                strike_val = parse_number(part)
+                                if strike_val and strike_val > 0:
+                                    record['strike'] = strike_val
+                            elif col_type == 'expiration':
+                                parsed_date = parse_date(part)
+                                if parsed_date:
+                                    record['expiration'] = parsed_date
+                            elif col_type == 'notional':
+                                notional_val = parse_number(part)
+                                if notional_val and notional_val >= 100:  # Allow values >= 100 (could be 100K = 100000)
+                                    record['notional'] = notional_val
+                            # Skip 'type' column
+                else:
+                    # Fallback: pattern-based identification
+                    for part in parts:
+                        part = part.strip()
+                        if not part:
+                            continue
+                        
+                        # Symbol/ticker (handle $ prefix: $AAL -> AAL)
+                        if not record.get('symbol'):
+                            cleaned_part = part.replace('$', '').strip()
+                            if re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', cleaned_part.upper()):
+                                record['symbol'] = cleaned_part.upper()
+                                continue
+                        
+                        # Strike price (number, possibly with decimals)
+                        if not record.get('strike'):
+                            # Check if it's a number (but not a date or notional value)
+                            if re.match(r'^\d+\.?\d*$', part.replace(',', '').replace('$', '')):
+                                strike_val = parse_number(part)
+                                # Strike should be reasonable (between 1 and 10000 typically)
+                                if strike_val and 1 <= strike_val <= 10000:
+                                    record['strike'] = strike_val
+                                    continue
+                        
+                        # Skip single letter P or C (option type)
+                        if part.upper() in ['P', 'C', 'PUT', 'CALL']:
+                            continue
+                        
+                        # Expiration date (contains date-like patterns)
+                        if not record.get('expiration'):
+                            parsed_date = parse_date(part)
+                            if parsed_date:
+                                record['expiration'] = parsed_date
+                                continue
+                        
+                        # Notional value (large numbers with K/M/B, usually > 1000)
+                        if not record.get('notional'):
+                            notional_val = parse_number(part)
+                            if notional_val and notional_val >= 1000:  # Notional values are usually in thousands or millions
+                                record['notional'] = notional_val
+                
+                # Only add record if we have at least a symbol
+                if record.get('symbol'):
+                    records.append({
+                        'symbol': record.get('symbol'),
+                        'strike': record.get('strike'),
+                        'expiration': record.get('expiration'),
+                        'notional_value': record.get('notional')
+                    })
+        
+        return records
+        
+    except Exception as e:
+        st.error(f"❌ Error processing image: {e}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
         return []
 
 def extract_symbols_from_text(text: str) -> List[str]:
@@ -1255,7 +2119,7 @@ def add_records_page(manager):
             
             if uploaded_image is not None:
                 # Display the uploaded image
-                st.image(uploaded_image, caption="Uploaded Image", use_column_width=True)
+                st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
         
         with col2:
             # Extract symbols button (moved here for better flow)
@@ -1332,6 +2196,372 @@ def add_records_page(manager):
                 - Use high contrast images
                 - Ensure text is clearly readable
                 - Avoid blurry or distorted images
+                """)
+    
+    st.divider()
+    
+    # Enhanced table data extraction
+    st.subheader("📊 Extract Table Data from Image (Symbol, Strike, Expiration, Notional Value)")
+    
+    if not OCR_AVAILABLE:
+        st.warning("⚠️ OCR functionality not available. To enable table data extraction, install: `pip install pytesseract` and system Tesseract OCR")
+    else:
+        st.markdown("""
+        Upload an image containing a **table** with headers: Ticker/Symbol, Strike, Expiration Date, and Notional Value.
+        The system will automatically extract all fields and create or update records.
+        """)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            uploaded_table_image = st.file_uploader(
+                "Choose an image file with table data",
+                type=['png', 'jpg', 'jpeg', 'bmp', 'tiff'],
+                help="Upload an image containing a table with ticker, strike, expiration date, and notional value",
+                key="table_image_uploader"
+            )
+            
+            if uploaded_table_image is not None:
+                # Display the uploaded image
+                st.image(uploaded_table_image, caption="Uploaded Table Image", use_container_width=True)
+        
+        with col2:
+            # Extract table data button
+            if uploaded_table_image is not None:
+                if st.button("🔍 Extract Table Data", type="primary", key="extract_table_btn"):
+                    with st.spinner("Extracting table data from image..."):
+                        # Reset file pointer for multiple reads
+                        uploaded_table_image.seek(0)
+                        
+                        # Show OCR raw text for debugging
+                        if OCR_AVAILABLE:
+                            try:
+                                image = Image.open(uploaded_table_image)
+                                raw_text = pytesseract.image_to_string(image)
+                                
+                                with st.expander("🔍 View OCR Raw Text (for debugging)"):
+                                    st.text_area("Raw OCR Output", raw_text, height=200, key="ocr_debug")
+                                
+                                # Reset file pointer again for extraction
+                                uploaded_table_image.seek(0)
+                            except Exception as e:
+                                st.warning(f"Could not show OCR debug text: {e}")
+                        
+                        extracted_records = extract_table_data_from_image(uploaded_table_image)
+                        
+                        if extracted_records:
+                            st.session_state.extracted_table_records = extracted_records
+                            st.success(f"✅ Found {len(extracted_records)} records!")
+                        else:
+                            st.warning("⚠️ No table data found in the image. Make sure the image contains a table with headers.")
+                            st.info("💡 Try checking the OCR Raw Text above to see what was extracted. You may need to improve image quality.")
+            
+            # Display and manage extracted table records
+            if 'extracted_table_records' in st.session_state and st.session_state.extracted_table_records:
+                st.write("**Extracted Table Records (Editable):**")
+                st.caption("💡 Review and edit the extracted data below. Fix any errors before importing.")
+                
+                # Initialize edited records in session state if not exists
+                if 'edited_table_records' not in st.session_state:
+                    st.session_state.edited_table_records = st.session_state.extracted_table_records.copy()
+                
+                # Create editable table interface
+                with st.expander("📋 Edit Records", expanded=True):
+                    edited_records = []
+                    
+                    # Table header
+                    header_cols = st.columns([2, 2, 2, 2, 1])
+                    with header_cols[0]:
+                        st.markdown("**Symbol**")
+                    with header_cols[1]:
+                        st.markdown("**Strike**")
+                    with header_cols[2]:
+                        st.markdown("**Expiration Date**")
+                    with header_cols[3]:
+                        st.markdown("**Notional Value**")
+                    with header_cols[4]:
+                        st.markdown("**Actions**")
+                    
+                    st.divider()
+                    
+                    # Editable rows
+                    for idx, record in enumerate(st.session_state.edited_table_records):
+                        row_cols = st.columns([2, 2, 2, 2, 1])
+                        
+                        # Symbol input
+                        with row_cols[0]:
+                            symbol = st.text_input(
+                                "Symbol",
+                                value=str(record.get('symbol', '')),
+                                key=f"edit_symbol_{idx}",
+                                label_visibility="collapsed"
+                            )
+                        
+                        # Strike input
+                        with row_cols[1]:
+                            strike_val = record.get('strike')
+                            strike_str = str(strike_val) if strike_val is not None else ""
+                            strike = st.text_input(
+                                "Strike",
+                                value=strike_str,
+                                key=f"edit_strike_{idx}",
+                                label_visibility="collapsed",
+                                placeholder="e.g., 13"
+                            )
+                            strike_parsed = None
+                            if strike.strip():
+                                try:
+                                    strike_parsed = float(strike.strip())
+                                except:
+                                    pass
+                        
+                        # Expiration date input
+                        with row_cols[2]:
+                            exp_val = record.get('expiration')
+                            exp_str = ""
+                            if exp_val:
+                                if isinstance(exp_val, date):
+                                    exp_str = exp_val.strftime('%Y-%m-%d')
+                                else:
+                                    exp_str = str(exp_val)
+                            exp = st.text_input(
+                                "Expiration",
+                                value=exp_str,
+                                key=f"edit_exp_{idx}",
+                                label_visibility="collapsed",
+                                placeholder="MM/DD/YYYY"
+                            )
+                            exp_parsed = None
+                            if exp.strip():
+                                exp_parsed = parse_date(exp.strip())
+                        
+                        # Notional value input
+                        with row_cols[3]:
+                            notional_val = record.get('notional_value')
+                            notional_str = ""
+                            if notional_val is not None:
+                                notional_str = str(notional_val)
+                            notional = st.text_input(
+                                "Notional",
+                                value=notional_str,
+                                key=f"edit_notional_{idx}",
+                                label_visibility="collapsed",
+                                placeholder="e.g., 1.2M"
+                            )
+                            notional_parsed = None
+                            if notional.strip():
+                                notional_parsed = parse_number(notional.strip())
+                        
+                        # Delete button
+                        with row_cols[4]:
+                            if st.button("🗑️", key=f"delete_row_{idx}", help="Delete this record"):
+                                # Mark for deletion
+                                st.session_state.edited_table_records.pop(idx)
+                                st.rerun()
+                        
+                        # Store edited record
+                        edited_records.append({
+                            'symbol': symbol.strip().upper() if symbol.strip() else None,
+                            'strike': strike_parsed,
+                            'expiration': exp_parsed,
+                            'notional_value': notional_parsed
+                        })
+                    
+                    # Update session state with edited records
+                    st.session_state.edited_table_records = edited_records
+                    
+                    # Action buttons
+                    action_col1, action_col2 = st.columns(2)
+                    with action_col1:
+                        if st.button("➕ Add New Row", key="add_row_btn", use_container_width=True):
+                            st.session_state.edited_table_records.append({
+                                'symbol': None,
+                                'strike': None,
+                                'expiration': None,
+                                'notional_value': None
+                            })
+                            st.rerun()
+                    
+                    with action_col2:
+                        if st.button("🔄 Reset to Original", key="reset_edited_btn", use_container_width=True, help="Reset all edits back to original extracted data"):
+                            if 'extracted_table_records' in st.session_state:
+                                st.session_state.edited_table_records = st.session_state.extracted_table_records.copy()
+                            st.rerun()
+                
+                # Show summary of editable records
+                valid_records = [r for r in st.session_state.edited_table_records if r.get('symbol')]
+                st.write(f"**Ready to import:** {len(valid_records)} valid records (out of {len(st.session_state.edited_table_records)} total)")
+                
+                # Show preview of changes (simplified check)
+                if 'extracted_table_records' in st.session_state:
+                    original_count = len(st.session_state.extracted_table_records)
+                    edited_count = len(st.session_state.edited_table_records)
+                    if original_count != edited_count:
+                        st.info(f"⚠️ Records changed: {original_count} → {edited_count}. Review before importing.")
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    table_source = st.text_input("PDF Source (for all)", placeholder="table_extract.pdf", value="table_extracted", key="table_source")
+                with col_b:
+                    table_date = st.date_input("Date Added (for all)", value=datetime.now().date(), key="table_date")
+                
+                # Import the table records (use edited records)
+                if st.button("📥 Import Table Records", type="primary", key="import_table_btn"):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # Track detailed results
+                    created_records = []
+                    updated_records = []
+                    error_records = []
+                    skipped_records = []
+                    
+                    # Use edited records for import
+                    records_to_import = st.session_state.edited_table_records
+                    total_count = len(records_to_import)
+                    
+                    for i, record in enumerate(records_to_import):
+                        symbol = record.get('symbol', '').strip() if record.get('symbol') else ''
+                        
+                        # Skip records without symbols
+                        if not symbol:
+                            skipped_records.append({
+                                'symbol': symbol or '(empty)',
+                                'reason': 'Missing symbol',
+                                'strike': record.get('strike'),
+                                'expiration': record.get('expiration'),
+                                'notional_value': record.get('notional_value')
+                            })
+                            continue
+                        
+                        status_text.text(f"Processing {symbol}... ({i+1}/{total_count})")
+                        
+                        try:
+                            # Check if record exists before upsert
+                            existed_before = manager.ticker_exists(symbol)
+                            
+                            if manager.upsert_record(
+                                ticker=symbol,
+                                pdf_source=table_source,
+                                date_added=table_date,
+                                price=record.get('strike'),  # Using strike as price
+                                exp=record.get('expiration'),
+                                strike=record.get('strike'),
+                                notional_value=record.get('notional_value')
+                            ):
+                                record_info = {
+                                    'symbol': symbol,
+                                    'strike': record.get('strike'),
+                                    'expiration': record.get('expiration'),
+                                    'notional_value': record.get('notional_value'),
+                                    'pdf_source': table_source,
+                                    'date_added': table_date
+                                }
+                                if existed_before:
+                                    updated_records.append(record_info)
+                                else:
+                                    created_records.append(record_info)
+                            else:
+                                error_records.append({
+                                    'symbol': symbol,
+                                    'reason': 'Upsert returned False',
+                                    'strike': record.get('strike'),
+                                    'expiration': record.get('expiration'),
+                                    'notional_value': record.get('notional_value')
+                                })
+                        except Exception as e:
+                            error_records.append({
+                                'symbol': symbol,
+                                'reason': str(e),
+                                'strike': record.get('strike'),
+                                'expiration': record.get('expiration'),
+                                'notional_value': record.get('notional_value')
+                            })
+                        
+                        progress_bar.progress((i + 1) / total_count)
+                    
+                    # Clear progress bar
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # Display detailed execution report
+                    st.success("✅ Import Complete!")
+                    st.divider()
+                    
+                    # Summary statistics
+                    summary_cols = st.columns(4)
+                    with summary_cols[0]:
+                        st.metric("✅ Created", len(created_records))
+                    with summary_cols[1]:
+                        st.metric("🔄 Updated", len(updated_records))
+                    with summary_cols[2]:
+                        st.metric("⚠️ Errors", len(error_records))
+                    with summary_cols[3]:
+                        st.metric("⏭️ Skipped", len(skipped_records))
+                    
+                    st.divider()
+                    
+                    # Detailed results in expandable sections
+                    if created_records:
+                        with st.expander(f"✅ Created Records ({len(created_records)})", expanded=True):
+                            df_created = pd.DataFrame(created_records)
+                            st.dataframe(df_created, use_container_width=True, hide_index=True)
+                    
+                    if updated_records:
+                        with st.expander(f"🔄 Updated Records ({len(updated_records)})", expanded=True):
+                            df_updated = pd.DataFrame(updated_records)
+                            st.dataframe(df_updated, use_container_width=True, hide_index=True)
+                    
+                    if error_records:
+                        with st.expander(f"⚠️ Error Records ({len(error_records)})", expanded=True):
+                            df_errors = pd.DataFrame(error_records)
+                            st.dataframe(df_errors, use_container_width=True, hide_index=True)
+                            st.warning("Please review these records and fix any issues before re-importing.")
+                    
+                    if skipped_records:
+                        with st.expander(f"⏭️ Skipped Records ({len(skipped_records)})", expanded=False):
+                            df_skipped = pd.DataFrame(skipped_records)
+                            st.dataframe(df_skipped, use_container_width=True, hide_index=True)
+                            st.info("These records were skipped because they don't have valid symbols.")
+                    
+                    # Overall summary
+                    total_processed = len(created_records) + len(updated_records)
+                    total_records = len(records_to_import)
+                    
+                    if total_processed > 0:
+                        success_rate = (total_processed / total_records) * 100
+                        st.info(f"📊 **Summary**: {total_processed} out of {total_records} records processed successfully ({success_rate:.1f}% success rate)")
+                    
+                    st.cache_data.clear()
+                    
+                    # Clear the session state
+                    if 'extracted_table_records' in st.session_state:
+                        del st.session_state.extracted_table_records
+                    if 'edited_table_records' in st.session_state:
+                        del st.session_state.edited_table_records
+                    
+                    # Add option to continue or view database
+                    st.divider()
+                    col_view, col_clear = st.columns(2)
+                    with col_view:
+                        if st.button("👁️ View Database", key="view_db_after_import"):
+                            st.session_state.page = 'view'
+                            st.rerun()
+                    with col_clear:
+                        if st.button("🔄 Import More", key="import_more_btn"):
+                            st.rerun()
+            else:
+                st.info("📷 Upload a table image above to extract structured data")
+                st.markdown("""
+                **Table format requirements:**
+                - Headers: Ticker/Symbol, Strike, Expiration Date, Notional Value
+                - Clear table structure (rows and columns)
+                - High quality image for best OCR results
+                
+                **Tips:**
+                - Ensure table headers are clearly visible
+                - Use high contrast between text and background
+                - Align the table properly in the image
                 """)
     
     st.divider()
@@ -2295,7 +3525,7 @@ def export_import_page(manager):
                 
                 if uploaded_image is not None:
                     # Display the uploaded image
-                    st.image(uploaded_image, caption="Uploaded Image", use_column_width=True)
+                    st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
             
             with col2:
                 # Extract symbols button (moved here for better flow)

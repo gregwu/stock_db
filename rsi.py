@@ -29,8 +29,16 @@ def rsi_wilder(series: pd.Series, length: int = 14) -> pd.Series:
 
 def rvol(volume: pd.Series, length: int = 20) -> pd.Series:
     """Relative Volume - current volume vs average volume over specified period."""
-    avg_volume = volume.rolling(window=length, min_periods=length).mean()
-    rvol = volume / avg_volume
+    # Handle missing or zero volume data (common after hours)
+    volume_clean = volume.fillna(0).replace([np.inf, -np.inf], 0)
+    
+    # Calculate average volume, but handle cases where all volumes are zero
+    avg_volume = volume_clean.rolling(window=length, min_periods=length).mean()
+    
+    # Avoid division by zero - if average volume is 0, return 0 for RVOL
+    rvol = volume_clean / avg_volume.replace(0, np.nan)
+    rvol = rvol.fillna(0)  # Fill NaN values with 0
+    
     return rvol
 
 def fast_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14, d_period: int = 3) -> tuple[pd.Series, pd.Series]:
@@ -57,11 +65,23 @@ def bollinger_bands(close: pd.Series, period: int = 20, std_dev: float = 2.0) ->
     return upper, middle, lower
 
 @st.cache_data(show_spinner=False, ttl=30)
-def fetch_intraday_1m(ticker: str, period: str = "2d", prepost: bool = True) -> pd.DataFrame:
-    """Fetch up to ~2 days of 1-minute data (Yahoo limit)."""
+def fetch_intraday_data(ticker: str, interval: int, period: str = "2d", prepost: bool = True) -> pd.DataFrame:
+    """Fetch intraday data with specified interval (1m, 5m, 10m, 15m, 30m, 60m)."""
+    # Convert interval to yfinance format
+    interval_map = {1: "1m", 5: "5m", 10: "10m", 15: "15m", 30: "30m", 60: "1h"}
+    yf_interval = interval_map.get(interval, "1m")
+    
+    # Adjust period based on interval (longer intervals can fetch more data)
+    if interval >= 60:
+        period = "5d"  # 1 hour intervals can get more data
+    elif interval >= 30:
+        period = "3d"  # 30 minute intervals
+    else:
+        period = "2d"  # 1-15 minute intervals
+    
     df = yf.download(
         tickers=ticker,
-        interval="1m",
+        interval=yf_interval,
         period=period,
         prepost=prepost,
         progress=False,
@@ -186,9 +206,17 @@ with st.sidebar:
     bb_period = st.number_input("Bollinger Bands period", min_value=5, max_value=50, value=20, step=1)
     bb_std_dev = st.number_input("Bollinger Bands std dev", min_value=1.0, max_value=3.0, value=2.0, step=0.1)
 
-    extend_hours = st.checkbox("Include extended hours (1-minute)", value=True)
+    # Minute data interval selection
+    minute_interval = st.selectbox(
+        "Minute Data Interval", 
+        options=[1, 5, 10, 15, 30, 60], 
+        index=0,
+        help="Select the time interval for minute data (1m, 5m, 10m, 15m, 30m, 1h)"
+    )
+    
+    extend_hours = st.checkbox("Include extended hours", value=True)
     autorefresh_sec = st.number_input("Auto-refresh (seconds)", min_value=0, max_value=300, value=0, step=5)
-    st.caption("Note: Yahoo 1-minute data can be delayed/throttled.")
+    st.caption("Note: Yahoo minute data can be delayed/throttled.")
     
     # Manual refresh button
     if st.button("🔄 Refresh Data", type="secondary"):
@@ -218,14 +246,22 @@ selected = selected.strip().upper()
 colA, colB, colC = st.columns([1, 1, 1])
 
 with st.spinner(f"Fetching data for {selected}…"):
-    df_1m = fetch_intraday_1m(selected, period="2d", prepost=extend_hours)
+    df_1m = fetch_intraday_data(selected, minute_interval, period="2d", prepost=extend_hours)
     df_1d = fetch_daily(selected, period="1y")
 
 if df_1d.empty:
     st.error("No daily data returned. Check the ticker symbol.")
     st.stop()
 if df_1m.empty:
-    st.warning("No 1-minute data returned (Yahoo limit or off hours). Showing daily only.")
+    st.warning(f"No {minute_interval}-minute data returned (Yahoo limit or off hours). Showing daily only.")
+else:
+    # Check for missing volume data (common after hours)
+    volume_missing = df_1m["Volume"].isna().sum()
+    volume_zero = (df_1m["Volume"] == 0).sum()
+    total_points = len(df_1m)
+    
+    if volume_missing > total_points * 0.5 or volume_zero > total_points * 0.5:
+        st.warning(f"⚠️ Limited volume data available: {volume_missing} missing, {volume_zero} zero values. This is common after hours.")
 
 # -----------------------------
 # Compute RSI, RVOL, Fast Stochastic, and Bollinger Bands
@@ -275,9 +311,9 @@ with colA:
     st.metric("RVOL (daily)", f"{last_daily_rvol:0.2f}x", 
               delta="High volume" if last_daily_rvol >= 1.5 else ("Low volume" if last_daily_rvol <= 0.5 else "Normal"))
     if not np.isnan(last_1m_close):
-        st.metric("Last 1-min close", f"{last_1m_close:,.2f}", help=f"Timestamp: {fmt_ts(last_1m_time)}")
+        st.metric(f"Last {minute_interval}-min close", f"{last_1m_close:,.2f}", help=f"Timestamp: {fmt_ts(last_1m_time)}")
         if not np.isnan(last_1m_rvol):
-            st.metric("RVOL (1m)", f"{last_1m_rvol:0.2f}x",
+            st.metric(f"RVOL ({minute_interval}m)", f"{last_1m_rvol:0.2f}x",
                       delta="High volume" if last_1m_rvol >= 1.5 else ("Low volume" if last_1m_rvol <= 0.5 else "Normal"))
 
 with colB:
@@ -289,17 +325,17 @@ with colB:
     st.metric("Stoch %D", f"{last_daily_stoch_d:0.1f}")
 
 with colC:
-    st.subheader("1-Minute Indicators")
+    st.subheader(f"{minute_interval}-Minute Indicators")
     if not np.isnan(last_1m_rsi):
-        st.metric("RSI (1m)", f"{last_1m_rsi:0.1f}",
+        st.metric(f"RSI ({minute_interval}m)", f"{last_1m_rsi:0.1f}",
                   delta="Overbought" if last_1m_rsi >= ob_level else ("Oversold" if last_1m_rsi <= os_level else "Neutral"),
                   help=f"{cross70}; {cross30}")
         if not np.isnan(last_1m_stoch_k):
-            st.metric("Stoch %K (1m)", f"{last_1m_stoch_k:0.1f}",
+            st.metric(f"Stoch %K ({minute_interval}m)", f"{last_1m_stoch_k:0.1f}",
                       delta="Overbought" if last_1m_stoch_k >= 80 else ("Oversold" if last_1m_stoch_k <= 20 else "Neutral"))
-            st.metric("Stoch %D (1m)", f"{last_1m_stoch_d:0.1f}")
+            st.metric(f"Stoch %D ({minute_interval}m)", f"{last_1m_stoch_d:0.1f}")
     else:
-        st.info("1-minute data not available now.")
+        st.info(f"{minute_interval}-minute data not available now.")
 
 st.divider()
 
@@ -370,7 +406,7 @@ with col1:
     st.bar_chart(d1_vol, height=100)
 
 with col2:
-    st.markdown("**1-Minute Close with BB & Volume**")
+    st.markdown(f"**{minute_interval}-Minute Close with BB & Volume**")
     if not df_1m.empty:
         # Calculate price range for better Y-axis scaling
         recent_data = df_1m.tail(300)
@@ -425,11 +461,11 @@ with col2:
             st.line_chart(m1.tail(300), height=400)
         
         # Volume chart below price
-        st.markdown("**1-Minute Volume**")
+        st.markdown(f"**{minute_interval}-Minute Volume**")
         m1_vol = pd.DataFrame({"Volume": df_1m["Volume"]})
         st.bar_chart(m1_vol.tail(300), height=100)
     else:
-        st.info("No 1-minute data available")
+        st.info(f"No {minute_interval}-minute data available")
 
 # RSI Charts
 st.markdown("### RSI")
@@ -440,12 +476,12 @@ with col1:
     st.line_chart(d2, height=150)
 
 with col2:
-    st.markdown("**1-Minute RSI**")
+    st.markdown(f"**{minute_interval}-Minute RSI**")
     if not df_1m.empty:
         m2 = pd.DataFrame({f"RSI {rsi_len_1m}": df_1m["RSI"]})
         st.line_chart(m2.tail(300), height=150)
     else:
-        st.info("No 1-minute data available")
+        st.info(f"No {minute_interval}-minute data available")
 
 # Stochastic Charts
 st.markdown("### Stochastic Oscillator")
@@ -459,7 +495,7 @@ with col1:
     st.line_chart(d4, height=150)
 
 with col2:
-    st.markdown("**1-Minute Stochastic**")
+    st.markdown(f"**{minute_interval}-Minute Stochastic**")
     if not df_1m.empty:
         m4 = pd.DataFrame({
             f"Stoch %K {stoch_k_period}": df_1m["STOCH_K"],
@@ -467,7 +503,7 @@ with col2:
         })
         st.line_chart(m4.tail(300), height=150)
     else:
-        st.info("No 1-minute data available")
+        st.info(f"No {minute_interval}-minute data available")
 
 # RVOL Charts
 st.markdown("### Relative Volume (RVOL)")
@@ -478,12 +514,12 @@ with col1:
     st.line_chart(d3, height=150)
 
 with col2:
-    st.markdown("**1-Minute RVOL**")
+    st.markdown(f"**{minute_interval}-Minute RVOL**")
     if not df_1m.empty:
         m3 = pd.DataFrame({f"RVOL {rvol_length}": df_1m["RVOL"]})
         st.line_chart(m3.tail(300), height=150)
     else:
-        st.info("No 1-minute data available")
+        st.info(f"No {minute_interval}-minute data available")
 
 # Comprehensive Buy/Sell Suggestions
 st.markdown("### Comprehensive Buy/Sell Suggestions")
@@ -528,7 +564,7 @@ with buy_sell_col1:
     st.caption(f"Daily: RSI={last_daily_rsi:.1f}, RVOL={last_daily_rvol:.2f}x, Stoch K={last_daily_stoch_k:.1f}, D={last_daily_stoch_d:.1f}")
 
 with buy_sell_col2:
-    st.markdown("**1-Minute Trading Signals**")
+    st.markdown(f"**{minute_interval}-Minute Trading Signals**")
     
     if not df_1m.empty and not np.isnan(last_1m_rsi):
         # 1-Minute signals
@@ -568,22 +604,22 @@ with buy_sell_col2:
         else:
             st.info("🟡 No clear 1-minute signals")
         
-        st.caption(f"1-Min: RSI={last_1m_rsi:.1f}, RVOL={last_1m_rvol:.2f}x, Stoch K={last_1m_stoch_k:.1f}, D={last_1m_stoch_d:.1f}")
+        st.caption(f"{minute_interval}-Min: RSI={last_1m_rsi:.1f}, RVOL={last_1m_rvol:.2f}x, Stoch K={last_1m_stoch_k:.1f}, D={last_1m_stoch_d:.1f}")
     else:
-        st.info("No 1-minute data available")
+        st.info(f"No {minute_interval}-minute data available")
 
 # Data info and parameters
 if not df_1m.empty:
-    st.caption(f"📊 1-Minute Data: {len(df_1m)} points | Latest: {fmt_ts(df_1m.index[-1])} | Range: {fmt_ts(df_1m.index[0])} to {fmt_ts(df_1m.index[-1])}")
+    st.caption(f"📊 {minute_interval}-Minute Data: {len(df_1m)} points | Latest: {fmt_ts(df_1m.index[-1])} | Range: {fmt_ts(df_1m.index[0])} to {fmt_ts(df_1m.index[-1])}")
     
     close_values = df_1m["Close"].dropna()
     if len(close_values) > 1:
         price_range = close_values.max() - close_values.min()
-        st.caption(f"💰 1-Minute Price range: ${price_range:.2f} (${close_values.min():.2f} - ${close_values.max():.2f})")
+        st.caption(f"💰 {minute_interval}-Minute Price range: ${price_range:.2f} (${close_values.min():.2f} - ${close_values.max():.2f})")
     else:
         st.caption("⚠️ Only one data point - market may be closed")
 
-st.caption(f"Parameters: Daily RSI={rsi_len_daily} | 1-Min RSI={rsi_len_1m} | RVOL={rvol_length} | Stoch K={stoch_k_period}, D={stoch_d_period} | BB Period={bb_period}, Std={bb_std_dev}")
+st.caption(f"Parameters: Daily RSI={rsi_len_daily} | {minute_interval}-Min RSI={rsi_len_1m} | RVOL={rvol_length} | Stoch K={stoch_k_period}, D={stoch_d_period} | BB Period={bb_period}, Std={bb_std_dev}")
 
 st.divider()
 
@@ -605,6 +641,8 @@ def status_badge(rsi_val: float, ob: int, os: int) -> str:
 def volume_status(rvol_val: float) -> str:
     if np.isnan(rvol_val):
         return "⚪ n/a"
+    if rvol_val == 0:
+        return "⚪ No Volume (After Hours)"
     if rvol_val >= 1.5:
         return "🔴 High Volume"
     if rvol_val <= 0.5:
@@ -633,11 +671,11 @@ with sig_cols[0]:
     st.write(stoch_status(last_daily_stoch_k, last_daily_stoch_d))
 
 with sig_cols[1]:
-    st.markdown("**1-Minute RSI**")
+    st.markdown(f"**{minute_interval}-Minute RSI**")
     st.write(status_badge(last_1m_rsi, ob_level, os_level) if not np.isnan(last_1m_rsi) else "⚪ n/a")
-    st.markdown("**1-Minute RVOL**")
+    st.markdown(f"**{minute_interval}-Minute RVOL**")
     st.write(volume_status(last_1m_rvol) if not np.isnan(last_1m_rvol) else "⚪ n/a")
-    st.markdown("**1-Minute Stochastic**")
+    st.markdown(f"**{minute_interval}-Minute Stochastic**")
     st.write(stoch_status(last_1m_stoch_k, last_1m_stoch_d) if not np.isnan(last_1m_stoch_k) else "⚪ n/a")
 
 with sig_cols[2]:
@@ -681,13 +719,13 @@ with sig_cols[3]:
     if last_daily_rsi >= 70:
         sell_signals.append("Daily RSI ≥ 70 (Overbought)")
     if not np.isnan(last_1m_rsi) and last_1m_rsi >= 70:
-        sell_signals.append("1m RSI ≥ 70 (Overbought)")
+        sell_signals.append(f"{minute_interval}m RSI ≥ 70 (Overbought)")
     
     # BUY conditions: RSI below 30 AND RVOL > 3
     if last_daily_rsi <= 30 and last_daily_rvol >= 3.0:
         buy_signals.append("Daily: RSI ≤ 30 + RVOL ≥ 3.0")
     if not np.isnan(last_1m_rsi) and not np.isnan(last_1m_rvol) and last_1m_rsi <= 30 and last_1m_rvol >= 3.0:
-        buy_signals.append("1m: RSI ≤ 30 + RVOL ≥ 3.0")
+        buy_signals.append(f"{minute_interval}m: RSI ≤ 30 + RVOL ≥ 3.0")
     
     # Display suggestions
     if sell_signals:
