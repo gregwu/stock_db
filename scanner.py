@@ -1269,7 +1269,33 @@ class StockScanner:
         tickers = self.get_tickers(date_filter, max_tickers)
         predictions = []
         
+        # Check for symbols processed within last 3 hours
+        skip_tickers = set()
+        try:
+            import psycopg2
+            from datetime import datetime, timedelta
+            conn = psycopg2.connect(**DB_CONFIG)
+            with conn.cursor() as cur:
+                # Get tickers that were updated within last 3 hours
+                three_hours_ago = datetime.now() - timedelta(hours=3)
+                cur.execute("""
+                    SELECT DISTINCT ticker 
+                    FROM seekingalpha 
+                    WHERE created_at >= %s
+                """, (three_hours_ago,))
+                skip_tickers = {row[0].upper() for row in cur.fetchall()}
+            conn.close()
+            if skip_tickers:
+                logger.info(f"Skipping {len(skip_tickers)} tickers processed within last 3 hours: {sorted(skip_tickers)}")
+        except Exception as e:
+            logger.warning(f"Could not check recent processing times: {e}")
+        
         for i, ticker in enumerate(tickers, 1):
+            # Skip if processed within last 3 hours
+            if ticker.upper() in skip_tickers:
+                logger.info(f"Skipping {ticker} - processed within last 3 hours ({i}/{len(tickers)})")
+                continue
+            
             logger.info(f"Processing {ticker} ({i}/{len(tickers)})")
             
             # Get stock data
@@ -1381,13 +1407,14 @@ class StockScanner:
                     with conn.cursor() as cur:
                         # Insert or update record with option data
                         cur.execute("""
-                            INSERT INTO seekingalpha (ticker, price, exp, premiums, date_added)
-                            VALUES (%s, %s, %s, %s, CURRENT_DATE)
+                            INSERT INTO seekingalpha (ticker, price, exp, premiums, date_added, created_at)
+                            VALUES (%s, %s, %s, %s, CURRENT_DATE, CURRENT_TIMESTAMP)
                             ON CONFLICT (ticker, date_added) 
                             DO UPDATE SET 
                                 price = EXCLUDED.price,
                                 exp = EXCLUDED.exp,
-                                premiums = EXCLUDED.premiums
+                                premiums = EXCLUDED.premiums,
+                                created_at = CURRENT_TIMESTAMP
                         """, (ticker, price, exp_date, premiums))
                         
                         if cur.rowcount > 0:

@@ -1109,7 +1109,11 @@ def extract_table_data_from_image(image_file) -> List[Dict]:
                         strike_values.insert(0, first_strike_candidate)
             
             # Match records with proper alignment using coordinate-based matching if available
-            if ocr_data_dict and ticker_rows and strike_rows:
+            # Use coordinate matching if we have OCR data AND found tickers/strikes in rows
+            # Otherwise, fall back to index-based matching
+            use_coordinate_matching = ocr_data_dict and len(ticker_rows) > 0 and len(strike_rows) > 0
+            
+            if use_coordinate_matching:
                 # Use coordinate-based matching: match tickers and strikes by row Y position
                 matched_records = {}
                 
@@ -1174,6 +1178,10 @@ def extract_table_data_from_image(image_file) -> List[Dict]:
                                         except:
                                             pass
                     
+                    # Fallback: if coordinate matching didn't find strike, use index-based matching
+                    if strike_val is None and i < len(strike_values):
+                        strike_val = strike_values[i]
+                    
                     # Find expiration and notional on same row
                     ticker_pos = None
                     for ticker_y, ticker_name in ticker_rows:
@@ -1194,6 +1202,12 @@ def extract_table_data_from_image(image_file) -> List[Dict]:
                             if abs(not_y - ticker_pos) < 20:
                                 notional_val = not_val
                                 break
+                    
+                    # Fallback: if coordinate matching didn't find these, use index-based
+                    if exp_val is None and i < len(expiration_values):
+                        exp_val = expiration_values[i]
+                    if notional_val is None and i < len(notional_values):
+                        notional_val = notional_values[i]
                     
                     record = {
                         'symbol': ticker,
@@ -1356,6 +1370,20 @@ def extract_table_data_from_image(image_file) -> List[Dict]:
                         'expiration': record.get('expiration'),
                         'notional_value': record.get('notional')
                     })
+        
+        # Final safety check: If we have ticker_values but no records were created,
+        # create records from the columnar data using index-based matching
+        if not records and ticker_values:
+            # Debug: Log what we found (only if records is still empty)
+            # This should have been handled earlier, but add as final fallback
+            for i in range(len(ticker_values)):
+                record = {
+                    'symbol': ticker_values[i],
+                    'strike': strike_values[i] if i < len(strike_values) else None,
+                    'expiration': expiration_values[i] if i < len(expiration_values) else None,
+                    'notional_value': notional_values[i] if i < len(notional_values) else None
+                }
+                records.append(record)
         
         return records
         
