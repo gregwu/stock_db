@@ -489,7 +489,7 @@ with st.sidebar:
     ticker = st.text_input("Main ticker", st.session_state.settings['ticker'])
     st.session_state.settings['ticker'] = ticker
 
-    period_options = ["1d", "5d", "2wk", "1mo", "2mo", "3mo"]
+    period_options = ["1d", "5d", "2wk", "1mo", "2mo", "3mo", "6mo", "1y"]
     try:
         period_index = period_options.index(st.session_state.settings['period'])
     except ValueError:
@@ -728,16 +728,35 @@ if run_backtest_btn:
     with st.spinner(f"Downloading {ticker} data..."):
         # Map period to yfinance compatible values and adjust for better data display
         # yfinance supports: {"1d","5d","1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
-        period_map = {
-            "1d": "5d",    # Download 5 days for 1d period to get enough data for indicators
-            "5d": "5d",
-            "2wk": "1mo",  # yfinance doesn't support 2wk, use 1mo instead
-            "1mo": "1mo",
-            "2mo": "3mo",  # yfinance doesn't support 2mo, use 3mo instead
-            "3mo": "3mo"
-        }
+
+        # When interval is 1d (daily), adjust period to get more historical data
+        if interval == "1d":
+            # For daily interval, map period differently to get sufficient data
+            period_map = {
+                "1d": "5d",     # Get 5 days for 1d period
+                "5d": "5d",     # Get 5 days for 5d period
+                "2wk": "1mo",   # Get 1 month for 2wk period
+                "1mo": "3mo",   # Get 3 months for 1mo period (need more data for daily indicators)
+                "2mo": "6mo",   # Get 6 months for 2mo period
+                "3mo": "1y",    # Get 1 year for 3mo period
+                "6mo": "2y",    # Get 2 years for 6mo period
+                "1y": "5y"      # Get 5 years for 1y period
+            }
+        else:
+            # For intraday intervals, use existing mapping
+            period_map = {
+                "1d": "5d",    # Download 5 days for 1d period to get enough data for indicators
+                "5d": "5d",
+                "2wk": "1mo",  # yfinance doesn't support 2wk, use 1mo instead
+                "1mo": "1mo",
+                "2mo": "3mo",  # yfinance doesn't support 2mo, use 3mo instead
+                "3mo": "3mo",
+                "6mo": "6mo",
+                "1y": "1y"
+            }
+
         main_period = period_map.get(period, period)
-        # Use extended hours for intraday intervals only (like check.py does)
+        # Use extended hours for intraday intervals only
         use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
         raw = yf.download(ticker, period=main_period,
                           interval=interval, progress=False, prepost=use_extended_hours)
@@ -791,8 +810,11 @@ if run_backtest_btn:
             last_time = df1.index[-1]
 
             if period == "1d":
-                # Show only last 26 hours for 1d period
-                cutoff_time = last_time - pd.Timedelta(hours=26)
+                # Show only last 26 hours for 1d period (for intraday) or 1 day (for daily)
+                if interval == "1d":
+                    cutoff_time = last_time - pd.Timedelta(days=1)
+                else:
+                    cutoff_time = last_time - pd.Timedelta(hours=26)
                 df1_display = df1[df1.index >= cutoff_time].copy()
                 df5_display = df5[df5.index >= cutoff_time].copy()
             elif period == "2wk":
@@ -803,6 +825,16 @@ if run_backtest_btn:
             elif period == "2mo":
                 # Show only last 2 months (60 days) for 2mo period
                 cutoff_time = last_time - pd.Timedelta(days=60)
+                df1_display = df1[df1.index >= cutoff_time].copy()
+                df5_display = df5[df5.index >= cutoff_time].copy()
+            elif period == "6mo":
+                # Show only last 6 months (180 days) for 6mo period
+                cutoff_time = last_time - pd.Timedelta(days=180)
+                df1_display = df1[df1.index >= cutoff_time].copy()
+                df5_display = df5[df5.index >= cutoff_time].copy()
+            elif period == "1y":
+                # Show only last 1 year (365 days) for 1y period
+                cutoff_time = last_time - pd.Timedelta(days=365)
                 df1_display = df1[df1.index >= cutoff_time].copy()
                 df5_display = df5[df5.index >= cutoff_time].copy()
             else:
@@ -973,12 +1005,13 @@ if run_backtest_btn:
         # MACD zero line
         fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, yref='y4')
 
-        # Add shaded regions for extended hours
+        # Add shaded regions for extended hours (only for intraday intervals)
         # Data timestamps are now in US Eastern Time (New York)
         # Regular market hours: 9:30 AM to 4:00 PM ET
         # Extended hours: before 9:30 AM or after 4:00 PM ET
         shapes = []
-        if hasattr(df5_display.index, 'hour'):
+        # Only show extended hours shading for intraday intervals (not for daily data)
+        if interval != "1d" and hasattr(df5_display.index, 'hour'):
             for i in range(len(df5_display)):
                 timestamp = df5_display.index[i]
                 if hasattr(timestamp, 'hour'):
@@ -1012,19 +1045,22 @@ if run_backtest_btn:
                             layer="below",
                             line_width=0,
                         ))
-        else:
-            shapes = []
 
         # Update layout with single x-axis and multiple y-axes using domains
-        # Remove gaps by hiding weekends and overnight hours (8pm to 4am ET)
-        rangebreaks = [
-            dict(bounds=["sat", "mon"]),  # Hide weekends
-            dict(bounds=[20, 4], pattern="hour")  # Hide overnight hours (8pm to 4am)
-        ]
+        # Remove gaps by hiding weekends and overnight hours (only for intraday intervals)
+        if interval == "1d":
+            # For daily data, don't hide any gaps - show continuous chart
+            rangebreaks = []
+        else:
+            # For intraday data, hide both weekends and overnight hours
+            rangebreaks = [
+                dict(bounds=["sat", "mon"]),  # Hide weekends
+                dict(bounds=[20, 4], pattern="hour")  # Hide overnight hours (8pm to 4am)
+            ]
 
         # Set x-axis range to match filtered period
         xaxis_range = None
-        if period in ["1d", "2wk", "2mo"] and not df5_display.empty:
+        if period in ["1d", "2wk", "2mo", "6mo", "1y"] and not df5_display.empty:
             # Set range to show from cutoff_time to last_time
             xaxis_range = [cutoff_time, last_time]
 
