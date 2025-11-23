@@ -6,6 +6,7 @@ import datetime as dt
 import plotly.graph_objs as go
 import json
 import os
+from scipy.signal import argrelextrema
 
 # ---------- Settings persistence ----------
 
@@ -128,31 +129,28 @@ def backtest_symbol(df1,
                     use_macd_below_threshold=False,
                     macd_below_threshold=0.0,
                     use_macd_above_threshold=False,
-                    macd_above_threshold=0.0):
+                    macd_above_threshold=0.0,
+                    use_macd_peak=False,
+                    use_macd_valley=False):
     """
     Apply Greg's rules to a single symbol.
     Returns:
-        df1 (1m data with RSI),
-        df5 (5m resampled with EMA/BB),
+        df1 (original interval data with RSI),
+        df5 (same as df1, kept for backward compatibility),
         trades_df,
         logs_df
     """
     logs = []
 
-    # 1-min RSI
+    # Calculate RSI on the selected interval data
     df1 = df1.copy()
-    df1["rsi_1m"] = rsi(df1["Close"], 14)
+    df1["rsi"] = rsi(df1["Close"], 14)
 
-    # Resample to 5-min
-    df5 = df1.resample("5T").agg({
-        "Open": "first",
-        "High": "max",
-        "Low": "min",
-        "Close": "last",
-        "Volume": "sum"
-    }).dropna()
+    # Use the input data directly (no resampling)
+    # df5 is kept for backward compatibility but points to same data
+    df5 = df1.copy()
 
-    # 5-min EMA9, EMA21 and BB(20,2)
+    # Calculate EMA9, EMA21 and BB(20,2) on selected interval
     df5["ema9"] = ema(df5["Close"], 9)
     df5["ema21"] = ema(df5["Close"], 21)
     bb_mid, bb_up, bb_low = bollinger_bands(df5["Close"], 20, 2)
@@ -166,8 +164,18 @@ def backtest_symbol(df1,
     df5["macd_signal"] = signal_line
     df5["macd_hist"] = histogram
 
-    # Map last 1-min RSI into each 5-min candle
-    df5["rsi_1m_last"] = df1["rsi_1m"].resample("5T").last()
+    # Detect MACD peaks and valleys using argrelextrema (order=3 means look 3 candles left and right)
+    df5["macd_peak"] = False
+    df5["macd_valley"] = False
+    if len(df5) > 6:  # Need at least 7 candles for order=3
+        macd_values = df5["macd"].values
+        peak_indices = argrelextrema(macd_values, np.greater, order=3)[0]
+        valley_indices = argrelextrema(macd_values, np.less, order=3)[0]
+        df5.iloc[peak_indices, df5.columns.get_loc("macd_peak")] = True
+        df5.iloc[valley_indices, df5.columns.get_loc("macd_valley")] = True
+
+    # RSI is now calculated on the selected interval
+    df5["rsi_last"] = df5["rsi"]
 
     # Calculate EMA crossovers (for entry and exit detection)
     df5["ema9_prev"] = df5["ema9"].shift(1)
@@ -199,7 +207,7 @@ def backtest_symbol(df1,
         ema21_prev = row["ema21_prev"]
         bb_low_v = row["bb_low"]
         bb_up_v = row["bb_up"]
-        rsi_last = row["rsi_1m_last"]
+        rsi_last = row["rsi_last"]
         vol = row["Volume"]
         prev_vol = df5["Volume"].shift(1).loc[t]
         macd_val = row["macd"]
@@ -231,12 +239,16 @@ def backtest_symbol(df1,
                           macd_val is not np.nan and macd_signal_val is not np.nan and
                           macd_prev >= macd_signal_prev and macd_val < macd_signal_val)
 
+        # Detect MACD peaks and valleys
+        is_macd_peak = row.get("macd_peak", False)
+        is_macd_valley = row.get("macd_valley", False)
+
         # ---- Manage open position ----
         if position is not None:
             bar_high = row["High"]
             bar_low = row["Low"]
 
-            # Stop loss (if enabled)
+            # Stop loss (if enabled) - always takes priority
             if use_stop_loss and bar_low <= position["entry_price"] * (1 - stop_loss):
                 exit_price = position["entry_price"] * (1 - stop_loss)
                 trades.append((position["entry_time"], position["entry_price"],
@@ -250,7 +262,7 @@ def backtest_symbol(df1,
                 position = None
                 continue
 
-            # Take profit (if enabled)
+            # Take profit (if enabled) - always takes priority
             if use_take_profit and bar_high >= position["entry_price"] * (1 + tp_pct):
                 exit_price = position["entry_price"] * (1 + tp_pct)
                 trades.append((position["entry_time"], position["entry_price"],
@@ -264,100 +276,56 @@ def backtest_symbol(df1,
                 position = None
                 continue
 
-            # RSI Overbought exit
-            if use_rsi_overbought and rsi_last > rsi_overbought_threshold:
-                exit_price = close
-                trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "RSI_OB"))
-                logs.append({
-                    "time": t,
-                    "event": "exit_RSI_OB",
-                    "price": exit_price,
-                    "note": f"RSI overbought exit (RSI={rsi_last:.1f} > {rsi_overbought_threshold})"
-                })
-                position = None
-                continue
+            # Build exit conditions list - ALL must be satisfied
+            exit_conditions = []
 
-            # EMA cross down exit (bearish signal)
-            if use_ema_cross_down and ema_cross_down:
-                exit_price = close
-                trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "EMA_X_DOWN"))
-                logs.append({
-                    "time": t,
-                    "event": "exit_EMA_X_DOWN",
-                    "price": exit_price,
-                    "note": f"EMA9 crossed below EMA21 (bearish)"
-                })
-                position = None
-                continue
+            if use_rsi_overbought:
+                exit_conditions.append(rsi_last > rsi_overbought_threshold)
+            if use_ema_cross_down:
+                exit_conditions.append(ema_cross_down)
+            if use_price_below_ema9:
+                exit_conditions.append(ema9 is not np.nan and close < ema9)
+            if use_bb_cross_down:
+                exit_conditions.append(bb_cross_down)
+            if use_macd_cross_down:
+                exit_conditions.append(macd_cross_down)
+            if use_price_below_ema21:
+                exit_conditions.append(ema21 is not np.nan and close < ema21)
+            if use_macd_above_threshold:
+                exit_conditions.append(macd_val is not np.nan and macd_val > macd_above_threshold)
+            if use_macd_peak:
+                exit_conditions.append(is_macd_peak)
 
-            # Price below EMA9 exit
-            if use_price_below_ema9 and ema9 is not np.nan and close < ema9:
+            # Check if all enabled exit conditions are met
+            if exit_conditions and all(exit_conditions):
                 exit_price = close
-                trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "PRICE_BELOW_EMA9"))
-                logs.append({
-                    "time": t,
-                    "event": "exit_PRICE_BELOW_EMA9",
-                    "price": exit_price,
-                    "note": f"Price fell below EMA9 (Close={close:.2f}, EMA9={ema9:.2f})"
-                })
-                position = None
-                continue
 
-            # BB cross down exit (price crosses below lower band)
-            if use_bb_cross_down and bb_cross_down:
-                exit_price = close
-                trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "BB_X_DOWN"))
-                logs.append({
-                    "time": t,
-                    "event": "exit_BB_X_DOWN",
-                    "price": exit_price,
-                    "note": f"Price crossed below BB lower (Close={close:.2f}, BB Low={bb_low_v:.2f})"
-                })
-                position = None
-                continue
+                # Build exit note based on which conditions were checked
+                exit_note_parts = []
+                if use_rsi_overbought:
+                    exit_note_parts.append(f"RSI > {rsi_overbought_threshold} (RSI={rsi_last:.1f})")
+                if use_ema_cross_down:
+                    exit_note_parts.append("EMA9 crossed below EMA21")
+                if use_price_below_ema9:
+                    exit_note_parts.append(f"Price < EMA9 (Close={close:.2f}, EMA9={ema9:.2f})")
+                if use_bb_cross_down:
+                    exit_note_parts.append(f"Price crossed below BB lower (Close={close:.2f}, BB Low={bb_low_v:.2f})")
+                if use_macd_cross_down:
+                    exit_note_parts.append(f"MACD crossed below signal (MACD={macd_val:.4f}, Signal={macd_signal_val:.4f})")
+                if use_price_below_ema21:
+                    exit_note_parts.append(f"Price < EMA21 (Close={close:.2f}, EMA21={ema21:.2f})")
+                if use_macd_above_threshold:
+                    exit_note_parts.append(f"MACD > {macd_above_threshold} (MACD={macd_val:.4f})")
+                if use_macd_peak:
+                    exit_note_parts.append(f"MACD peak (MACD={macd_val:.4f})")
 
-            # MACD cross down exit (MACD line crosses below signal line - bearish)
-            if use_macd_cross_down and macd_cross_down:
-                exit_price = close
                 trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "MACD_X_DOWN"))
+                               t, exit_price, "EXIT_CONDITIONS"))
                 logs.append({
                     "time": t,
-                    "event": "exit_MACD_X_DOWN",
+                    "event": "exit_conditions_met",
                     "price": exit_price,
-                    "note": f"MACD crossed below signal line (MACD={macd_val:.4f}, Signal={macd_signal_val:.4f})"
-                })
-                position = None
-                continue
-
-            # Price below EMA21 exit
-            if use_price_below_ema21 and ema21 is not np.nan and close < ema21:
-                exit_price = close
-                trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "PRICE_BELOW_EMA21"))
-                logs.append({
-                    "time": t,
-                    "event": "exit_PRICE_BELOW_EMA21",
-                    "price": exit_price,
-                    "note": f"Price fell below EMA21 (Close={close:.2f}, EMA21={ema21:.2f})"
-                })
-                position = None
-                continue
-
-            # MACD above threshold exit
-            if use_macd_above_threshold and macd_val is not np.nan and macd_val > macd_above_threshold:
-                exit_price = close
-                trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "MACD_ABOVE_THRESHOLD"))
-                logs.append({
-                    "time": t,
-                    "event": "exit_MACD_ABOVE_THRESHOLD",
-                    "price": exit_price,
-                    "note": f"MACD exceeded threshold (MACD={macd_val:.4f}, Threshold={macd_above_threshold:.4f})"
+                    "note": f"Exit: {', '.join(exit_note_parts)}"
                 })
                 position = None
                 continue
@@ -378,7 +346,7 @@ def backtest_symbol(df1,
                 # If RSI check is disabled, always consider setup active
                 setup_active = True
 
-            # 2) Entry when price recovers on 5-min
+            # 2) Entry when price recovers on selected interval
             if setup_active:
                 # Build entry conditions based on enabled rules
                 conditions = []
@@ -395,6 +363,8 @@ def backtest_symbol(df1,
                     conditions.append(ema21 is not np.nan and close > ema21)
                 if use_macd_below_threshold:
                     conditions.append(macd_val is not np.nan and macd_val < macd_below_threshold)
+                if use_macd_valley:
+                    conditions.append(is_macd_valley)
                 if use_volume:
                     conditions.append(prev_vol is not np.nan and vol >= prev_vol)
 
@@ -425,6 +395,8 @@ def backtest_symbol(df1,
                         note_parts.append(f"price > EMA21 (Close={close:.2f}, EMA21={ema21:.2f})")
                     if use_macd_below_threshold:
                         note_parts.append(f"MACD < {macd_below_threshold} (MACD={macd_val:.4f})")
+                    if use_macd_valley:
+                        note_parts.append(f"MACD valley detected (MACD={macd_val:.4f})")
                     if use_volume:
                         note_parts.append("volume rising")
 
@@ -504,6 +476,8 @@ if 'settings' not in st.session_state:
             'macd_below_threshold': 0.0,
             'use_macd_above_threshold': False,
             'macd_above_threshold': 0.0,
+            'use_macd_valley': False,
+            'use_macd_peak': False,
             'use_time_filter': False,
             'avoid_after_time': '15:00',
             'show_signals': True,
@@ -544,13 +518,13 @@ with st.sidebar:
     # Entry Conditions
     st.markdown("**Entry Conditions (all must be met):**")
     use_rsi = st.checkbox("RSI Oversold", value=st.session_state.settings['use_rsi'],
-                         help="1m RSI must be below threshold before entry")
+                         help="RSI must be below threshold before entry")
     st.session_state.settings['use_rsi'] = use_rsi
 
     rsi_threshold = st.number_input("RSI oversold threshold", min_value=10, max_value=50,
                                     value=st.session_state.settings['rsi_threshold'],
                                     disabled=not use_rsi,
-                                    help="Alert when 1m RSI falls below this level")
+                                    help="Alert when RSI falls below this level")
     st.session_state.settings['rsi_threshold'] = rsi_threshold
 
     use_ema_cross_up = st.checkbox("EMA9 crosses above EMA21",
@@ -602,12 +576,21 @@ with st.sidebar:
                                             help="Enter when MACD is below this value")
     st.session_state.settings['macd_below_threshold'] = macd_below_threshold
 
+    # Handle backwards compatibility for use_macd_valley
+    if 'use_macd_valley' not in st.session_state.settings:
+        st.session_state.settings['use_macd_valley'] = False
+
+    use_macd_valley = st.checkbox("MACD Valley (turning up)",
+                                   value=st.session_state.settings['use_macd_valley'],
+                                   help="Entry when MACD valley is detected (MACD turning up)")
+    st.session_state.settings['use_macd_valley'] = use_macd_valley
+
     use_volume = st.checkbox("Volume Rising", value=st.session_state.settings['use_volume'],
-                            help="Current 5m volume >= previous 5m volume")
+                            help="Current candle volume >= previous candle volume")
     st.session_state.settings['use_volume'] = use_volume
 
     # Exit Rules
-    st.markdown("**Exit Rules:**")
+    st.markdown("**Exit Rules (all must be met):**")
     use_stop_loss = st.checkbox("Exit on Stop Loss", value=st.session_state.settings['use_stop_loss'],
                                 help="Exit when price drops by specified %")
     st.session_state.settings['use_stop_loss'] = use_stop_loss
@@ -632,14 +615,14 @@ with st.sidebar:
 
     use_rsi_overbought = st.checkbox("Exit on RSI Overbought",
                                       value=st.session_state.settings['use_rsi_overbought'],
-                                      help="Exit when 1m RSI exceeds this level")
+                                      help="Exit when RSI exceeds this level")
     st.session_state.settings['use_rsi_overbought'] = use_rsi_overbought
 
     rsi_overbought_threshold = st.number_input("RSI overbought threshold",
                                                 min_value=50, max_value=90,
                                                 value=st.session_state.settings['rsi_overbought_threshold'],
                                                 disabled=not use_rsi_overbought,
-                                                help="Exit when 1m RSI rises above this level")
+                                                help="Exit when RSI rises above this level")
     st.session_state.settings['rsi_overbought_threshold'] = rsi_overbought_threshold
 
     use_ema_cross_down = st.checkbox("Exit on EMA9 crosses below EMA21",
@@ -692,6 +675,15 @@ with st.sidebar:
                                             disabled=not use_macd_above_threshold,
                                             help="Exit when MACD exceeds this value")
     st.session_state.settings['macd_above_threshold'] = macd_above_threshold
+
+    # Handle backwards compatibility for use_macd_peak
+    if 'use_macd_peak' not in st.session_state.settings:
+        st.session_state.settings['use_macd_peak'] = False
+
+    use_macd_peak = st.checkbox("Exit on MACD Peak (turning down)",
+                                 value=st.session_state.settings['use_macd_peak'],
+                                 help="Exit when MACD peak is detected (MACD turning down)")
+    st.session_state.settings['use_macd_peak'] = use_macd_peak
 
     # Time Filter
     use_time_filter = st.checkbox("Avoid trading after specific time",
@@ -789,7 +781,9 @@ if run_backtest_btn:
             use_macd_below_threshold=use_macd_below_threshold,
             macd_below_threshold=macd_below_threshold,
             use_macd_above_threshold=use_macd_above_threshold,
-            macd_above_threshold=macd_above_threshold
+            macd_above_threshold=macd_above_threshold,
+            use_macd_peak=use_macd_peak,
+            use_macd_valley=use_macd_valley
         )
 
         # Filter chart data based on selected period
@@ -818,8 +812,8 @@ if run_backtest_btn:
             df1_display = df1
             df5_display = df5
 
-        # Chart with entries/exits (5-min) - single chart with multiple y-axes
-        st.subheader("5-min chart with signals")
+        # Chart with entries/exits - single chart with multiple y-axes
+        st.subheader(f"{interval} chart with signals")
 
         # Create figure with single x-axis and multiple y-axes (like check.py)
         fig = go.Figure()
@@ -915,7 +909,7 @@ if run_backtest_btn:
         ))
 
         # RSI chart (yaxis3)
-        fig.add_trace(go.Scatter(x=df1_display.index, y=df1_display["rsi_1m"],
+        fig.add_trace(go.Scatter(x=df1_display.index, y=df1_display["rsi"],
                                  name="RSI(14)", line=dict(width=2, color='navy'),
                                  yaxis='y3'))
 
@@ -941,6 +935,40 @@ if run_backtest_btn:
             opacity=0.5,
             yaxis='y4'
         ))
+
+        # Detect MACD peaks and valleys using argrelextrema (order=3 means look 3 candles left and right)
+        if len(df5_display) > 6:  # Need at least 7 candles for order=3
+            macd_values = df5_display["macd"].values
+            peak_indices = argrelextrema(macd_values, np.greater, order=3)[0]
+            valley_indices = argrelextrema(macd_values, np.less, order=3)[0]
+
+            # Add peak markers (red triangles pointing down)
+            if len(peak_indices) > 0:
+                peak_times = df5_display.index[peak_indices]
+                peak_values = macd_values[peak_indices]
+                fig.add_trace(go.Scatter(
+                    x=peak_times,
+                    y=peak_values,
+                    mode='markers',
+                    name='MACD Peak',
+                    marker=dict(size=10, symbol='triangle-down', color='red'),
+                    yaxis='y4',
+                    hoverinfo='x+y'
+                ))
+
+            # Add valley markers (green triangles pointing up)
+            if len(valley_indices) > 0:
+                valley_times = df5_display.index[valley_indices]
+                valley_values = macd_values[valley_indices]
+                fig.add_trace(go.Scatter(
+                    x=valley_times,
+                    y=valley_values,
+                    mode='markers',
+                    name='MACD Valley',
+                    marker=dict(size=10, symbol='triangle-up', color='green'),
+                    yaxis='y4',
+                    hoverinfo='x+y'
+                ))
 
         # MACD zero line
         fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, yref='y4')
@@ -1021,27 +1049,27 @@ if run_backtest_btn:
                 rangebreaks=rangebreaks,
                 range=xaxis_range
             ),
-            # yaxis for Price chart (top 47% - increased from 45%)
+            # yaxis for Price chart (top 50%)
             yaxis=dict(
                 title=f'{ticker} Price',
-                domain=[0.53, 1.0]  # 0.47 height
+                domain=[0.50, 1.0]  # 0.50 height
             ),
             # yaxis2 for Volume chart (15%)
             yaxis2=dict(
                 title='Volume',
-                domain=[0.36, 0.51],  # 0.15 height
+                domain=[0.33, 0.48],  # 0.15 height
                 showgrid=False
             ),
             # yaxis3 for RSI chart (15%)
             yaxis3=dict(
                 title='RSI',
-                domain=[0.19, 0.34],  # 0.15 height
+                domain=[0.16, 0.31],  # 0.15 height
                 range=[0, 100]
             ),
-            # yaxis4 for MACD chart (bottom 16%)
+            # yaxis4 for MACD chart (16%)
             yaxis4=dict(
                 title='MACD',
-                domain=[0.0, 0.16],  # 0.16 height
+                domain=[0.0, 0.15],  # 0.16 height (bottom panel)
                 showgrid=True
             ),
             # Add shapes for extended hours shading
