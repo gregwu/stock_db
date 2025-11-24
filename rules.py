@@ -436,9 +436,9 @@ def backtest_symbol(df1,
 
 # ---------- Streamlit UI ----------
 
-st.set_page_config(page_title="Greg's Oversold → Recovery Scalping", layout="wide")
+st.set_page_config(page_title="Strategy Scalping", layout="wide")
 
-st.title("Greg's Oversold → Recovery Scalping Helper")
+st.title("Strategy Scalping ")
 
 # Initialize session state for settings persistence
 if 'settings' not in st.session_state:
@@ -1059,10 +1059,22 @@ if run_backtest_btn:
             ]
 
         # Set x-axis range to match filtered period
+        # For better display, use actual data range with small padding
         xaxis_range = None
-        if period in ["1d", "2wk", "2mo", "6mo", "1y"] and not df5_display.empty:
-            # Set range to show from cutoff_time to last_time
-            xaxis_range = [cutoff_time, last_time]
+        if not df5_display.empty and len(df5_display) > 0:
+            # Calculate padding based on data range (5% on each side)
+            time_range = df5_display.index[-1] - df5_display.index[0]
+            if time_range.total_seconds() > 0:
+                padding = time_range * 0.05
+                xaxis_range = [df5_display.index[0] - padding, df5_display.index[-1] + padding]
+
+        # Configure x-axis tick format based on interval
+        if interval == "1d":
+            tick_format = '%Y-%m-%d'
+            hover_format = '%Y-%m-%d'
+        else:
+            tick_format = '%H:%M'
+            hover_format = '%Y-%m-%d %H:%M'
 
         fig.update_layout(
             showlegend=False,
@@ -1080,8 +1092,8 @@ if run_backtest_btn:
                 spikethickness=1,
                 spikedash='solid',
                 rangeslider=dict(visible=False),
-                tickformat='%H:%M',
-                hoverformat='%Y-%m-%d %H:%M',
+                tickformat=tick_format,
+                hoverformat=hover_format,
                 rangebreaks=rangebreaks,
                 range=xaxis_range
             ),
