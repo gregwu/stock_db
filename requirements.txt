@@ -17,3 +17,4 @@ plotly
 scikit-learn
 imbalanced-learn
 statsmodels
+twilio>=8.0.0
