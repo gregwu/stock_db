@@ -22,7 +22,7 @@ def get_2fa_code():
 
 # Trading settings
 TICKER = "TQQQ"     # or SQQQ or QQQ
-POSITION_SIZE = 10  # shares per trade
+POSITION_SIZE = 100  # shares per trade
 STOP_LOSS_PCT = -0.02
 TAKE_PROFIT_PCT = 0.03
 

@@ -52,3 +52,19 @@ class WebullAPI:
         except:
             return None
 
+    def get_positions(self):
+        """Get current portfolio positions"""
+        try:
+            return self.wb.get_positions()
+        except Exception as e:
+            print(f"[!] Failed to get positions: {e}")
+            return []
+
+    def get_portfolio(self):
+        """Get full portfolio summary"""
+        try:
+            return self.wb.get_portfolio()
+        except Exception as e:
+            print(f"[!] Failed to get portfolio: {e}")
+            return {}
+

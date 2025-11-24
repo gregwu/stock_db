@@ -63,7 +63,7 @@ def load_state():
             return json.load(f)
     return {
         'last_check_time': None,
-        'current_position': None,  # 'long' or None
+        'current_position': None,  # 'TQQQ' or 'SQQQ' or None
         'entry_price': None,
         'entry_time': None,
         'position_size': 0,
@@ -100,6 +100,69 @@ def send_email_alert(subject, message):
         return False
 
 
+def save_portfolio_state():
+    """Save current portfolio positions to state file"""
+    try:
+        positions = wb_api.get_positions()
+        portfolio_state = {
+            'timestamp': datetime.now().isoformat(),
+            'positions': []
+        }
+
+        for pos in positions:
+            portfolio_state['positions'].append({
+                'ticker': pos.get('ticker', {}).get('symbol'),
+                'quantity': pos.get('position'),
+                'cost_basis': pos.get('costPrice'),
+                'current_price': pos.get('marketValue'),
+                'unrealized_pnl': pos.get('unrealizedProfitLoss'),
+                'unrealized_pnl_pct': pos.get('unrealizedProfitLossRate')
+            })
+
+        # Save to portfolio state file
+        with open('.portfolio_state.json', 'w') as f:
+            json.dump(portfolio_state, f, indent=2)
+
+        logging.info(f"Portfolio saved: {len(portfolio_state['positions'])} positions")
+        return portfolio_state
+
+    except Exception as e:
+        logging.error(f"Failed to save portfolio: {e}")
+        return None
+
+
+def sell_all_positions():
+    """Sell all current positions in portfolio"""
+    try:
+        positions = wb_api.get_positions()
+
+        if not positions:
+            logging.info("No existing positions to sell")
+            return True
+
+        for pos in positions:
+            ticker = pos.get('ticker', {}).get('symbol')
+            quantity = float(pos.get('position', 0))
+
+            if quantity > 0:
+                logging.info(f"Selling existing position: {quantity} shares of {ticker}")
+                current_price = float(pos.get('lastPrice', 0))
+
+                order = place_sell_order(ticker, int(quantity), current_price, "Clear existing position")
+
+                if order:
+                    logging.info(f"Successfully sold {ticker}")
+                else:
+                    logging.error(f"Failed to sell {ticker}")
+                    return False
+
+        return True
+
+    except Exception as e:
+        logging.error(f"Failed to sell positions: {e}")
+        return False
+
+
 def initialize_webull():
     """Initialize and login to Webull"""
     global wb_api
@@ -111,9 +174,18 @@ def initialize_webull():
         account_type = "PAPER" if USE_PAPER else "LIVE"
         logging.info(f"Webull connected: {account_type} account")
 
+        # Save initial portfolio state
+        portfolio = save_portfolio_state()
+
+        portfolio_msg = ""
+        if portfolio and portfolio['positions']:
+            portfolio_msg = f"\n\nCurrent Holdings:"
+            for pos in portfolio['positions']:
+                portfolio_msg += f"\n  {pos['ticker']}: {pos['quantity']} shares (${pos['unrealized_pnl']:.2f} P&L)"
+
         send_email_alert(
             "🤖 Trading Bot Started",
-            f"Strategy Trader initialized\nAccount: {account_type}\nPosition Size: {POSITION_SIZE} shares"
+            f"Strategy Trader initialized\nAccount: {account_type}\nPosition Size: {POSITION_SIZE} shares\nStrategy: TQQQ/SQQQ Pair Trading\n\nBuy Signal → Buy TQQQ, Sell SQQQ\nSell Signal → Sell TQQQ, Buy SQQQ{portfolio_msg}"
         )
         return True
 
@@ -194,6 +266,10 @@ def run_strategy():
     """Run the trading strategy and execute trades"""
     logging.info("=" * 60)
     logging.info("Running strategy check...")
+
+    # Save current portfolio state at the start of each check
+    logging.info("Saving portfolio snapshot...")
+    save_portfolio_state()
 
     # Load settings
     settings = load_settings()
@@ -276,36 +352,48 @@ def run_strategy():
                 # Check if this is a new signal
                 if state['last_check_time'] != str(timestamp):
 
-                    # ENTRY SIGNAL
-                    if event == 'entry' and not state['current_position']:
-                        order = place_buy_order(ticker, POSITION_SIZE, price, note)
+                    # Save portfolio state before making any trades
+                    logging.info("Saving current portfolio state...")
+                    save_portfolio_state()
 
+                    # Sell all existing positions first
+                    logging.info("Clearing all existing positions...")
+                    if not sell_all_positions():
+                        logging.error("Failed to clear positions, skipping signal")
+                        return
+
+                    # ENTRY SIGNAL - Buy TQQQ
+                    if event == 'entry':
+                        logging.info("BUY SIGNAL: Buying TQQQ")
+
+                        # Buy TQQQ
+                        order = place_buy_order('TQQQ', POSITION_SIZE, price, note)
                         if order:
-                            state['current_position'] = 'long'
+                            state['current_position'] = 'TQQQ'
                             state['entry_price'] = price
                             state['entry_time'] = str(timestamp)
                             state['position_size'] = POSITION_SIZE
                             state['order_ids'].append(order.get('orderId'))
 
-                    # EXIT SIGNAL
-                    elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met'] and state['current_position']:
+                    # EXIT SIGNAL - Buy SQQQ
+                    elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
                         exit_reason = 'Stop Loss' if event == 'exit_SL' else 'Take Profit' if event == 'exit_TP' else 'Exit Conditions'
+                        logging.info(f"SELL SIGNAL ({exit_reason}): Buying SQQQ")
 
-                        order = place_sell_order(ticker, state['position_size'], price, f"{exit_reason}: {note}")
+                        # Calculate P&L if we were holding TQQQ
+                        if state['current_position'] == 'TQQQ' and state['entry_price']:
+                            pnl_pct = ((price - state['entry_price']) / state['entry_price']) * 100
+                            pnl_dollars = (price - state['entry_price']) * state['position_size']
+                            logging.info(f"TQQQ Trade P&L: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)")
 
+                        # Buy SQQQ
+                        order = place_buy_order('SQQQ', POSITION_SIZE, price, f"{exit_reason}: {note}")
                         if order:
-                            # Calculate P&L
-                            if state['entry_price']:
-                                pnl_pct = ((price - state['entry_price']) / state['entry_price']) * 100
-                                pnl_dollars = (price - state['entry_price']) * state['position_size']
-
-                                logging.info(f"Trade P&L: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)")
-
-                            # Clear position
-                            state['current_position'] = None
-                            state['entry_price'] = None
-                            state['entry_time'] = None
-                            state['position_size'] = 0
+                            state['current_position'] = 'SQQQ'
+                            state['entry_price'] = price
+                            state['entry_time'] = str(timestamp)
+                            state['position_size'] = POSITION_SIZE
+                            state['order_ids'].append(order.get('orderId'))
 
                     # Update last check time
                     state['last_check_time'] = str(timestamp)
@@ -320,11 +408,11 @@ def run_strategy():
         # Show current status
         current_rsi = df5['rsi'].iloc[-1] if 'rsi' in df5.columns else None
 
-        status = f"Status: Price=${current_price:.2f}"
+        status = f"Status: TQQQ Price=${current_price:.2f}"
         if current_rsi:
             status += f", RSI={current_rsi:.1f}"
         if state['current_position']:
-            status += f", Position=LONG ({state['position_size']} shares)"
+            status += f", Holding={state['current_position']} ({state['position_size']} shares)"
             if state['entry_price']:
                 pnl = ((current_price - state['entry_price']) / state['entry_price']) * 100
                 status += f", P&L={pnl:+.2f}%"
@@ -341,12 +429,13 @@ def run_strategy():
 def main():
     """Main trading loop"""
     logging.info("=" * 60)
-    logging.info("STRATEGY TRADER - AUTOMATED TRADING")
+    logging.info("STRATEGY TRADER - AUTOMATED PAIR TRADING")
     logging.info("=" * 60)
 
     account_type = "PAPER TRADING" if USE_PAPER else "⚠️  LIVE TRADING ⚠️"
     logging.info(f"Mode: {account_type}")
     logging.info(f"Position Size: {POSITION_SIZE} shares")
+    logging.info(f"Strategy: TQQQ (long) / SQQQ (short)")
     logging.info(f"Email: {GMAIL_ADDRESS}")
     logging.info("Will check for signals every 5 minutes")
     logging.info("Press Ctrl+C to stop")
