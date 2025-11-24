@@ -65,38 +65,32 @@ def save_state(state):
 
 def send_sms_via_email(message):
     """
-    Send SMS using email-to-SMS gateway (100% FREE!)
-
-    Common carrier gateways:
-    - AT&T: txt.att.net
-    - T-Mobile: tmomail.net
-    - Verizon: vtext.com
-    - Sprint: messaging.sprintpcs.com
+    Send alert via email to Gmail inbox (100% FREE and RELIABLE!)
     """
     if not all([GMAIL_ADDRESS, GMAIL_APP_PASSWORD]):
-        logging.warning("Gmail credentials not configured. SMS not sent.")
+        logging.warning("Gmail credentials not configured. Alert not sent.")
         logging.info(f"Would have sent: {message}")
         return False
 
     try:
-        # Create SMS address
-        sms_address = f"{PHONE_NUMBER}@{CARRIER_GATEWAY}"
+        # Send to Gmail inbox (not SMS)
+        email_address = GMAIL_ADDRESS
 
         # Create email message
         msg = MIMEText(message)
-        msg['Subject'] = 'Trading Alert'
+        msg['Subject'] = '🚨 Trading Alert'
         msg['From'] = GMAIL_ADDRESS
-        msg['To'] = sms_address
+        msg['To'] = email_address
 
         # Send via Gmail SMTP
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
             smtp.send_message(msg)
 
-        logging.info(f"SMS sent successfully via email gateway")
+        logging.info(f"Alert sent successfully to Gmail")
         return True
     except Exception as e:
-        logging.error(f"Failed to send SMS: {e}")
+        logging.error(f"Failed to send alert: {e}")
         return False
 
 
@@ -278,9 +272,9 @@ def run_strategy():
 
 def main():
     """Main monitoring loop"""
-    logging.info("Strategy Monitor Started (FREE VERSION)")
-    logging.info(f"Phone Number: {PHONE_NUMBER}")
-    logging.info(f"Carrier Gateway: {CARRIER_GATEWAY}")
+    logging.info("Strategy Monitor Started (EMAIL ALERTS)")
+    logging.info(f"Email Address: {GMAIL_ADDRESS}")
+    logging.info("Alerts will be sent to your Gmail inbox")
     logging.info("Will check for signals every 5 minutes")
     logging.info("Press Ctrl+C to stop")
 
@@ -305,6 +299,16 @@ def main():
         logging.warning("")
         logging.warning("Monitor will run but SMS alerts will not be sent.")
         logging.warning("")
+    else:
+        # Send test message on startup
+        settings = load_settings()
+        ticker = settings.get('ticker', 'TQQQ') if settings else 'TQQQ'
+        startup_msg = f"Monitor started for {ticker}. Checking every 5 min."
+        logging.info("Sending startup test message...")
+        if send_sms_via_email(startup_msg):
+            logging.info("✅ Test message sent successfully!")
+        else:
+            logging.warning("❌ Test message failed. Check credentials.")
 
     # Run immediately on start
     run_strategy()
