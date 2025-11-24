@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Strategy Monitor - Runs trading strategy every 5 minutes and sends SMS alerts
+Strategy Monitor - FREE VERSION using Email-to-SMS
+No Twilio account needed!
 """
 import os
 import time
@@ -9,7 +10,8 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 from dotenv import load_dotenv
-from twilio.rest import Client
+import smtplib
+from email.mime.text import MIMEText
 import logging
 
 # Import functions from rules.py
@@ -32,9 +34,11 @@ load_dotenv()
 
 # SMS Configuration
 PHONE_NUMBER = os.getenv('PHONE_NUMBER', '4084689972')
-TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
+CARRIER_GATEWAY = os.getenv('CARRIER_GATEWAY', 'txt.att.net')  # Default to AT&T
+
+# Gmail Configuration (free)
+GMAIL_ADDRESS = os.getenv('GMAIL_ADDRESS')
+GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')  # App-specific password
 
 # Tracking file to avoid duplicate alerts
 STATE_FILE = '.strategy_monitor_state.json'
@@ -47,7 +51,7 @@ def load_state():
             return json.load(f)
     return {
         'last_alert_time': None,
-        'current_position': None,  # 'long' or None
+        'current_position': None,
         'entry_price': None,
         'entry_time': None
     }
@@ -59,21 +63,37 @@ def save_state(state):
         json.dump(state, f, indent=2, default=str)
 
 
-def send_sms(message):
-    """Send SMS alert using Twilio"""
-    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
-        logging.warning("Twilio credentials not configured. SMS not sent.")
+def send_sms_via_email(message):
+    """
+    Send SMS using email-to-SMS gateway (100% FREE!)
+
+    Common carrier gateways:
+    - AT&T: txt.att.net
+    - T-Mobile: tmomail.net
+    - Verizon: vtext.com
+    - Sprint: messaging.sprintpcs.com
+    """
+    if not all([GMAIL_ADDRESS, GMAIL_APP_PASSWORD]):
+        logging.warning("Gmail credentials not configured. SMS not sent.")
         logging.info(f"Would have sent: {message}")
         return False
 
     try:
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        msg = client.messages.create(
-            body=message,
-            from_=TWILIO_PHONE_NUMBER,
-            to=f'+1{PHONE_NUMBER}'
-        )
-        logging.info(f"SMS sent successfully: {msg.sid}")
+        # Create SMS address
+        sms_address = f"{PHONE_NUMBER}@{CARRIER_GATEWAY}"
+
+        # Create email message
+        msg = MIMEText(message)
+        msg['Subject'] = 'Trading Alert'
+        msg['From'] = GMAIL_ADDRESS
+        msg['To'] = sms_address
+
+        # Send via Gmail SMTP
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            smtp.send_message(msg)
+
+        logging.info(f"SMS sent successfully via email gateway")
         return True
     except Exception as e:
         logging.error(f"Failed to send SMS: {e}")
@@ -128,7 +148,7 @@ def run_strategy():
     try:
         # Download recent data
         logging.info("Downloading data...")
-        period = "5d"  # Get 5 days of data
+        period = "5d"
         use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
         raw = yf.download(ticker, period=period, interval=interval,
                          progress=False, prepost=use_extended_hours)
@@ -197,10 +217,8 @@ def run_strategy():
                     message = None
 
                     if event == 'entry':
-                        message = f"🟢 BUY SIGNAL - {ticker}\n"
-                        message += f"Price: ${price:.2f}\n"
-                        message += f"Time: {timestamp.strftime('%H:%M')}\n"
-                        message += f"Reason: {note}"
+                        # Keep message short for SMS (160 char limit)
+                        message = f"BUY {ticker} ${price:.2f} @ {timestamp.strftime('%H:%M')}"
 
                         # Update state
                         state['current_position'] = 'long'
@@ -208,17 +226,14 @@ def run_strategy():
                         state['entry_time'] = str(timestamp)
 
                     elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
-                        exit_reason = 'Stop Loss' if event == 'exit_SL' else 'Take Profit' if event == 'exit_TP' else 'Exit Conditions'
+                        exit_reason = 'SL' if event == 'exit_SL' else 'TP' if event == 'exit_TP' else 'Exit'
 
-                        message = f"🔴 SELL SIGNAL - {ticker}\n"
-                        message += f"Price: ${price:.2f}\n"
-                        message += f"Time: {timestamp.strftime('%H:%M')}\n"
-                        message += f"Reason: {exit_reason}\n"
+                        message = f"SELL {ticker} ${price:.2f} {exit_reason}"
 
                         # Calculate P&L if we had a position
                         if state['entry_price']:
                             pnl_pct = ((price - state['entry_price']) / state['entry_price']) * 100
-                            message += f"P&L: {pnl_pct:+.2f}%"
+                            message += f" {pnl_pct:+.1f}%"
 
                         # Clear position
                         state['current_position'] = None
@@ -228,7 +243,7 @@ def run_strategy():
                     if message:
                         logging.info(f"New signal detected: {event}")
                         logging.info(message)
-                        send_sms(message)
+                        send_sms_via_email(message)
 
                         # Update last alert time
                         state['last_alert_time'] = str(timestamp)
@@ -263,19 +278,30 @@ def run_strategy():
 
 def main():
     """Main monitoring loop"""
-    logging.info("Strategy Monitor Started")
+    logging.info("Strategy Monitor Started (FREE VERSION)")
     logging.info(f"Phone Number: {PHONE_NUMBER}")
+    logging.info(f"Carrier Gateway: {CARRIER_GATEWAY}")
     logging.info("Will check for signals every 5 minutes")
     logging.info("Press Ctrl+C to stop")
 
-    # Check Twilio configuration
-    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
-        logging.warning("⚠️  Twilio credentials not configured in .env file")
-        logging.warning("Please update .env with your Twilio credentials:")
-        logging.warning("  TWILIO_ACCOUNT_SID=your_account_sid")
-        logging.warning("  TWILIO_AUTH_TOKEN=your_auth_token")
-        logging.warning("  TWILIO_PHONE_NUMBER=your_twilio_number")
-        logging.warning("Sign up at: https://www.twilio.com/try-twilio")
+    # Check Gmail configuration
+    if not all([GMAIL_ADDRESS, GMAIL_APP_PASSWORD]):
+        logging.warning("⚠️  Gmail credentials not configured in .env file")
+        logging.warning("Please update .env with:")
+        logging.warning("  GMAIL_ADDRESS=your_email@gmail.com")
+        logging.warning("  GMAIL_APP_PASSWORD=your_app_password")
+        logging.warning("  CARRIER_GATEWAY=txt.att.net  (or your carrier)")
+        logging.warning("")
+        logging.warning("How to get Gmail App Password:")
+        logging.warning("1. Go to: https://myaccount.google.com/apppasswords")
+        logging.warning("2. Create app password for 'Mail'")
+        logging.warning("3. Copy the 16-character password")
+        logging.warning("")
+        logging.warning("Common carrier gateways:")
+        logging.warning("  AT&T:     txt.att.net")
+        logging.warning("  T-Mobile: tmomail.net")
+        logging.warning("  Verizon:  vtext.com")
+        logging.warning("  Sprint:   messaging.sprintpcs.com")
         logging.warning("")
         logging.warning("Monitor will run but SMS alerts will not be sent.")
         logging.warning("")
@@ -286,7 +312,7 @@ def main():
     # Then run every 5 minutes
     try:
         while True:
-            time.sleep(300)  # 5 minutes = 300 seconds
+            time.sleep(300)  # 5 minutes
             run_strategy()
     except KeyboardInterrupt:
         logging.info("\nStrategy Monitor Stopped")

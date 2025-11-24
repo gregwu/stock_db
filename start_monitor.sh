@@ -13,10 +13,10 @@ if [ ! -f .env ]; then
 fi
 
 # Check if twilio is installed
-if ! python3 -c "import twilio" 2>/dev/null; then
-    echo "📦 Installing required packages..."
-    pip3 install -r requirements_monitor.txt
-fi
+#if ! python3 -c "import twilio" 2>/dev/null; then
+#    echo "📦 Installing required packages..."
+#    pip3 install -r requirements_monitor.txt
+#fi
 
 # Check if monitor is already running
 if pgrep -f "strategy_monitor.py" > /dev/null; then
