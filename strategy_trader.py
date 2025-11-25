@@ -66,6 +66,7 @@ def load_state():
         'current_position': None,  # 'TQQQ' or 'SQQQ' or None
         'entry_price': None,
         'entry_time': None,
+        'entry_conditions': None,  # Detailed conditions that triggered entry
         'position_size': 0,
         'order_ids': []
     }
@@ -134,11 +135,41 @@ def save_portfolio_state():
 def sell_all_positions():
     """Sell all current positions in portfolio"""
     try:
+        # First check for any pending orders
+        logging.info("Checking for pending orders...")
+        current_orders = wb_api.get_current_orders()
+
+        if current_orders:
+            logging.warning(f"Found {len(current_orders)} pending orders")
+            for order in current_orders:
+                order_id = order.get('orderId')
+                ticker = order.get('ticker', {}).get('symbol', 'Unknown')
+                action = order.get('action', 'Unknown')
+                status = order.get('status', 'Unknown')
+                logging.info(f"  Order {order_id}: {action} {ticker} - Status: {status}")
+
+            # Cancel pending orders before selling
+            logging.info("Cancelling pending orders...")
+            for order in current_orders:
+                order_id = order.get('orderId')
+                if order_id:
+                    try:
+                        wb_api.cancel(order_id)
+                        logging.info(f"  Cancelled order {order_id}")
+                    except Exception as cancel_error:
+                        logging.warning(f"  Could not cancel order {order_id}: {cancel_error}")
+
+            # Wait a moment for cancellations to process
+            time.sleep(2)
+
+        # Now get current positions
         positions = wb_api.get_positions()
 
         if not positions:
             logging.info("No existing positions to sell")
             return True
+
+        logging.info(f"Found {len(positions)} positions to sell")
 
         for pos in positions:
             ticker = pos.get('ticker', {}).get('symbol')
@@ -151,7 +182,7 @@ def sell_all_positions():
                 order = place_sell_order(ticker, int(quantity), current_price, "Clear existing position")
 
                 if order:
-                    logging.info(f"Successfully sold {ticker}")
+                    logging.info(f"Successfully placed sell order for {ticker}")
                 else:
                     logging.error(f"Failed to sell {ticker}")
                     return False
@@ -198,7 +229,7 @@ def initialize_webull():
         return False
 
 
-def place_buy_order(ticker, qty, price, reason):
+def place_buy_order(ticker, qty, price, reason, entry_conditions=None):
     """Place a buy order"""
     try:
         logging.info(f"Placing BUY order: {qty} {ticker} @ ${price:.2f}")
@@ -215,8 +246,19 @@ def place_buy_order(ticker, qty, price, reason):
 Ticker: {ticker}
 Quantity: {qty} shares
 Price: ${price:.2f}
-Reason: {reason}
 
+Conditions:
+{reason}
+"""
+
+        # If this is an exit and we have entry conditions, show them too
+        if entry_conditions:
+            message += f"""
+Entry Conditions (when position was opened):
+{entry_conditions}
+"""
+
+        message += f"""
 Order ID: {order.get('orderId', 'N/A')}
 """
 
@@ -230,7 +272,7 @@ Order ID: {order.get('orderId', 'N/A')}
         return None
 
 
-def place_sell_order(ticker, qty, price, reason):
+def place_sell_order(ticker, qty, price, reason, entry_conditions=None):
     """Place a sell order"""
     try:
         logging.info(f"Placing SELL order: {qty} {ticker} @ ${price:.2f}")
@@ -247,8 +289,19 @@ def place_sell_order(ticker, qty, price, reason):
 Ticker: {ticker}
 Quantity: {qty} shares
 Price: ${price:.2f}
-Reason: {reason}
 
+Conditions:
+{reason}
+"""
+
+        # Show entry conditions if available
+        if entry_conditions:
+            message += f"""
+Entry Conditions (when position was opened):
+{entry_conditions}
+"""
+
+        message += f"""
 Order ID: {order.get('orderId', 'N/A')}
 """
 
@@ -372,6 +425,7 @@ def run_strategy():
                             state['current_position'] = 'TQQQ'
                             state['entry_price'] = price
                             state['entry_time'] = str(timestamp)
+                            state['entry_conditions'] = note  # Store detailed entry conditions
                             state['position_size'] = POSITION_SIZE
                             state['order_ids'].append(order.get('orderId'))
 
@@ -386,12 +440,14 @@ def run_strategy():
                             pnl_dollars = (price - state['entry_price']) * state['position_size']
                             logging.info(f"TQQQ Trade P&L: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)")
 
-                        # Buy SQQQ
-                        order = place_buy_order('SQQQ', POSITION_SIZE, price, f"{exit_reason}: {note}")
+                        # Buy SQQQ - pass previous entry conditions for context
+                        previous_entry_conditions = state.get('entry_conditions')
+                        order = place_buy_order('SQQQ', POSITION_SIZE, price, note, entry_conditions=previous_entry_conditions)
                         if order:
                             state['current_position'] = 'SQQQ'
                             state['entry_price'] = price
                             state['entry_time'] = str(timestamp)
+                            state['entry_conditions'] = note  # Store new entry conditions for SQQQ
                             state['position_size'] = POSITION_SIZE
                             state['order_ids'].append(order.get('orderId'))
 

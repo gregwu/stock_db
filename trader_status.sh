@@ -35,25 +35,25 @@ if ps -p $PID > /dev/null 2>&1; then
     # Show current position if state file exists
     if [ -f .strategy_trader_state.json ]; then
         echo "Current State:"
-        python3 -c "
+        python3 << 'EOF'
 import json
 try:
     with open('.strategy_trader_state.json', 'r') as f:
         state = json.load(f)
 
     if state.get('current_position'):
-        print(f\"  Position: {state['current_position'].upper()}")
-        print(f\"  Size: {state.get('position_size', 0)} shares\")
-        print(f\"  Entry Price: \${state.get('entry_price', 0):.2f}\")
-        print(f\"  Entry Time: {state.get('entry_time', 'N/A')}\")
+        print(f"  Position: {state['current_position']}")
+        print(f"  Size: {state.get('position_size', 0)} shares")
+        print(f"  Entry Price: ${state.get('entry_price', 0):.2f}")
+        print(f"  Entry Time: {state.get('entry_time', 'N/A')}")
     else:
         print('  Position: NONE')
 
     if state.get('last_check_time'):
-        print(f\"  Last Check: {state.get('last_check_time')}\")
+        print(f"  Last Check: {state.get('last_check_time')}")
 except:
     print('  (unable to read state)')
-"
+EOF
         echo ""
     fi
 

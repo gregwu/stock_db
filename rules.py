@@ -261,7 +261,8 @@ def backtest_symbol(df1,
             # Stop loss (if enabled) - always takes priority
             if use_stop_loss and bar_low <= position["entry_price"] * (1 - stop_loss):
                 exit_price = position["entry_price"] * (1 - stop_loss)
-                trades.append((position["entry_time"], position["entry_price"],
+                entry_reason = position.get("entry_reason", "N/A")
+                trades.append((position["entry_time"], position["entry_price"], entry_reason,
                                t, exit_price, "SL"))
                 logs.append({
                     "time": t,
@@ -275,7 +276,8 @@ def backtest_symbol(df1,
             # Take profit (if enabled) - always takes priority
             if use_take_profit and bar_high >= position["entry_price"] * (1 + tp_pct):
                 exit_price = position["entry_price"] * (1 + tp_pct)
-                trades.append((position["entry_time"], position["entry_price"],
+                entry_reason = position.get("entry_reason", "N/A")
+                trades.append((position["entry_time"], position["entry_price"], entry_reason,
                                t, exit_price, "TP"))
                 logs.append({
                     "time": t,
@@ -329,8 +331,10 @@ def backtest_symbol(df1,
                 if use_macd_peak:
                     exit_note_parts.append(f"MACD peak (MACD={macd_val:.4f})")
 
-                trades.append((position["entry_time"], position["entry_price"],
-                               t, exit_price, "EXIT_CONDITIONS"))
+                exit_reason = ', '.join(exit_note_parts)
+                entry_reason = position.get("entry_reason", "N/A")
+                trades.append((position["entry_time"], position["entry_price"], entry_reason,
+                               t, exit_price, f"Exit: {exit_reason}"))
                 logs.append({
                     "time": t,
                     "event": "exit_conditions_met",
@@ -385,43 +389,45 @@ def backtest_symbol(df1,
                     base_ok = all(conditions)
 
                 if base_ok:
-                    position = {"entry_time": t, "entry_price": close}
-                    setup_active = False
-                    trades.append((t, close, None, None, "ENTRY"))
-
                     # Build note based on which conditions were checked
                     note_parts = []
                     if use_rsi:
-                        note_parts.append(f"RSI < {rsi_threshold}")
+                        note_parts.append(f"RSI < {rsi_threshold} (RSI={rsi_last:.1f})")
                     if use_ema_cross_up:
-                        note_parts.append("EMA9 crossed above EMA21")
+                        note_parts.append(f"EMA9 crossed above EMA21 (EMA9={ema9:.2f}, EMA21={ema21:.2f})")
                     if use_bb_cross_up:
-                        note_parts.append("price crossed above BB upper")
+                        note_parts.append(f"Price crossed above BB upper (Close={close:.2f}, BB Upper={bb_up_v:.2f})")
                     if use_macd_cross_up:
                         note_parts.append(f"MACD crossed above signal (MACD={macd_val:.4f}, Signal={macd_signal_val:.4f})")
                     if use_ema:
-                        note_parts.append("price > EMA9")
+                        note_parts.append(f"Price > EMA9 (Close={close:.2f}, EMA9={ema9:.2f})")
                     if use_price_above_ema21:
-                        note_parts.append(f"price > EMA21 (Close={close:.2f}, EMA21={ema21:.2f})")
+                        note_parts.append(f"Price > EMA21 (Close={close:.2f}, EMA21={ema21:.2f})")
                     if use_macd_below_threshold:
                         note_parts.append(f"MACD < {macd_below_threshold} (MACD={macd_val:.4f})")
                     if use_macd_valley:
                         note_parts.append(f"MACD valley detected (MACD={macd_val:.4f})")
                     if use_volume:
-                        note_parts.append("volume rising")
+                        note_parts.append(f"Volume rising (Vol={vol:.0f}, PrevVol={prev_vol:.0f})")
+
+                    entry_reason = ', '.join(note_parts)
+                    position = {"entry_time": t, "entry_price": close, "entry_reason": entry_reason}
+                    setup_active = False
+                    trades.append((t, close, f"Entry: {entry_reason}", None, None, None))
 
                     logs.append({
                         "time": t,
                         "event": "entry",
                         "price": close,
-                        "note": f"Entry: {', '.join(note_parts)}"
+                        "note": f"Entry: {entry_reason}"
                     })
 
     # Close any open position at end of data
     if position is not None:
         last_time = df5.index[-1]
         last_close = df5["Close"].iloc[-1]
-        trades.append((position["entry_time"], position["entry_price"],
+        entry_reason = position.get("entry_reason", "N/A")
+        trades.append((position["entry_time"], position["entry_price"], entry_reason,
                        last_time, last_close, "EOD"))
         logs.append({
             "time": last_time,
@@ -431,8 +437,8 @@ def backtest_symbol(df1,
         })
 
     trades_df = pd.DataFrame(trades,
-                             columns=["entry_time", "entry_price",
-                                      "exit_time", "exit_price", "reason"])
+                             columns=["entry_time", "entry_price", "entry_reason",
+                                      "exit_time", "exit_price", "exit_reason"])
     if not trades_df.empty:
         trades_df["exit_time"] = trades_df["exit_time"].fillna(trades_df["exit_time"].ffill())
         trades_df["exit_price"] = trades_df["exit_price"].fillna(trades_df["entry_price"])
@@ -766,13 +772,31 @@ if run_backtest_btn:
             }
 
         main_period = period_map.get(period, period)
+
+        # Validate interval/period combination based on yfinance limits
+        # 1m, 2m, 5m, 15m, 30m: max 60 days
+        # 1h, 90m: max 730 days
+        intraday_short = ["1m", "2m", "5m", "15m", "30m"]
+        intraday_hourly = ["1h", "90m"]
+
+        if interval in intraday_short:
+            # For short intervals, limit to 60 days
+            if main_period in ["3mo", "6mo", "1y"]:
+                st.warning(f"⚠️ {interval} interval only supports up to 60 days of data. Adjusting period from {main_period} to 60d.")
+                main_period = "60d"
+        elif interval in intraday_hourly:
+            # For hourly intervals, limit to 730 days
+            if main_period == "1y" and period == "1y":
+                # 1y is ok, it's ~365 days
+                pass
+
         # Use extended hours for intraday intervals only
         use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
         raw = yf.download(ticker, period=main_period,
                           interval=interval, progress=False, prepost=use_extended_hours)
 
     if raw.empty:
-        st.error("No data returned for main ticker.")
+        st.error(f"No data returned for main ticker. This may happen if the period ({period}) exceeds yfinance limits for the {interval} interval. Try a shorter period.")
     else:
         # Handle MultiIndex columns if present
         if isinstance(raw.columns, pd.MultiIndex):
@@ -889,33 +913,19 @@ if run_backtest_btn:
                                  yaxis='y'))
 
         if show_signals and not trades_df.empty:
-            # Filter out "ENTRY" rows to avoid duplicate signals
-            completed_trades = trades_df[trades_df["reason"] != "ENTRY"].copy()
+            # Filter for rows that have exit_reason (completed trades)
+            completed_trades = trades_df[trades_df["exit_reason"].notna()].copy()
 
             if not completed_trades.empty:
                 # Position signals on RSI chart at fixed positions
                 # Entry signals at RSI level 20 (bottom)
                 # Exit signals at RSI level 80 (top)
 
-                # Get entry notes from logs_df
-                entry_notes = []
-                for entry_time in completed_trades["entry_time"]:
-                    matching_log = logs_df[(logs_df["time"] == entry_time) & (logs_df["event"] == "entry")]
-                    if not matching_log.empty:
-                        entry_notes.append(matching_log.iloc[0]["note"])
-                    else:
-                        entry_notes.append("Entry")
+                # Get entry notes - use entry_reason column
+                entry_notes = completed_trades["entry_reason"].tolist()
 
-                # Get exit notes from logs_df
-                exit_info = []
-                for idx, row in completed_trades.iterrows():
-                    exit_time = row["exit_time"]
-                    reason = row["reason"]
-                    matching_log = logs_df[(logs_df["time"] == exit_time) & (logs_df["event"].str.contains("exit"))]
-                    if not matching_log.empty:
-                        exit_info.append(f"{reason}: {matching_log.iloc[0]['note']}")
-                    else:
-                        exit_info.append(f"{reason}")
+                # Get exit info - use exit_reason column
+                exit_info = completed_trades["exit_reason"].tolist()
 
                 fig.add_trace(go.Scatter(
                     x=completed_trades["entry_time"],
@@ -1160,8 +1170,8 @@ if run_backtest_btn:
             if trades_df.empty:
                 st.write("No trades with current rules.")
             else:
-                # Filter out rows where reason is "ENTRY" for display
-                display_trades = trades_df[trades_df["reason"] != "ENTRY"].copy()
+                # Filter for rows that have exit_reason (completed trades) for display
+                display_trades = trades_df[trades_df["exit_reason"].notna()].copy()
 
                 st.dataframe(display_trades)
                 total = len(display_trades)
