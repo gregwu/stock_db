@@ -270,6 +270,65 @@ def run_strategy():
         logging.error(f"Error running strategy: {e}", exc_info=True)
 
 
+def display_settings(settings):
+    """Display strategy settings in a formatted way"""
+    if not settings:
+        logging.warning("No settings file found. Using defaults.")
+        return
+
+    logging.info("=" * 60)
+    logging.info("STRATEGY SETTINGS")
+    logging.info("=" * 60)
+
+    # Basic settings
+    logging.info(f"Ticker: {settings.get('ticker', 'N/A')}")
+    logging.info(f"Interval: {settings.get('interval', 'N/A')}")
+    logging.info(f"Period: {settings.get('period', 'N/A')}")
+
+    # Entry conditions
+    logging.info("\nEntry Conditions:")
+    if settings.get('use_rsi', False):
+        logging.info(f"  - RSI < {settings.get('rsi_threshold', 30)}")
+    if settings.get('use_ema_cross_up', False):
+        logging.info(f"  - EMA9 cross above EMA21")
+    if settings.get('use_bb_cross_up', False):
+        logging.info(f"  - Price cross above BB upper")
+    if settings.get('use_macd_cross_up', False):
+        logging.info(f"  - MACD cross above signal")
+    if settings.get('use_price_vs_ema9', False):
+        logging.info(f"  - Price > EMA9")
+    if settings.get('use_price_vs_ema21', False):
+        logging.info(f"  - Price > EMA21")
+    if settings.get('use_macd_threshold', False):
+        logging.info(f"  - MACD > {settings.get('macd_threshold', 0)}")
+    if settings.get('use_macd_valley', False):
+        logging.info(f"  - MACD Valley (turning up)")
+
+    # Exit conditions
+    logging.info("\nExit Conditions:")
+    if settings.get('use_rsi_exit', False):
+        logging.info(f"  - RSI > {settings.get('rsi_exit_threshold', 70)}")
+    if settings.get('use_ema_cross_down', False):
+        logging.info(f"  - EMA9 cross below EMA21")
+    if settings.get('use_bb_cross_down', False):
+        logging.info(f"  - Price cross below BB lower")
+    if settings.get('use_macd_cross_down', False):
+        logging.info(f"  - MACD cross below signal")
+    if settings.get('use_price_vs_ema9_exit', False):
+        logging.info(f"  - Price < EMA9")
+    if settings.get('use_price_vs_ema21_exit', False):
+        logging.info(f"  - Price < EMA21")
+    if settings.get('use_macd_peak', False):
+        logging.info(f"  - MACD Peak (turning down)")
+
+    # Risk management
+    logging.info("\nRisk Management:")
+    logging.info(f"  - Stop Loss: {settings.get('stop_loss', 0)*100:.1f}%")
+    logging.info(f"  - Take Profit: {settings.get('take_profit', 0)*100:.1f}%")
+
+    logging.info("=" * 60)
+
+
 def main():
     """Main monitoring loop"""
     logging.info("Strategy Monitor Started (EMAIL ALERTS)")
@@ -277,6 +336,12 @@ def main():
     logging.info("Alerts will be sent to your Gmail inbox")
     logging.info("Will check for signals every 5 minutes")
     logging.info("Press Ctrl+C to stop")
+    logging.info("")
+
+    # Load and display settings
+    settings = load_settings()
+    display_settings(settings)
+    logging.info("")
 
     # Check Gmail configuration
     if not all([GMAIL_ADDRESS, GMAIL_APP_PASSWORD]):
@@ -301,7 +366,6 @@ def main():
         logging.warning("")
     else:
         # Send test message on startup
-        settings = load_settings()
         ticker = settings.get('ticker', 'TQQQ') if settings else 'TQQQ'
         startup_msg = f"Monitor started for {ticker}. Checking every 5 min."
         logging.info("Sending startup test message...")

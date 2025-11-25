@@ -207,19 +207,112 @@ def initialize_alpaca():
         account_type = "PAPER" if USE_PAPER else "LIVE"
         logging.info(f"Alpaca connected: {account_type} account")
 
+        # Get account info
+        account = alpaca_api.get_account()
+        portfolio_value = float(account.portfolio_value) if account else 0
+        buying_power = float(account.buying_power) if account else 0
+        cash = float(account.cash) if account else 0
+        equity = float(account.equity) if account else 0
+
+        # Load strategy settings
+        settings = load_settings()
+
         # Save initial portfolio state
         portfolio = save_portfolio_state()
 
-        portfolio_msg = ""
+        # Build position summary
+        position_summary = []
         if portfolio and portfolio['positions']:
-            portfolio_msg = f"\n\nCurrent Holdings:"
             for pos in portfolio['positions']:
-                portfolio_msg += f"\n  {pos['ticker']}: {pos['quantity']} shares (${pos['unrealized_pnl']:.2f} P&L)"
+                position_summary.append(f"  {pos['ticker']}: {pos['quantity']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pnl']:.2f})")
 
-        send_email_alert(
-            "🤖 Alpaca Trading Bot Started",
-            f"Alpaca Strategy Trader initialized\nAccount: {account_type}\nPosition Size: {POSITION_SIZE} shares\nStrategy: TQQQ/SQQQ Pair Trading\n\nBuy Signal → Buy TQQQ, Sell SQQQ\nSell Signal → Sell TQQQ, Buy SQQQ{portfolio_msg}"
-        )
+        # Build settings summary
+        settings_summary = ""
+        if settings:
+            settings_summary = f"""
+═══════════════════════════════════════
+STRATEGY SETTINGS
+═══════════════════════════════════════
+Ticker: {settings.get('ticker', 'TQQQ')}
+Interval: {settings.get('interval', '5m')}
+Period: {settings.get('period', '1d')}
+
+Entry Conditions:"""
+            if settings.get('use_rsi'):
+                settings_summary += f"\n  - RSI < {settings.get('rsi_threshold', 30)}"
+            if settings.get('use_ema_cross_up'):
+                settings_summary += f"\n  - EMA9 cross above EMA21"
+            if settings.get('use_price_vs_ema21'):
+                settings_summary += f"\n  - Price > EMA21"
+            if settings.get('use_macd_valley'):
+                settings_summary += f"\n  - MACD Valley (turning up)"
+
+            settings_summary += "\n\nExit Conditions:"
+            if settings.get('use_rsi_exit'):
+                settings_summary += f"\n  - RSI > {settings.get('rsi_exit_threshold', 70)}"
+            if settings.get('use_ema_cross_down'):
+                settings_summary += f"\n  - EMA9 cross below EMA21"
+            if settings.get('use_macd_peak'):
+                settings_summary += f"\n  - MACD Peak (turning down)"
+
+            settings_summary += f"\n\nRisk Management:"
+            settings_summary += f"\n  - Stop Loss: {settings.get('stop_loss', 0.02)*100:.1f}%"
+            settings_summary += f"\n  - Take Profit: {settings.get('take_profit', 0.03)*100:.1f}%"
+
+        message = f"""🤖 ALPACA TRADING BOT STARTED
+
+═══════════════════════════════════════
+ACCOUNT INFORMATION
+═══════════════════════════════════════
+Account Type: {account_type}
+Portfolio Value: ${portfolio_value:,.2f}
+Equity: ${equity:,.2f}
+Cash: ${cash:,.2f}
+Buying Power: ${buying_power:,.2f}
+
+═══════════════════════════════════════
+TRADING CONFIGURATION
+═══════════════════════════════════════
+Position Size: {POSITION_SIZE} shares
+Stop Loss: {STOP_LOSS_PCT*100:.1f}%
+Take Profit: {TAKE_PROFIT_PCT*100:.1f}%
+Strategy: TQQQ/SQQQ Pair Trading
+
+Signal Logic:
+  Entry Signal → Buy TQQQ
+  Exit Signal → Buy SQQQ
+{settings_summary}
+"""
+
+        if position_summary:
+            message += f"""
+═══════════════════════════════════════
+CURRENT POSITIONS
+═══════════════════════════════════════
+{chr(10).join(position_summary)}
+"""
+        else:
+            message += f"""
+═══════════════════════════════════════
+CURRENT POSITIONS
+═══════════════════════════════════════
+  No open positions
+"""
+
+        message += f"""
+═══════════════════════════════════════
+MONITORING
+═══════════════════════════════════════
+Check Frequency: Every 5 minutes
+Email Alerts: Enabled
+Started: {pd.Timestamp.now()}
+═══════════════════════════════════════
+
+The bot is now actively monitoring for trading signals.
+You will receive email alerts for all trades.
+"""
+
+        send_email_alert("🤖 Alpaca Trading Bot Started", message)
         return True
 
     except Exception as e:
@@ -236,6 +329,18 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None):
     try:
         logging.info(f"Placing BUY order: {qty} {ticker} @ ${price:.2f}")
 
+        # Get account info
+        account = alpaca_api.get_account()
+        portfolio_value = float(account.portfolio_value) if account else 0
+        buying_power = float(account.buying_power) if account else 0
+        cash = float(account.cash) if account else 0
+
+        # Get current positions
+        positions = alpaca_api.get_positions()
+        position_summary = []
+        for pos in positions:
+            position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
+
         order = alpaca_api.place_order(
             ticker=ticker,
             qty=qty,
@@ -245,22 +350,60 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None):
 
         message = f"""✅ BUY ORDER PLACED
 
+═══════════════════════════════════════
+ORDER DETAILS
+═══════════════════════════════════════
 Ticker: {ticker}
 Quantity: {qty} shares
 Price: ${price:.2f}
+Order Value: ${price * qty:.2f}
+Order ID: {order['order_id'] if order else 'FAILED'}
 
-Conditions:
+═══════════════════════════════════════
+CONDITIONS
+═══════════════════════════════════════
 {reason}
 """
         if entry_conditions:
             message += f"""
-Entry Conditions (when position was opened):
+═══════════════════════════════════════
+PREVIOUS ENTRY CONDITIONS
+═══════════════════════════════════════
 {entry_conditions}
 """
 
-        message += f"\nOrder ID: {order['order_id']}" if order else "\nOrder failed"
+        message += f"""
+═══════════════════════════════════════
+ACCOUNT STATUS
+═══════════════════════════════════════
+Portfolio Value: ${portfolio_value:,.2f}
+Cash: ${cash:,.2f}
+Buying Power: ${buying_power:,.2f}
+"""
 
-        send_email_alert("🟢 BUY ORDER", message)
+        if position_summary:
+            message += f"""
+═══════════════════════════════════════
+CURRENT POSITIONS
+═══════════════════════════════════════
+{chr(10).join(position_summary)}
+"""
+        else:
+            message += f"""
+═══════════════════════════════════════
+CURRENT POSITIONS
+═══════════════════════════════════════
+  No open positions
+"""
+
+        message += f"""
+═══════════════════════════════════════
+Time: {pd.Timestamp.now()}
+Account: {'PAPER' if USE_PAPER else 'LIVE'}
+═══════════════════════════════════════
+"""
+
+        send_email_alert("🟢 BUY ORDER - Alpaca Trading Bot", message)
         return order
 
     except Exception as e:
@@ -274,6 +417,18 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None):
     try:
         logging.info(f"Placing SELL order: {qty} {ticker} @ ${price:.2f}")
 
+        # Get account info
+        account = alpaca_api.get_account()
+        portfolio_value = float(account.portfolio_value) if account else 0
+        buying_power = float(account.buying_power) if account else 0
+        cash = float(account.cash) if account else 0
+
+        # Get current positions
+        positions = alpaca_api.get_positions()
+        position_summary = []
+        for pos in positions:
+            position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
+
         order = alpaca_api.place_order(
             ticker=ticker,
             qty=qty,
@@ -283,22 +438,60 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None):
 
         message = f"""✅ SELL ORDER PLACED
 
+═══════════════════════════════════════
+ORDER DETAILS
+═══════════════════════════════════════
 Ticker: {ticker}
 Quantity: {qty} shares
 Price: ${price:.2f}
+Order Value: ${price * qty:.2f}
+Order ID: {order['order_id'] if order else 'FAILED'}
 
-Conditions:
+═══════════════════════════════════════
+CONDITIONS
+═══════════════════════════════════════
 {reason}
 """
         if entry_conditions:
             message += f"""
-Entry Conditions (when position was opened):
+═══════════════════════════════════════
+PREVIOUS ENTRY CONDITIONS
+═══════════════════════════════════════
 {entry_conditions}
 """
 
-        message += f"\nOrder ID: {order['order_id']}" if order else "\nOrder failed"
+        message += f"""
+═══════════════════════════════════════
+ACCOUNT STATUS
+═══════════════════════════════════════
+Portfolio Value: ${portfolio_value:,.2f}
+Cash: ${cash:,.2f}
+Buying Power: ${buying_power:,.2f}
+"""
 
-        send_email_alert("🔴 SELL ORDER", message)
+        if position_summary:
+            message += f"""
+═══════════════════════════════════════
+CURRENT POSITIONS
+═══════════════════════════════════════
+{chr(10).join(position_summary)}
+"""
+        else:
+            message += f"""
+═══════════════════════════════════════
+CURRENT POSITIONS
+═══════════════════════════════════════
+  No open positions
+"""
+
+        message += f"""
+═══════════════════════════════════════
+Time: {pd.Timestamp.now()}
+Account: {'PAPER' if USE_PAPER else 'LIVE'}
+═══════════════════════════════════════
+"""
+
+        send_email_alert("🔴 SELL ORDER - Alpaca Trading Bot", message)
         return order
 
     except Exception as e:
@@ -411,103 +604,127 @@ def run_strategy():
     interval = settings.get('interval', '5m')
     period = settings.get('period', '1d')
 
-    # Run backtest to get latest signal
+    # Download recent data
     try:
-        result = backtest_symbol(
-            ticker=ticker,
-            interval=interval,
-            period=period,
-            use_rsi=settings.get('use_rsi', False),
+        logging.info("Downloading data...")
+        download_period = "5d"  # Always download 5 days for context
+        use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
+        raw = yf.download(ticker, period=download_period, interval=interval,
+                         progress=False, prepost=use_extended_hours)
+
+        if raw.empty:
+            logging.error(f"No data returned for {ticker}")
+            return
+
+        # Handle MultiIndex columns
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+
+        df = raw.copy()
+
+        # Run backtest to get latest signal
+        logging.info("Running backtest...")
+        df1, df5, trades_df, logs_df = backtest_symbol(
+            df1=df,
             rsi_threshold=settings.get('rsi_threshold', 30),
-            use_rsi_exit=settings.get('use_rsi_exit', False),
-            rsi_exit_threshold=settings.get('rsi_exit_threshold', 70),
+            use_rsi=settings.get('use_rsi', True),
+            use_ema=settings.get('use_ema', True),
+            use_volume=settings.get('use_volume', True),
+            stop_loss=settings.get('stop_loss', 0.02),
+            tp_pct=settings.get('take_profit', 0.03),
+            use_stop_loss=settings.get('use_stop_loss', True),
+            use_take_profit=settings.get('use_take_profit', True),
+            use_rsi_overbought=settings.get('use_rsi_exit', False),
+            rsi_overbought_threshold=settings.get('rsi_exit_threshold', 70),
             use_ema_cross_up=settings.get('use_ema_cross_up', False),
             use_ema_cross_down=settings.get('use_ema_cross_down', False),
+            use_price_below_ema9=settings.get('use_price_vs_ema9_exit', False),
             use_bb_cross_up=settings.get('use_bb_cross_up', False),
             use_bb_cross_down=settings.get('use_bb_cross_down', False),
             use_macd_cross_up=settings.get('use_macd_cross_up', False),
             use_macd_cross_down=settings.get('use_macd_cross_down', False),
-            use_price_vs_ema9=settings.get('use_price_vs_ema9', False),
-            use_price_vs_ema21=settings.get('use_price_vs_ema21', False),
-            use_price_vs_ema9_exit=settings.get('use_price_vs_ema9_exit', False),
-            use_price_vs_ema21_exit=settings.get('use_price_vs_ema21_exit', False),
-            use_macd_threshold=settings.get('use_macd_threshold', False),
-            macd_threshold=settings.get('macd_threshold', 0),
-            stop_loss=settings.get('stop_loss', 0.02),
-            take_profit=settings.get('take_profit', 0.03),
+            use_price_above_ema21=settings.get('use_price_vs_ema21', False),
+            use_price_below_ema21=settings.get('use_price_vs_ema21_exit', False),
+            use_macd_below_threshold=settings.get('use_macd_threshold', False),
+            macd_below_threshold=settings.get('macd_threshold', 0),
+            use_macd_above_threshold=settings.get('use_macd_threshold', False),
+            macd_above_threshold=settings.get('macd_threshold', 0),
             use_macd_peak=settings.get('use_macd_peak', False),
             use_macd_valley=settings.get('use_macd_valley', False)
         )
 
-        if not result or 'signal' not in result:
-            logging.warning("No valid result from backtest")
-            return
+        # Get current price from DataFrame
+        current_price = df['Close'].iloc[-1]
 
-        signal = result['signal']
-        timestamp = result['timestamp']
-        note = result.get('note', 'No details')
+        # Check for recent signals (last 10 minutes)
+        if not logs_df.empty:
+            now = pd.Timestamp.now(tz=logs_df['time'].iloc[-1].tz)
+            recent_logs = logs_df[logs_df['time'] >= now - pd.Timedelta(minutes=10)]
 
-        # Get current price
-        quote = alpaca_api.quote(ticker)
-        if not quote:
-            logging.error(f"Failed to get quote for {ticker}")
-            return
+            if not recent_logs.empty:
+                latest_log = recent_logs.iloc[-1]
+                event = latest_log['event']
+                price = latest_log['price']
+                note = latest_log['note']
+                timestamp = latest_log['time']
 
-        price = quote['last']
+                logging.info(f"Latest signal: {event}")
+                logging.info(f"Time: {timestamp}")
+                logging.info(f"Price: ${price:.2f}")
+                logging.info(f"Details: {note}")
 
-        logging.info(f"Latest signal: {signal}")
-        logging.info(f"Time: {timestamp}")
-        logging.info(f"Price: ${price:.2f}")
-        logging.info(f"Details: {note}")
+                # Check if this is a new signal
+                if state['last_check_time'] != str(timestamp):
 
-        # Execute trades based on signal
-        if signal == 'BUY' and state['current_position'] != 'TQQQ':
-            logging.info("📈 BUY SIGNAL - Switching to TQQQ")
+                    # Save portfolio state before making any trades
+                    logging.info("Saving current portfolio state...")
+                    save_portfolio_state()
 
-            # If holding SQQQ, sell it first
-            if state['current_position'] == 'SQQQ' and state['position_size'] > 0:
-                previous_entry_conditions = state.get('entry_conditions')
-                sell_order = place_sell_order('SQQQ', state['position_size'], price, note,
-                                             entry_conditions=previous_entry_conditions)
+                    # ENTRY SIGNAL - Buy TQQQ
+                    if event == 'entry':
+                        logging.info("📈 BUY SIGNAL: Buying TQQQ")
 
-            # Buy TQQQ
-            order = place_buy_order('TQQQ', POSITION_SIZE, price, note)
+                        # Buy TQQQ
+                        order = place_buy_order('TQQQ', POSITION_SIZE, price, note)
+                        if order:
+                            state['current_position'] = 'TQQQ'
+                            state['entry_price'] = price
+                            state['entry_time'] = str(timestamp)
+                            state['entry_conditions'] = note  # Store detailed entry conditions
+                            state['position_size'] = POSITION_SIZE
+                            state['order_ids'].append(order['order_id'])
 
-            if order:
-                state['current_position'] = 'TQQQ'
-                state['entry_price'] = price
-                state['entry_time'] = str(timestamp)
-                state['entry_conditions'] = note
-                state['position_size'] = POSITION_SIZE
-                state['order_ids'].append(order['order_id'])
-                save_state(state)
+                    # EXIT SIGNAL - Buy SQQQ
+                    elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
+                        exit_reason = 'Stop Loss' if event == 'exit_SL' else 'Take Profit' if event == 'exit_TP' else 'Exit Conditions'
+                        logging.info(f"📉 SELL SIGNAL ({exit_reason}): Buying SQQQ")
 
-        elif signal == 'SELL' and state['current_position'] != 'SQQQ':
-            logging.info("📉 SELL SIGNAL - Switching to SQQQ")
+                        # Calculate P&L if we were holding TQQQ
+                        if state['current_position'] == 'TQQQ' and state['entry_price']:
+                            pnl_pct = ((price - state['entry_price']) / state['entry_price']) * 100
+                            pnl_dollars = (price - state['entry_price']) * state['position_size']
+                            logging.info(f"TQQQ Trade P&L: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)")
 
-            # If holding TQQQ, sell it first
-            if state['current_position'] == 'TQQQ' and state['position_size'] > 0:
-                previous_entry_conditions = state.get('entry_conditions')
-                sell_order = place_sell_order('TQQQ', state['position_size'], price, note,
-                                             entry_conditions=previous_entry_conditions)
+                        # Buy SQQQ - pass previous entry conditions for context
+                        previous_entry_conditions = state.get('entry_conditions')
+                        order = place_buy_order('SQQQ', POSITION_SIZE, price, note, entry_conditions=previous_entry_conditions)
+                        if order:
+                            state['current_position'] = 'SQQQ'
+                            state['entry_price'] = price
+                            state['entry_time'] = str(timestamp)
+                            state['entry_conditions'] = note  # Store new entry conditions for SQQQ
+                            state['position_size'] = POSITION_SIZE
+                            state['order_ids'].append(order['order_id'])
 
-            # Buy SQQQ
-            order = place_buy_order('SQQQ', POSITION_SIZE, price, note)
-
-            if order:
-                state['current_position'] = 'SQQQ'
-                state['entry_price'] = price
-                state['entry_time'] = str(timestamp)
-                state['entry_conditions'] = note
-                state['position_size'] = POSITION_SIZE
-                state['order_ids'].append(order['order_id'])
-                save_state(state)
-
+                    # Update last check time
+                    state['last_check_time'] = str(timestamp)
+                    save_state(state)
+                else:
+                    logging.info("Signal already processed")
+            else:
+                logging.info("No recent signals (last 10 minutes)")
         else:
-            logging.info(f"No trade needed. Current position: {state['current_position']}")
-
-        state['last_check_time'] = str(datetime.now())
-        save_state(state)
+            logging.info("No signals in backtest logs")
 
     except Exception as e:
         logging.error(f"Error running strategy: {e}", exc_info=True)

@@ -165,8 +165,8 @@ def backtest_symbol(df1,
     df5["macd_hist"] = histogram
 
     # Detect MACD peaks and valleys using argrelextrema (order=3 means look 3 candles left and right)
-    # Peak: only when MACD is positive (above zero)
-    # Valley: only when MACD is negative (below zero)
+    # Peak: local maximum (detected regardless of sign)
+    # Valley: local minimum (detected regardless of sign)
     df5["macd_peak"] = False
     df5["macd_valley"] = False
     if len(df5) > 6:  # Need at least 7 candles for order=3
@@ -174,15 +174,13 @@ def backtest_symbol(df1,
         peak_indices = argrelextrema(macd_values, np.greater, order=3)[0]
         valley_indices = argrelextrema(macd_values, np.less, order=3)[0]
 
-        # Only mark peaks where MACD > 0
+        # Mark all peaks (no sign restriction)
         for idx in peak_indices:
-            if macd_values[idx] > 0:
-                df5.iloc[idx, df5.columns.get_loc("macd_peak")] = True
+            df5.iloc[idx, df5.columns.get_loc("macd_peak")] = True
 
-        # Only mark valleys where MACD < 0
+        # Mark all valleys (no sign restriction)
         for idx in valley_indices:
-            if macd_values[idx] < 0:
-                df5.iloc[idx, df5.columns.get_loc("macd_valley")] = True
+            df5.iloc[idx, df5.columns.get_loc("macd_valley")] = True
 
     # RSI is now calculated on the selected interval
     df5["rsi_last"] = df5["rsi"]
@@ -989,41 +987,35 @@ if run_backtest_btn:
         ))
 
         # Detect MACD peaks and valleys using argrelextrema (order=3 means look 3 candles left and right)
-        # Peak: only when MACD > 0, Valley: only when MACD < 0
+        # Peak: local maximum (any sign), Valley: local minimum (any sign)
         if len(df5_display) > 6:  # Need at least 7 candles for order=3
             macd_values = df5_display["macd"].values
             peak_indices = argrelextrema(macd_values, np.greater, order=3)[0]
             valley_indices = argrelextrema(macd_values, np.less, order=3)[0]
 
-            # Filter peaks: only where MACD > 0
-            positive_peaks = [idx for idx in peak_indices if macd_values[idx] > 0]
-
-            # Add peak markers (red triangles pointing down) - only above zero line
-            if len(positive_peaks) > 0:
-                peak_times = df5_display.index[positive_peaks]
-                peak_values = macd_values[positive_peaks]
+            # Add peak markers (red triangles pointing down) - all peaks
+            if len(peak_indices) > 0:
+                peak_times = df5_display.index[peak_indices]
+                peak_values = macd_values[peak_indices]
                 fig.add_trace(go.Scatter(
                     x=peak_times,
                     y=peak_values,
                     mode='markers',
-                    name='MACD Peak (>0)',
+                    name='MACD Peak',
                     marker=dict(size=10, symbol='triangle-down', color='red'),
                     yaxis='y4',
                     hoverinfo='x+y'
                 ))
 
-            # Filter valleys: only where MACD < 0
-            negative_valleys = [idx for idx in valley_indices if macd_values[idx] < 0]
-
-            # Add valley markers (green triangles pointing up) - only below zero line
-            if len(negative_valleys) > 0:
-                valley_times = df5_display.index[negative_valleys]
-                valley_values = macd_values[negative_valleys]
+            # Add valley markers (green triangles pointing up) - all valleys
+            if len(valley_indices) > 0:
+                valley_times = df5_display.index[valley_indices]
+                valley_values = macd_values[valley_indices]
                 fig.add_trace(go.Scatter(
                     x=valley_times,
                     y=valley_values,
                     mode='markers',
-                    name='MACD Valley (<0)',
+                    name='MACD Valley',
                     marker=dict(size=10, symbol='triangle-up', color='green'),
                     yaxis='y4',
                     hoverinfo='x+y'
