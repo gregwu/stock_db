@@ -51,8 +51,7 @@ except ImportError:
 
 # Tracking files
 STATE_FILE = '.alpaca_trader_state.json'
-CONFIG_FILE = 'alpaca_strategy_config.json'
-SIGNAL_ACTIONS_FILE = 'alpaca_signal_actions.json'
+CONFIG_FILE = 'alpaca.json'  # Unified configuration file
 PORTFOLIO_STATE_FILE = 'alpaca_portfolio_state.json'
 
 # Alpaca API instance
@@ -62,119 +61,151 @@ alpaca_api = None
 signal_actions_config = None
 
 
-def load_signal_actions():
-    """Load signal-to-action mappings from alpaca_signal_actions.json"""
-    if not os.path.exists(SIGNAL_ACTIONS_FILE):
-        logging.warning(f"Signal actions file {SIGNAL_ACTIONS_FILE} not found! Using defaults.")
-        # Return default configuration
-        return {
-            'signal_actions': {
-                'entry': {'enabled': True, 'action': 'BUY', 'ticker': 'TQQQ', 'description': 'Entry signal - Buy TQQQ'},
-                'exit_conditions_met': {'enabled': True, 'action': 'BUY', 'ticker': 'SQQQ', 'description': 'Exit conditions - Buy SQQQ'},
-                'exit_SL': {'enabled': True, 'action': 'BUY', 'ticker': 'SQQQ', 'description': 'Stop loss - Buy SQQQ'},
-                'exit_TP': {'enabled': True, 'action': 'BUY', 'ticker': 'SQQQ', 'description': 'Take profit - Buy SQQQ'},
-                'exit_EOD': {'enabled': False, 'action': 'IGNORE', 'ticker': None, 'description': 'End of data - Ignore'},
-                'oversold_alert': {'enabled': False, 'action': 'IGNORE', 'ticker': None, 'description': 'Oversold alert - Ignore'}
-            },
-            'workflow': {
-                'clear_positions_before_buy': True,
-                'save_state_before_action': True,
-                'log_pnl_on_exit': True
-            }
-        }
-
-    try:
-        with open(SIGNAL_ACTIONS_FILE, 'r') as f:
-            config = json.load(f)
-        logging.info(f"Loaded signal actions from {SIGNAL_ACTIONS_FILE}")
-        return config
-    except Exception as e:
-        logging.error(f"Failed to load signal actions from {SIGNAL_ACTIONS_FILE}: {e}")
-        logging.warning("Using default signal actions")
-        return load_signal_actions()  # Return defaults
-
-
-def load_alpaca_settings():
-    """Load settings from alpaca_strategy_config.json"""
+def load_config():
+    """
+    Load unified configuration from alpaca.json
+    Returns tuple: (strategy_settings, signal_actions)
+    Fails loudly if configuration is missing or invalid
+    """
     if not os.path.exists(CONFIG_FILE):
-        logging.error(f"Configuration file {CONFIG_FILE} not found!")
-        return None
+        error_msg = f"❌ CONFIGURATION ERROR: {CONFIG_FILE} not found!"
+        logging.error(error_msg)
+        raise FileNotFoundError(error_msg)
 
     try:
         with open(CONFIG_FILE, 'r') as f:
             config = json.load(f)
+        logging.info(f"✅ Loaded configuration from {CONFIG_FILE}")
 
-        # Flatten the nested structure into a flat settings dictionary
-        settings = {
-            'ticker': config.get('ticker', 'TQQQ'),
-            'interval': config.get('interval', '5m'),
-            'period': config.get('period', '1d'),
-        }
+        # Extract strategy settings
+        strategy = config.get('strategy', {})
+        signal_actions = config.get('signal_actions', {})
+        workflow = config.get('workflow', {})
 
-        # Entry conditions
-        entry = config.get('entry_conditions', {})
-        settings['use_rsi'] = entry.get('use_rsi', False)
-        settings['rsi_threshold'] = entry.get('rsi_threshold', 30)
-        settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
-        settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
-        settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
-        settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
-        settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
-        settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
-        settings['macd_threshold'] = entry.get('macd_threshold', 0)
-        settings['use_macd_valley'] = entry.get('use_macd_valley', False)
-        settings['use_ema'] = entry.get('use_ema', False)
-        settings['use_volume'] = entry.get('use_volume', False)
+        if not strategy:
+            error_msg = f"❌ CONFIGURATION ERROR: 'strategy' section missing in {CONFIG_FILE}"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
 
-        # Exit conditions
-        exit_cond = config.get('exit_conditions', {})
-        settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
-        settings['rsi_exit_threshold'] = exit_cond.get('rsi_exit_threshold', 70)
-        settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
-        settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
-        settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
-        settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
-        settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
-        settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+        if not signal_actions:
+            error_msg = f"❌ CONFIGURATION ERROR: 'signal_actions' section missing in {CONFIG_FILE}"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
 
-        # Risk management
-        risk = config.get('risk_management', {})
-        settings['stop_loss'] = risk.get('stop_loss', 0.02)
-        settings['take_profit'] = risk.get('take_profit', 0.03)
-        settings['use_stop_loss'] = risk.get('use_stop_loss', True)
-        settings['use_take_profit'] = risk.get('use_take_profit', True)
+        # Add workflow to signal_actions for compatibility
+        signal_actions['workflow'] = workflow
 
-        # Trading settings
-        trading = config.get('trading', {})
-        settings['position_size'] = trading.get('position_size', 10)
-        settings['check_interval_seconds'] = trading.get('check_interval_seconds', 300)
-
-        # Time filter settings
-        time_filter = config.get('time_filter', {})
-        settings['use_time_filter'] = time_filter.get('use_time_filter', False)
-        settings['avoid_after_time'] = time_filter.get('avoid_after_time', '15:00')
-
-        logging.info(f"Loaded settings from {CONFIG_FILE}")
-        return settings
-
+        return strategy, signal_actions
+    except json.JSONDecodeError as e:
+        error_msg = f"❌ CONFIGURATION ERROR: Invalid JSON in {CONFIG_FILE}: {e}"
+        logging.error(error_msg)
+        raise ValueError(error_msg)
     except Exception as e:
-        logging.error(f"Failed to load settings from {CONFIG_FILE}: {e}")
+        error_msg = f"❌ CONFIGURATION ERROR: Failed to load {CONFIG_FILE}: {e}"
+        logging.error(error_msg)
+        raise
+
+
+def load_alpaca_settings():
+    """
+    Load strategy settings and return flattened dictionary
+    This function maintains compatibility with existing code
+    """
+    strategy, _ = load_config()
+
+    if not strategy:
         return None
+
+    # Flatten the nested structure into a flat settings dictionary
+    settings = {
+        'tickers': strategy.get('tickers', None),
+        'ticker': strategy.get('ticker', 'TQQQ'),  # Legacy single ticker
+        'interval': strategy.get('interval', '5m'),
+        'period': strategy.get('period', '1d'),
+    }
+
+    # Entry conditions
+    entry = strategy.get('entry_conditions', {})
+    settings['use_rsi'] = entry.get('use_rsi', False)
+    settings['rsi_threshold'] = entry.get('rsi_threshold', 30)
+    settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
+    settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
+    settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
+    settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
+    settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
+    settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
+    settings['macd_threshold'] = entry.get('macd_threshold', 0)
+    settings['use_macd_valley'] = entry.get('use_macd_valley', False)
+    settings['use_ema'] = entry.get('use_ema', False)
+    settings['use_volume'] = entry.get('use_volume', False)
+
+    # Exit conditions
+    exit_cond = strategy.get('exit_conditions', {})
+    settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
+    settings['rsi_exit_threshold'] = exit_cond.get('rsi_exit_threshold', 70)
+    settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
+    settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
+    settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
+    settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
+    settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
+    settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+
+    # Risk management
+    risk = strategy.get('risk_management', {})
+    settings['stop_loss'] = risk.get('stop_loss', 0.02)
+    settings['take_profit'] = risk.get('take_profit', 0.03)
+    settings['use_stop_loss'] = risk.get('use_stop_loss', True)
+    settings['use_take_profit'] = risk.get('use_take_profit', True)
+
+    # Trading settings
+    trading = strategy.get('trading', {})
+    settings['position_size'] = trading.get('position_size', 10)
+    settings['check_interval_seconds'] = trading.get('check_interval_seconds', 300)
+
+    # Time filter settings
+    time_filter = strategy.get('time_filter', {})
+    settings['use_time_filter'] = time_filter.get('use_time_filter', False)
+    settings['avoid_after_time'] = time_filter.get('avoid_after_time', '15:00')
+
+    return settings
+
+
+def load_signal_actions():
+    """
+    Load signal actions configuration
+    This function maintains compatibility with existing code
+    """
+    _, signal_actions = load_config()
+    return signal_actions
 
 
 def load_state():
     """Load the last known state"""
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, 'r') as f:
-            return json.load(f)
+            state = json.load(f)
+            # Migrate old state format to new format
+            if 'positions' not in state:
+                # Convert single position to multi-position format
+                state['positions'] = {}
+                if state.get('current_position'):
+                    state['positions'][state['current_position']] = {
+                        'ticker': state['current_position'],
+                        'entry_price': state.get('entry_price'),
+                        'entry_time': state.get('entry_time'),
+                        'entry_conditions': state.get('entry_conditions'),
+                        'quantity': state.get('position_size', 0)
+                    }
+            return state
     return {
         'last_check_time': None,
-        'current_position': None,  # 'TQQQ' or 'SQQQ' or None
-        'entry_price': None,
-        'entry_time': None,
-        'entry_conditions': None,  # Detailed conditions that triggered entry
-        'position_size': 0,
-        'order_ids': []
+        'current_position': None,  # Legacy - for backward compatibility
+        'entry_price': None,        # Legacy - for backward compatibility
+        'entry_time': None,         # Legacy - for backward compatibility
+        'entry_conditions': None,   # Legacy - for backward compatibility
+        'position_size': 0,         # Legacy - for backward compatibility
+        'order_ids': [],
+        'positions': {}  # New multi-ticker tracking: {ticker: {entry_price, entry_time, quantity, ...}}
     }
 
 
@@ -702,13 +733,37 @@ def execute_action(action_config, price, note, timestamp, state):
         if order:
             logging.info(f"      ✅ BUY order placed: {quantity} shares of {ticker} @ ${price:.2f}")
 
-            # Update state with last position
+            # Update state - both legacy single position and new multi-ticker tracking
             state['current_position'] = ticker
             state['entry_price'] = price
             state['entry_time'] = str(timestamp)
             state['entry_conditions'] = note
             state['position_size'] = quantity
             state['order_ids'].append(order['order_id'])
+
+            # Track multiple positions
+            if 'positions' not in state:
+                state['positions'] = {}
+
+            # Add or update position for this ticker
+            if ticker in state['positions']:
+                # Update existing position (average price)
+                old_qty = state['positions'][ticker].get('quantity', 0)
+                old_price = state['positions'][ticker].get('entry_price', price)
+                new_qty = old_qty + quantity
+                avg_price = ((old_price * old_qty) + (price * quantity)) / new_qty
+                state['positions'][ticker]['quantity'] = new_qty
+                state['positions'][ticker]['entry_price'] = avg_price
+            else:
+                # New position
+                state['positions'][ticker] = {
+                    'ticker': ticker,
+                    'entry_price': price,
+                    'entry_time': str(timestamp),
+                    'entry_conditions': note,
+                    'quantity': quantity
+                }
+
             return True
         else:
             logging.error(f"      ❌ BUY order failed for {ticker}")
@@ -720,19 +775,134 @@ def execute_action(action_config, price, note, timestamp, state):
             return False
 
         logging.info(f"      Executing: SELL {quantity} shares of {ticker}")
-        # Implement sell logic here if needed
-        logging.warning(f"      ⚠️  SELL action not yet implemented")
-        return False
+        if description:
+            logging.info(f"      Reason: {description}")
 
-    elif action_type == 'SELL_ALL':
-        logging.info(f"      Executing: SELL ALL positions")
-        result = sell_all_positions()
-        if result:
-            logging.info(f"      ✅ All positions sold")
+        # Check if we have this position
+        positions = alpaca_api.get_positions() if alpaca_api else []
+        position = next((p for p in positions if p['symbol'] == ticker), None)
+
+        if not position:
+            logging.warning(f"      ⚠️  No position in {ticker} to sell")
+            return False
+
+        # If quantity is specified, sell that amount; otherwise sell all
+        available_qty = int(position['qty'])
+        sell_qty = min(quantity, available_qty) if quantity else available_qty
+
+        if sell_qty <= 0:
+            logging.warning(f"      ⚠️  No shares to sell for {ticker}")
+            return False
+
+        order = place_sell_order(ticker, sell_qty, price, note)
+        if order:
+            logging.info(f"      ✅ SELL order placed: {sell_qty} shares of {ticker} @ ${price:.2f}")
+
+            # Update multi-ticker tracking
+            if 'positions' in state and ticker in state['positions']:
+                current_qty = state['positions'][ticker].get('quantity', 0)
+                remaining_qty = current_qty - sell_qty
+
+                if remaining_qty <= 0:
+                    # Completely sold out of this ticker
+                    del state['positions'][ticker]
+                    logging.info(f"      📊 Position in {ticker} closed completely")
+                else:
+                    # Partially sold
+                    state['positions'][ticker]['quantity'] = remaining_qty
+                    logging.info(f"      📊 Position in {ticker} reduced to {remaining_qty} shares")
+
             return True
         else:
-            logging.error(f"      ❌ Failed to sell all positions")
+            logging.error(f"      ❌ SELL order failed for {ticker}")
             return False
+
+    elif action_type == 'SELL_ALL':
+        # SELL_ALL can work two ways:
+        # 1. With ticker specified: Sell ALL shares of that specific ticker
+        # 2. Without ticker: Sell ALL shares of ALL tickers (legacy behavior)
+
+        if ticker:
+            # Sell all shares of specific ticker
+            logging.info(f"      Executing: SELL ALL shares of {ticker}")
+
+            # Check if we have this position
+            positions = alpaca_api.get_positions() if alpaca_api else []
+            position = next((p for p in positions if p['symbol'] == ticker), None)
+
+            if not position:
+                logging.warning(f"      ⚠️  No position in {ticker} to sell")
+                return False
+
+            available_qty = int(position['qty'])
+            if available_qty <= 0:
+                logging.warning(f"      ⚠️  No shares to sell for {ticker}")
+                return False
+
+            logging.info(f"      Found {available_qty} shares of {ticker} to sell")
+
+            order = place_sell_order(ticker, available_qty, price, note)
+            if order:
+                logging.info(f"      ✅ SELL ALL order placed: {available_qty} shares of {ticker} @ ${price:.2f}")
+
+                # Update multi-ticker tracking - remove this ticker completely
+                if 'positions' in state and ticker in state['positions']:
+                    del state['positions'][ticker]
+                    logging.info(f"      📊 Position in {ticker} closed completely")
+
+                # Update legacy fields if this was the current position
+                if state.get('current_position') == ticker:
+                    state['current_position'] = None
+                    state['entry_price'] = None
+                    state['position_size'] = 0
+
+                return True
+            else:
+                logging.error(f"      ❌ SELL ALL order failed for {ticker}")
+                return False
+
+        else:
+            # No ticker specified - sell ALL tickers (legacy behavior)
+            logging.info(f"      Executing: SELL ALL positions (all tickers)")
+
+            # Check if we have any positions to sell
+            positions = alpaca_api.get_positions() if alpaca_api else []
+
+            if not positions:
+                logging.warning(f"      ⚠️  No positions to sell - portfolio is empty")
+                logging.info(f"      Skipping SELL_ALL (nothing to sell)")
+
+                # Still clear tracking to ensure state is clean
+                if 'positions' in state:
+                    state['positions'] = {}
+                state['current_position'] = None
+                state['entry_price'] = None
+                state['position_size'] = 0
+
+                return True  # Not an error - just nothing to do
+
+            logging.info(f"      Found {len(positions)} position(s) to sell:")
+            for pos in positions:
+                logging.info(f"        - {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f}")
+
+            result = sell_all_positions()
+            if result:
+                logging.info(f"      ✅ All positions sold")
+
+                # Clear multi-ticker tracking
+                if 'positions' in state:
+                    state['positions'] = {}
+                    logging.info(f"      📊 All position tracking cleared")
+
+                # Clear legacy fields
+                state['current_position'] = None
+                state['entry_price'] = None
+                state['position_size'] = 0
+
+                return True
+            else:
+                logging.error(f"      ❌ Failed to sell all positions")
+                return False
 
     elif action_type == 'NOTIFY':
         message = action_config.get('message', 'Signal detected')
@@ -750,11 +920,21 @@ def execute_action(action_config, price, note, timestamp, state):
         return False
 
 
-def process_signal_with_config(event, price, note, timestamp, state):
+def process_signal_with_config(event, price, note, timestamp, state, ticker=None):
     """
     Process a signal based on configuration from alpaca_signal_actions.json
-    Supports multiple actions per signal
-    Returns True if signal was processed, False otherwise
+    Supports multiple actions per signal and ticker-specific actions
+
+    Args:
+        event: Signal type (entry, exit_conditions_met, etc.)
+        price: Current price
+        note: Signal description
+        timestamp: Signal timestamp
+        state: Bot state dictionary
+        ticker: Ticker that generated the signal (optional)
+
+    Returns:
+        True if signal was processed, False otherwise
     """
     global signal_actions_config
 
@@ -762,8 +942,42 @@ def process_signal_with_config(event, price, note, timestamp, state):
         logging.warning("No signal actions config loaded, using hardcoded defaults")
         return False
 
-    signal_config = signal_actions_config.get('signal_actions', {})
     workflow = signal_actions_config.get('workflow', {})
+
+    # NEW: Look up ticker-specific signal actions first
+    signal_config = None
+    ticker_enabled = True  # Default to enabled
+
+    if ticker:
+        # Try to find ticker-specific configuration
+        ticker_configs = signal_actions_config.get('tickers', {})
+        if ticker in ticker_configs:
+            ticker_config = ticker_configs[ticker]
+
+            # Check if ticker is enabled at ticker level
+            ticker_enabled = ticker_config.get('enabled', True)
+            if not ticker_enabled:
+                logging.info(f"      Ticker {ticker} is DISABLED at ticker level")
+                logging.info(f"      Action: IGNORE")
+                logging.info("=" * 60)
+                return False
+
+            signal_config = ticker_config.get('signal_actions', ticker_config)
+            logging.info(f"      Using ticker-specific config for {ticker}")
+        else:
+            logging.info(f"      No config for {ticker}, using default")
+
+    # Fallback to old format or default
+    if not signal_config:
+        # Try old format first (backward compatibility)
+        signal_config = signal_actions_config.get('signal_actions', {})
+
+        # If still not found, use default (new format) or default_signal_actions (legacy)
+        if not signal_config:
+            signal_config = signal_actions_config.get('default', {})
+            if not signal_config:
+                signal_config = signal_actions_config.get('default_signal_actions', {})
+            logging.info(f"      Using default signal actions")
 
     # Check if this signal type is configured
     if event not in signal_config:
@@ -871,111 +1085,135 @@ def run_strategy():
         logging.error(f"No settings file found. Please create {CONFIG_FILE}")
         return
 
-    ticker = settings.get('ticker', 'TQQQ')
+    # Support both old format (single ticker) and new format (multiple tickers)
+    tickers = settings.get('tickers', None)
+    if tickers is None:
+        # Fallback to old 'ticker' field for backward compatibility
+        ticker = settings.get('ticker', 'TQQQ')
+        tickers = [ticker]
+
+    if not isinstance(tickers, list):
+        tickers = [tickers]
+
     interval = settings.get('interval', '5m')
     period = settings.get('period', '1d')
 
-    # Download recent data
-    try:
-        logging.info("Downloading data...")
-        download_period = "5d"  # Always download 5 days for context
-        use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
-        raw = yf.download(ticker, period=download_period, interval=interval,
-                         progress=False, prepost=use_extended_hours)
+    logging.info(f"Monitoring {len(tickers)} ticker(s): {', '.join(tickers)}")
 
-        if raw.empty:
-            logging.error(f"No data returned for {ticker}")
-            return
+    # Check each ticker for signals
+    for ticker in tickers:
+        logging.info("-" * 60)
+        logging.info(f"Checking {ticker}...")
 
-        # Handle MultiIndex columns
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
+        # Download recent data
+        try:
+            logging.info(f"Downloading data for {ticker}...")
+            download_period = "5d"  # Always download 5 days for context
+            use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
+            raw = yf.download(ticker, period=download_period, interval=interval,
+                             progress=False, prepost=use_extended_hours)
 
-        df = raw.copy()
+            if raw.empty:
+                logging.error(f"No data returned for {ticker}")
+                continue  # Skip to next ticker
 
-        # Run backtest to get latest signal
-        logging.info("Running backtest...")
-        df1, df5, trades_df, logs_df = backtest_symbol(
-            df1=df,
-            rsi_threshold=settings.get('rsi_threshold', 30),
-            use_rsi=settings.get('use_rsi', True),
-            use_ema=settings.get('use_ema', True),
-            use_volume=settings.get('use_volume', True),
-            stop_loss=settings.get('stop_loss', 0.02),
-            tp_pct=settings.get('take_profit', 0.03),
-            avoid_after=None,  # Time filter disabled
-            use_stop_loss=settings.get('use_stop_loss', True),
-            use_take_profit=settings.get('use_take_profit', True),
-            use_rsi_overbought=settings.get('use_rsi_exit', False),
-            rsi_overbought_threshold=settings.get('rsi_exit_threshold', 70),
-            use_ema_cross_up=settings.get('use_ema_cross_up', False),
-            use_ema_cross_down=settings.get('use_ema_cross_down', False),
-            use_price_below_ema9=settings.get('use_price_vs_ema9_exit', False),
-            use_bb_cross_up=settings.get('use_bb_cross_up', False),
-            use_bb_cross_down=settings.get('use_bb_cross_down', False),
-            use_macd_cross_up=settings.get('use_macd_cross_up', False),
-            use_macd_cross_down=settings.get('use_macd_cross_down', False),
-            use_price_above_ema21=settings.get('use_price_vs_ema21', False),
-            use_price_below_ema21=settings.get('use_price_vs_ema21_exit', False),
-            use_macd_below_threshold=settings.get('use_macd_threshold', False),
-            macd_below_threshold=settings.get('macd_threshold', 0),
-            use_macd_above_threshold=settings.get('use_macd_threshold', False),
-            macd_above_threshold=settings.get('macd_threshold', 0),
-            use_macd_peak=settings.get('use_macd_peak', False),
-            use_macd_valley=settings.get('use_macd_valley', False)
-        )
+            # Handle MultiIndex columns
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
 
-        # Get current price from DataFrame
-        current_price = df['Close'].iloc[-1]
+            df = raw.copy()
 
-        # Check for recent signals (last 5 minutes)
-        if not logs_df.empty:
-            now = pd.Timestamp.now(tz=logs_df['time'].iloc[-1].tz)
-            recent_logs = logs_df[logs_df['time'] >= now - pd.Timedelta(minutes=5)]
+            # Run backtest to get latest signal
+            logging.info(f"Running backtest for {ticker}...")
+            df1, df5, trades_df, logs_df = backtest_symbol(
+                df1=df,
+                rsi_threshold=settings.get('rsi_threshold', 30),
+                use_rsi=settings.get('use_rsi', True),
+                use_ema=settings.get('use_ema', True),
+                use_volume=settings.get('use_volume', True),
+                stop_loss=settings.get('stop_loss', 0.02),
+                tp_pct=settings.get('take_profit', 0.03),
+                avoid_after=None,  # Time filter disabled
+                use_stop_loss=settings.get('use_stop_loss', True),
+                use_take_profit=settings.get('use_take_profit', True),
+                use_rsi_overbought=settings.get('use_rsi_exit', False),
+                rsi_overbought_threshold=settings.get('rsi_exit_threshold', 70),
+                use_ema_cross_up=settings.get('use_ema_cross_up', False),
+                use_ema_cross_down=settings.get('use_ema_cross_down', False),
+                use_price_below_ema9=settings.get('use_price_vs_ema9_exit', False),
+                use_bb_cross_up=settings.get('use_bb_cross_up', False),
+                use_bb_cross_down=settings.get('use_bb_cross_down', False),
+                use_macd_cross_up=settings.get('use_macd_cross_up', False),
+                use_macd_cross_down=settings.get('use_macd_cross_down', False),
+                use_price_above_ema21=settings.get('use_price_vs_ema21', False),
+                use_price_below_ema21=settings.get('use_price_vs_ema21_exit', False),
+                use_macd_below_threshold=settings.get('use_macd_threshold', False),
+                macd_below_threshold=settings.get('macd_threshold', 0),
+                use_macd_above_threshold=settings.get('use_macd_threshold', False),
+                macd_above_threshold=settings.get('macd_threshold', 0),
+                use_macd_peak=settings.get('use_macd_peak', False),
+                use_macd_valley=settings.get('use_macd_valley', False)
+            )
 
-            if not recent_logs.empty:
-                latest_log = recent_logs.iloc[-1]
-                event = latest_log['event']
-                price = latest_log['price']
-                note = latest_log['note']
-                timestamp = latest_log['time']
+            # Get current price from DataFrame
+            current_price = df['Close'].iloc[-1]
 
-                logging.info(f"Latest signal: {event}")
-                logging.info(f"Time: {timestamp}")
-                logging.info(f"Price: ${price:.2f}")
-                logging.info(f"Details: {note}")
+            # Check for recent signals (last 5 minutes)
+            if not logs_df.empty:
+                now = pd.Timestamp.now(tz=logs_df['time'].iloc[-1].tz)
+                recent_logs = logs_df[logs_df['time'] >= now - pd.Timedelta(minutes=5)]
 
-                # Check if this is a new signal (not already processed)
-                if state['last_check_time'] != str(timestamp):
-                    logging.info("=" * 60)
-                    logging.info("🔔 NEW SIGNAL DETECTED")
-                    logging.info("=" * 60)
+                if not recent_logs.empty:
+                    latest_log = recent_logs.iloc[-1]
+                    event = latest_log['event']
+                    price = latest_log['price']
+                    note = latest_log['note']
+                    timestamp = latest_log['time']
 
-                    # [1] Signal Classification
-                    logging.info("[1/4] Classifying signal...")
+                    logging.info(f"Latest signal for {ticker}: {event}")
+                    logging.info(f"Time: {timestamp}")
+                    logging.info(f"Price: ${price:.2f}")
+                    logging.info(f"Details: {note}")
 
-                    # Process signal using configuration
-                    if process_signal_with_config(event, price, note, timestamp, state):
-                        # Update last check time only if signal was processed
-                        state['last_check_time'] = str(timestamp)
-                        save_state(state)
+                    # Create unique check key per ticker to track signals independently
+                    ticker_check_key = f'last_check_{ticker}'
+                    if ticker_check_key not in state:
+                        state[ticker_check_key] = None
+
+                    # Check if this is a new signal (not already processed)
+                    if state[ticker_check_key] != str(timestamp):
+                        logging.info("=" * 60)
+                        logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
+                        logging.info("=" * 60)
+
+                        # [1] Signal Classification
+                        logging.info("[1/4] Classifying signal...")
+
+                        # Add ticker metadata to note
+                        note_with_ticker = f"[{ticker}] {note}"
+
+                        # Process signal using configuration (pass ticker for ticker-specific actions)
+                        if process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker):
+                            # Update last check time for this ticker only if signal was processed
+                            state[ticker_check_key] = str(timestamp)
+                            save_state(state)
+                    else:
+                        logging.info(f"Signal for {ticker} already processed")
                 else:
-                    logging.info("Signal already processed")
+                    # No signals in last 5 minutes - show the most recent one for info
+                    if len(logs_df) > 0:
+                        last_signal = logs_df.iloc[-1]
+                        time_diff = now - last_signal['time']
+                        logging.info(f"No recent signals for {ticker} (last 5 minutes)")
+                        logging.info(f"Most recent signal: {last_signal['event']} at {last_signal['time']} ({time_diff.total_seconds()/60:.1f} minutes ago)")
+                    else:
+                        logging.info(f"No signals in backtest logs for {ticker}")
             else:
-                # No signals in last 5 minutes - show the most recent one for info
-                if len(logs_df) > 0:
-                    last_signal = logs_df.iloc[-1]
-                    time_diff = now - last_signal['time']
-                    logging.info(f"No recent signals (last 5 minutes)")
-                    logging.info(f"Most recent signal: {last_signal['event']} at {last_signal['time']} ({time_diff.total_seconds()/60:.1f} minutes ago)")
-                else:
-                    logging.info("No signals in backtest logs")
-        else:
-            logging.info("No signals in backtest logs")
+                logging.info(f"No signals in backtest logs for {ticker}")
 
-    except Exception as e:
-        logging.error(f"Error running strategy: {e}", exc_info=True)
-        send_email_alert("❌ Strategy Error", f"Error: {e}")
+        except Exception as e:
+            logging.error(f"Error running strategy for {ticker}: {e}", exc_info=True)
+            send_email_alert("❌ Strategy Error", f"Error for {ticker}: {e}")
 
 
 def display_settings(settings):
@@ -988,8 +1226,18 @@ def display_settings(settings):
     logging.info("STRATEGY SETTINGS")
     logging.info("=" * 60)
 
-    # Basic settings
-    logging.info(f"Ticker: {settings.get('ticker', 'N/A')}")
+    # Basic settings - support both old and new format
+    tickers = settings.get('tickers', None)
+    if tickers is None:
+        # Fallback to old 'ticker' field
+        ticker = settings.get('ticker', 'N/A')
+        logging.info(f"Ticker: {ticker}")
+    else:
+        if isinstance(tickers, list):
+            logging.info(f"Tickers: {', '.join(tickers)} ({len(tickers)} total)")
+        else:
+            logging.info(f"Tickers: {tickers}")
+
     logging.info(f"Interval: {settings.get('interval', 'N/A')}")
     logging.info(f"Period: {settings.get('period', 'N/A')}")
 
@@ -1047,34 +1295,85 @@ def display_signal_actions(signal_actions):
     logging.info("SIGNAL → ACTION MAPPINGS")
     logging.info("=" * 60)
 
-    signal_config = signal_actions.get('signal_actions', {})
-    for signal_type, config in signal_config.items():
-        enabled_status = "✅" if config.get('enabled', False) else "❌"
+    # NEW FORMAT: Display ticker-specific signal actions
+    ticker_configs = signal_actions.get('tickers', {})
+    if ticker_configs:
+        logging.info("\nTicker-Specific Actions:")
+        for ticker, ticker_config in ticker_configs.items():
+            # Check ticker-level enabled flag
+            ticker_enabled = ticker_config.get('enabled', True)
+            default_qty = ticker_config.get('default_quantity', 'N/A')
+            enabled_icon = "✅" if ticker_enabled else "❌"
 
-        # Support both old format (single action) and new format (multiple actions)
-        actions = config.get('actions', [])
+            logging.info(f"\n  [{ticker}] {enabled_icon} (Enabled: {ticker_enabled}, Default Qty: {default_qty})")
 
-        # Backward compatibility with old format
-        if not actions and config.get('action'):
-            old_action = config.get('action')
-            old_ticker = config.get('ticker')
-            if old_action == 'IGNORE' or not config.get('enabled', False):
-                logging.info(f"  {enabled_status} {signal_type:20s} → IGNORE")
-            else:
-                logging.info(f"  {enabled_status} {signal_type:20s} → {old_action} {old_ticker}")
-        elif not actions or not config.get('enabled', False):
-            logging.info(f"  {enabled_status} {signal_type:20s} → NO ACTIONS")
-        elif len(actions) == 1:
-            # Single action - show on one line
-            act = actions[0]
-            action_str = f"{act.get('type', 'BUY')} {act.get('quantity', '?')} {act.get('ticker', '?')}"
-            logging.info(f"  {enabled_status} {signal_type:20s} → {action_str}")
-        else:
-            # Multiple actions - show count and list
-            logging.info(f"  {enabled_status} {signal_type:20s} → {len(actions)} actions:")
-            for idx, act in enumerate(actions, 1):
+            # If ticker is disabled, skip showing signal details
+            if not ticker_enabled:
+                logging.info(f"    ⚠️  All signals DISABLED at ticker level")
+                continue
+
+            signal_config = ticker_config.get('signal_actions', ticker_config)
+
+            for signal_type, config in signal_config.items():
+                enabled_status = "✅" if config.get('enabled', False) else "❌"
+                actions = config.get('actions', [])
+
+                if not actions or not config.get('enabled', False):
+                    logging.info(f"    {enabled_status} {signal_type:20s} → NO ACTIONS")
+                elif len(actions) == 1:
+                    act = actions[0]
+                    qty_str = f"{act.get('quantity', '')}" if act.get('quantity') else "ALL"
+                    action_str = f"{act.get('type', 'BUY')} {qty_str} {act.get('ticker', '?')}"
+                    logging.info(f"    {enabled_status} {signal_type:20s} → {action_str}")
+                else:
+                    logging.info(f"    {enabled_status} {signal_type:20s} → {len(actions)} actions:")
+                    for idx, act in enumerate(actions, 1):
+                        qty_str = f"{act.get('quantity', '')}" if act.get('quantity') else "ALL"
+                        action_str = f"{act.get('type', 'BUY')} {qty_str} {act.get('ticker', '?')}"
+                        logging.info(f"        {idx}. {action_str}")
+
+        # Display default actions if present
+        default_config = signal_actions.get('default', {})
+        if not default_config:
+            default_config = signal_actions.get('default_signal_actions', {})  # Legacy
+        if default_config:
+            logging.info(f"\n  [DEFAULT] (fallback)")
+            for signal_type, config in default_config.items():
+                enabled_status = "✅" if config.get('enabled', False) else "❌"
+                actions = config.get('actions', [])
+                if not actions:
+                    logging.info(f"    {enabled_status} {signal_type:20s} → NO ACTIONS")
+
+    # OLD FORMAT: Backward compatibility
+    else:
+        signal_config = signal_actions.get('signal_actions', {})
+        for signal_type, config in signal_config.items():
+            enabled_status = "✅" if config.get('enabled', False) else "❌"
+
+            # Support both old format (single action) and new format (multiple actions)
+            actions = config.get('actions', [])
+
+            # Backward compatibility with old format
+            if not actions and config.get('action'):
+                old_action = config.get('action')
+                old_ticker = config.get('ticker')
+                if old_action == 'IGNORE' or not config.get('enabled', False):
+                    logging.info(f"  {enabled_status} {signal_type:20s} → IGNORE")
+                else:
+                    logging.info(f"  {enabled_status} {signal_type:20s} → {old_action} {old_ticker}")
+            elif not actions or not config.get('enabled', False):
+                logging.info(f"  {enabled_status} {signal_type:20s} → NO ACTIONS")
+            elif len(actions) == 1:
+                # Single action - show on one line
+                act = actions[0]
                 action_str = f"{act.get('type', 'BUY')} {act.get('quantity', '?')} {act.get('ticker', '?')}"
-                logging.info(f"      {idx}. {action_str}")
+                logging.info(f"  {enabled_status} {signal_type:20s} → {action_str}")
+            else:
+                # Multiple actions - show count and list
+                logging.info(f"  {enabled_status} {signal_type:20s} → {len(actions)} actions:")
+                for idx, act in enumerate(actions, 1):
+                    action_str = f"{act.get('type', 'BUY')} {act.get('quantity', '?')} {act.get('ticker', '?')}"
+                    logging.info(f"      {idx}. {action_str}")
 
     # Display workflow settings
     workflow = signal_actions.get('workflow', {})

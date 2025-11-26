@@ -15,10 +15,11 @@ ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
 ALPACA_SECRET_KEY = os.getenv('ALPACA_SECRET_KEY')
 
 # Trading settings
-TICKER = "TQQQ"     # Main ticker for strategy signals
-POSITION_SIZE = 10  # shares per trade
+# NOTE: TICKER and POSITION_SIZE are now configured in alpaca_signal_actions.json
+# Each action can specify its own ticker and quantity for maximum flexibility
 STOP_LOSS_PCT = 0.02  # 2% stop loss
 TAKE_PROFIT_PCT = 0.03  # 3% take profit
+POSITION_SIZE = 100  # Default position size (fallback if not specified in action)
 
 # Logging
 LOG_FILE = "alpaca_trader.log"
