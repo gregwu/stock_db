@@ -36,12 +36,15 @@ Expected output:
 ✅ Alpaca API test completed successfully!
 ```
 
-## Step 3: Configure Settings (Optional)
+## Step 3: Configure Strategy Settings
 
-Edit `alpaca_config.py` if you want to change:
-- Position size (default: 10 shares)
-- Stop loss (default: 2%)
-- Take profit (default: 3%)
+Edit `alpaca_strategy_config.json` to customize your trading strategy:
+- Entry/exit conditions (RSI, MACD, EMA, etc.)
+- Ticker and timeframe
+- Risk management (stop loss, take profit)
+- Position size and check interval
+
+Edit `alpaca_config.py` to change:
 - Paper vs Live trading (default: Paper)
 
 ## Step 4: Start Trading Bot
@@ -51,7 +54,7 @@ Edit `alpaca_config.py` if you want to change:
 ```
 
 The bot will:
-- ✅ Load your strategy from Streamlit settings
+- ✅ Load your strategy from alpaca_strategy_config.json
 - ✅ Monitor for signals every 5 minutes
 - ✅ Execute trades automatically
 - ✅ Send email alerts
@@ -99,18 +102,21 @@ Get notified for:
 
 ## Strategy Settings
 
-The bot uses settings from your Streamlit app:
-1. Run `streamlit run rules.py`
-2. Configure your strategy
-3. Click "Save Settings"
-4. The bot will use these settings automatically
+The bot uses settings from `alpaca_strategy_config.json`:
+1. Edit the JSON file to configure your strategy
+2. Set entry/exit conditions (RSI, MACD, EMA, etc.)
+3. Configure risk management (stop loss, take profit)
+4. Restart the bot to apply changes
+
+This configuration is independent from the Streamlit UI, so your bot settings won't change when you test different strategies in the UI.
 
 ## Files Created
 
 | File | Purpose |
 |------|---------|
 | `alpaca_wrapper.py` | API wrapper for Alpaca |
-| `alpaca_config.py` | Configuration settings |
+| `alpaca_config.py` | Trading mode configuration (Paper/Live) |
+| `alpaca_strategy_config.json` | Strategy settings (entry/exit conditions, risk management) |
 | `alpaca_trader.py` | Main trading bot |
 | `start_alpaca_trader.sh` | Start bot script |
 | `stop_alpaca_trader.sh` | Stop bot script |
@@ -139,8 +145,8 @@ Check your positions at:
 ## Troubleshooting
 
 ### Bot won't start
-- Check if strategy settings exist: `ls -la .strategy_settings.json`
-- Run Streamlit app first to create settings
+- Check if strategy settings exist: `ls -la alpaca_strategy_config.json`
+- Create the config file if missing (see alpaca_strategy_config.json template)
 
 ### No trades executing
 - Verify strategy conditions are met
