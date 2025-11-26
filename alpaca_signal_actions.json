@@ -1,0 +1,118 @@
+{
+  "signal_actions": {
+    "entry": {
+      "enabled": true,
+      "actions": [
+        {
+          "type": "BUY",
+          "ticker": "TQQQ",
+          "quantity": 100,
+          "description": "Buy TQQQ on entry signal"
+        },
+        {
+          "type": "SELL_ALL",
+          "ticker": "SQQQ",
+          "quantity": 100,
+          "description": "Sell SQQQ on entry signal"
+        }
+      ],
+      "description": "Entry signal detected - Execute entry actions"
+    },
+    "exit_conditions_met": {
+      "enabled": true,
+      "actions": [
+        {
+          "type": "BUY",
+          "ticker": "SQQQ",
+          "quantity": 100,
+          "description": "Buy SQQQ when exit conditions met"
+        },
+        {
+          "type": "SELL_ALL",
+          "ticker": "TQQQ",
+          "quantity": 100,
+          "description": "Sell TQQQ when exit conditions met"
+        }
+      ],
+      "description": "Exit conditions met - Execute exit actions"
+    },
+    "exit_SL": {
+      "enabled": true,
+      "actions": [
+        {
+          "type": "BUY",
+          "ticker": "SQQQ",
+          "quantity": 100,
+          "description": "Buy SQQQ on stop loss"
+        },
+        {
+          "type": "SELL_ALL",
+          "ticker": "TQQQ",
+          "quantity": 100,
+          "description": "Sell TQQQ when exit conditions met"
+        }
+      ],
+      "description": "Stop loss triggered - Execute SL actions"
+    },
+    "exit_TP": {
+      "enabled": false,
+      "actions": [
+        {
+          "type": "BUY",
+          "ticker": "SQQQ",
+          "quantity": 100,
+          "description": "Buy SQQQ on take profit"
+        }
+      ],
+      "description": "Take profit triggered - Execute TP actions"
+    },
+    "exit_EOD": {
+      "enabled": false,
+      "actions": [],
+      "description": "End of data (backtest artifact) - Ignore"
+    },
+    "oversold_alert": {
+      "enabled": false,
+      "actions": [],
+      "description": "Oversold alert - Informational only"
+    }
+  },
+
+  "workflow": {
+    "clear_positions_before_actions": false,
+    "save_state_before_actions": true,
+    "log_pnl_on_exit": true
+  },
+
+  "notes": "Multiple actions per signal! Each signal can have an array of actions. Actions are executed in order. Supported action types: BUY, SELL, SELL_ALL, NOTIFY, LOG. Use 'enabled: false' to ignore signals. Empty 'actions' array = no action taken.",
+
+  "examples": {
+    "multiple_buys": {
+      "entry": {
+        "enabled": true,
+        "actions": [
+          {"type": "BUY", "ticker": "TQQQ", "quantity": 50},
+          {"type": "BUY", "ticker": "UPRO", "quantity": 50}
+        ]
+      }
+    },
+    "split_exit": {
+      "exit_conditions_met": {
+        "enabled": true,
+        "actions": [
+          {"type": "BUY", "ticker": "SQQQ", "quantity": 70},
+          {"type": "BUY", "ticker": "SPXS", "quantity": 30}
+        ]
+      }
+    },
+    "with_notification": {
+      "exit_SL": {
+        "enabled": true,
+        "actions": [
+          {"type": "NOTIFY", "message": "Stop loss triggered!"},
+          {"type": "BUY", "ticker": "SQQQ", "quantity": 100}
+        ]
+      }
+    }
+  }
+}
