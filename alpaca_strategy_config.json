@@ -11,8 +11,8 @@
     "use_macd_cross_up": false,
     "use_price_vs_ema9": false,
     "use_price_vs_ema21": false,
-    "use_macd_threshold": false,
-    "macd_threshold": 0,
+    "use_macd_threshold": true,
+    "macd_threshold": 0.1,
     "use_macd_valley": true,
     "use_ema": false,
     "use_volume": false
@@ -38,7 +38,7 @@
 
   "trading": {
     "position_size": 100,
-    "check_interval_seconds": 300
+    "check_interval_seconds": 120
   },
 
   "notes": "This is the dedicated configuration file for alpaca_trader.py. Edit this file to change trading strategy without affecting the Streamlit UI settings."

@@ -711,10 +711,10 @@ def run_strategy():
         # Get current price from DataFrame
         current_price = df['Close'].iloc[-1]
 
-        # Check for recent signals (last 10 minutes)
+        # Check for recent signals (last 5 minutes)
         if not logs_df.empty:
             now = pd.Timestamp.now(tz=logs_df['time'].iloc[-1].tz)
-            recent_logs = logs_df[logs_df['time'] >= now - pd.Timedelta(minutes=10)]
+            recent_logs = logs_df[logs_df['time'] >= now - pd.Timedelta(minutes=5)]
 
             if not recent_logs.empty:
                 latest_log = recent_logs.iloc[-1]
@@ -728,7 +728,7 @@ def run_strategy():
                 logging.info(f"Price: ${price:.2f}")
                 logging.info(f"Details: {note}")
 
-                # Check if this is a new signal
+                # Check if this is a new signal (not already processed)
                 if state['last_check_time'] != str(timestamp):
 
                     # Save portfolio state before making any trades
@@ -785,7 +785,14 @@ def run_strategy():
                 else:
                     logging.info("Signal already processed")
             else:
-                logging.info("No recent signals (last 10 minutes)")
+                # No signals in last 5 minutes - show the most recent one for info
+                if len(logs_df) > 0:
+                    last_signal = logs_df.iloc[-1]
+                    time_diff = now - last_signal['time']
+                    logging.info(f"No recent signals (last 5 minutes)")
+                    logging.info(f"Most recent signal: {last_signal['event']} at {last_signal['time']} ({time_diff.total_seconds()/60:.1f} minutes ago)")
+                else:
+                    logging.info("No signals in backtest logs")
         else:
             logging.info("No signals in backtest logs")
 
@@ -866,7 +873,6 @@ def main():
     logging.info(f"Email: {GMAIL_ADDRESS}")
     logging.info(f"Stop Loss: {STOP_LOSS_PCT*100:.1f}%")
     logging.info(f"Take Profit: {TAKE_PROFIT_PCT*100:.1f}%")
-    logging.info("Will check for signals every 5 minutes")
     logging.info("Press Ctrl+C to stop")
     logging.info("=" * 60)
     logging.info("")
@@ -881,13 +887,18 @@ def main():
         logging.error("Cannot proceed without Alpaca connection")
         return
 
+    # Get check interval from config
+    check_interval = settings.get('check_interval_seconds', 120) if settings else 120
+    logging.info(f"Check interval: {check_interval} seconds ({check_interval/60:.1f} minutes)")
+    logging.info("")
+
     # Run immediately on start
     run_strategy()
 
-    # Then run every 5 minutes
+    # Then run at configured interval
     try:
         while True:
-            time.sleep(300)  # 5 minutes
+            time.sleep(check_interval)
             run_strategy()
     except KeyboardInterrupt:
         logging.info("\nAlpaca Strategy Trader Stopped")
