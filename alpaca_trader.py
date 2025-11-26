@@ -112,6 +112,11 @@ def load_alpaca_settings():
         settings['position_size'] = trading.get('position_size', 10)
         settings['check_interval_seconds'] = trading.get('check_interval_seconds', 300)
 
+        # Time filter settings
+        time_filter = config.get('time_filter', {})
+        settings['use_time_filter'] = time_filter.get('use_time_filter', False)
+        settings['avoid_after_time'] = time_filter.get('avoid_after_time', '15:00')
+
         logging.info(f"Loaded settings from {CONFIG_FILE}")
         return settings
 
@@ -687,6 +692,7 @@ def run_strategy():
             use_volume=settings.get('use_volume', True),
             stop_loss=settings.get('stop_loss', 0.02),
             tp_pct=settings.get('take_profit', 0.03),
+            avoid_after=None,  # Time filter disabled
             use_stop_loss=settings.get('use_stop_loss', True),
             use_take_profit=settings.get('use_take_profit', True),
             use_rsi_overbought=settings.get('use_rsi_exit', False),
@@ -735,8 +741,12 @@ def run_strategy():
                     logging.info("Saving current portfolio state...")
                     save_portfolio_state()
 
+                    # Ignore exit_EOD signals (backtest artifacts)
+                    if event == 'exit_EOD':
+                        logging.info("Ignoring exit_EOD signal (backtest artifact)")
+
                     # ENTRY SIGNAL - Buy TQQQ
-                    if event == 'entry':
+                    elif event == 'entry':
                         logging.info("📈 BUY SIGNAL: Buying TQQQ")
 
                         # First, sell all existing positions
