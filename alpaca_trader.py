@@ -49,12 +49,49 @@ except ImportError:
     STOP_LOSS_PCT = 0.02
     TAKE_PROFIT_PCT = 0.03
 
-# Tracking file
+# Tracking files
 STATE_FILE = '.alpaca_trader_state.json'
 CONFIG_FILE = 'alpaca_strategy_config.json'
+SIGNAL_ACTIONS_FILE = 'alpaca_signal_actions.json'
+PORTFOLIO_STATE_FILE = 'alpaca_portfolio_state.json'
 
 # Alpaca API instance
 alpaca_api = None
+
+# Signal actions configuration (loaded at startup)
+signal_actions_config = None
+
+
+def load_signal_actions():
+    """Load signal-to-action mappings from alpaca_signal_actions.json"""
+    if not os.path.exists(SIGNAL_ACTIONS_FILE):
+        logging.warning(f"Signal actions file {SIGNAL_ACTIONS_FILE} not found! Using defaults.")
+        # Return default configuration
+        return {
+            'signal_actions': {
+                'entry': {'enabled': True, 'action': 'BUY', 'ticker': 'TQQQ', 'description': 'Entry signal - Buy TQQQ'},
+                'exit_conditions_met': {'enabled': True, 'action': 'BUY', 'ticker': 'SQQQ', 'description': 'Exit conditions - Buy SQQQ'},
+                'exit_SL': {'enabled': True, 'action': 'BUY', 'ticker': 'SQQQ', 'description': 'Stop loss - Buy SQQQ'},
+                'exit_TP': {'enabled': True, 'action': 'BUY', 'ticker': 'SQQQ', 'description': 'Take profit - Buy SQQQ'},
+                'exit_EOD': {'enabled': False, 'action': 'IGNORE', 'ticker': None, 'description': 'End of data - Ignore'},
+                'oversold_alert': {'enabled': False, 'action': 'IGNORE', 'ticker': None, 'description': 'Oversold alert - Ignore'}
+            },
+            'workflow': {
+                'clear_positions_before_buy': True,
+                'save_state_before_action': True,
+                'log_pnl_on_exit': True
+            }
+        }
+
+    try:
+        with open(SIGNAL_ACTIONS_FILE, 'r') as f:
+            config = json.load(f)
+        logging.info(f"Loaded signal actions from {SIGNAL_ACTIONS_FILE}")
+        return config
+    except Exception as e:
+        logging.error(f"Failed to load signal actions from {SIGNAL_ACTIONS_FILE}: {e}")
+        logging.warning("Using default signal actions")
+        return load_signal_actions()  # Return defaults
 
 
 def load_alpaca_settings():
@@ -642,6 +679,180 @@ def check_stop_loss_take_profit(state):
     return False
 
 
+def execute_action(action_config, price, note, timestamp, state):
+    """
+    Execute a single action based on configuration
+    Returns True if successful, False otherwise
+    """
+    action_type = action_config.get('type', 'BUY')
+    ticker = action_config.get('ticker')
+    quantity = action_config.get('quantity', POSITION_SIZE)
+    description = action_config.get('description', '')
+
+    if action_type == 'BUY':
+        if not ticker:
+            logging.error(f"      ❌ BUY action missing ticker")
+            return False
+
+        logging.info(f"      Executing: BUY {quantity} shares of {ticker}")
+        if description:
+            logging.info(f"      Reason: {description}")
+
+        order = place_buy_order(ticker, quantity, price, note)
+        if order:
+            logging.info(f"      ✅ BUY order placed: {quantity} shares of {ticker} @ ${price:.2f}")
+
+            # Update state with last position
+            state['current_position'] = ticker
+            state['entry_price'] = price
+            state['entry_time'] = str(timestamp)
+            state['entry_conditions'] = note
+            state['position_size'] = quantity
+            state['order_ids'].append(order['order_id'])
+            return True
+        else:
+            logging.error(f"      ❌ BUY order failed for {ticker}")
+            return False
+
+    elif action_type == 'SELL':
+        if not ticker:
+            logging.error(f"      ❌ SELL action missing ticker")
+            return False
+
+        logging.info(f"      Executing: SELL {quantity} shares of {ticker}")
+        # Implement sell logic here if needed
+        logging.warning(f"      ⚠️  SELL action not yet implemented")
+        return False
+
+    elif action_type == 'SELL_ALL':
+        logging.info(f"      Executing: SELL ALL positions")
+        result = sell_all_positions()
+        if result:
+            logging.info(f"      ✅ All positions sold")
+            return True
+        else:
+            logging.error(f"      ❌ Failed to sell all positions")
+            return False
+
+    elif action_type == 'NOTIFY':
+        message = action_config.get('message', 'Signal detected')
+        logging.info(f"      📧 NOTIFY: {message}")
+        # Could send email/SMS here if implemented
+        return True
+
+    elif action_type == 'LOG':
+        message = action_config.get('message', 'Action logged')
+        logging.info(f"      📝 LOG: {message}")
+        return True
+
+    else:
+        logging.error(f"      ❌ Unknown action type: {action_type}")
+        return False
+
+
+def process_signal_with_config(event, price, note, timestamp, state):
+    """
+    Process a signal based on configuration from alpaca_signal_actions.json
+    Supports multiple actions per signal
+    Returns True if signal was processed, False otherwise
+    """
+    global signal_actions_config
+
+    if not signal_actions_config:
+        logging.warning("No signal actions config loaded, using hardcoded defaults")
+        return False
+
+    signal_config = signal_actions_config.get('signal_actions', {})
+    workflow = signal_actions_config.get('workflow', {})
+
+    # Check if this signal type is configured
+    if event not in signal_config:
+        logging.warning(f"      Signal type '{event}' not found in configuration")
+        return False
+
+    config = signal_config[event]
+
+    # Check if signal is enabled
+    if not config.get('enabled', False):
+        logging.info(f"      Signal type: {event} (DISABLED)")
+        logging.info(f"      Action: IGNORE")
+        logging.info("=" * 60)
+        return False
+
+    # Get actions list (new format) or single action (old format for backward compatibility)
+    actions = config.get('actions', [])
+
+    # Backward compatibility: if old format (single action/ticker), convert to new format
+    if not actions and config.get('action'):
+        old_action = config.get('action')
+        old_ticker = config.get('ticker')
+        if old_action != 'IGNORE':
+            actions = [{
+                'type': old_action,
+                'ticker': old_ticker,
+                'quantity': POSITION_SIZE,
+                'description': config.get('description', '')
+            }]
+
+    # If no actions, treat as ignore
+    if not actions:
+        logging.info(f"      Signal type: {event} (NO ACTIONS CONFIGURED)")
+        logging.info(f"      Action: IGNORE")
+        logging.info("=" * 60)
+        return False
+
+    # Log signal classification
+    logging.info(f"      Signal type: {event}")
+    logging.info(f"      Actions configured: {len(actions)}")
+
+    # Calculate P&L if exiting a position
+    if workflow.get('log_pnl_on_exit', True) and event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
+        if state.get('current_position') and state.get('entry_price'):
+            pnl_pct = ((price - state['entry_price']) / state['entry_price']) * 100
+            pnl_dollars = (price - state['entry_price']) * state.get('position_size', 0)
+            logging.info(f"      Trade P&L: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)")
+
+    logging.info("")
+
+    # [2] Save Portfolio State
+    if workflow.get('save_state_before_actions', True):
+        logging.info("[2/4] Saving portfolio state...")
+        save_portfolio_state()
+        logging.info("      ✅ Portfolio state saved")
+        logging.info("")
+
+    # [3] Clear Existing Positions
+    if workflow.get('clear_positions_before_actions', True):
+        logging.info("[3/4] Clearing existing positions...")
+        if not sell_all_positions():
+            logging.error("      ❌ Failed to sell existing positions")
+            logging.error("      ABORT: Skipping actions")
+            logging.info("=" * 60)
+            return False
+        else:
+            logging.info("      ✅ All positions cleared")
+            logging.info("")
+
+    # [4] Execute Actions
+    logging.info(f"[4/4] Executing {len(actions)} action(s)...")
+    logging.info("")
+
+    success_count = 0
+    for idx, action_config in enumerate(actions, 1):
+        logging.info(f"      Action {idx}/{len(actions)}:")
+        if execute_action(action_config, price, note, timestamp, state):
+            success_count += 1
+        logging.info("")
+
+    # Save state after all actions
+    save_state(state)
+
+    logging.info(f"      Summary: {success_count}/{len(actions)} actions completed successfully")
+    logging.info("=" * 60)
+
+    return success_count > 0
+
+
 def run_strategy():
     """Run the trading strategy and check for signals"""
     logging.info("=" * 60)
@@ -736,62 +947,18 @@ def run_strategy():
 
                 # Check if this is a new signal (not already processed)
                 if state['last_check_time'] != str(timestamp):
+                    logging.info("=" * 60)
+                    logging.info("🔔 NEW SIGNAL DETECTED")
+                    logging.info("=" * 60)
 
-                    # Save portfolio state before making any trades
-                    logging.info("Saving current portfolio state...")
-                    save_portfolio_state()
+                    # [1] Signal Classification
+                    logging.info("[1/4] Classifying signal...")
 
-                    # Ignore exit_EOD signals (backtest artifacts)
-                    if event == 'exit_EOD':
-                        logging.info("Ignoring exit_EOD signal (backtest artifact)")
-
-                    # ENTRY SIGNAL - Buy TQQQ
-                    elif event == 'entry':
-                        logging.info("📈 BUY SIGNAL: Buying TQQQ")
-
-                        # First, sell all existing positions
-                        if not sell_all_positions():
-                            logging.error("Failed to sell existing positions, skipping buy order")
-                        else:
-                            # Then buy TQQQ
-                            order = place_buy_order('TQQQ', POSITION_SIZE, price, note)
-                            if order:
-                                state['current_position'] = 'TQQQ'
-                                state['entry_price'] = price
-                                state['entry_time'] = str(timestamp)
-                                state['entry_conditions'] = note  # Store detailed entry conditions
-                                state['position_size'] = POSITION_SIZE
-                                state['order_ids'].append(order['order_id'])
-
-                    # EXIT SIGNAL - Buy SQQQ
-                    elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
-                        exit_reason = 'Stop Loss' if event == 'exit_SL' else 'Take Profit' if event == 'exit_TP' else 'Exit Conditions'
-                        logging.info(f"📉 SELL SIGNAL ({exit_reason}): Buying SQQQ")
-
-                        # Calculate P&L if we were holding TQQQ
-                        if state['current_position'] == 'TQQQ' and state['entry_price']:
-                            pnl_pct = ((price - state['entry_price']) / state['entry_price']) * 100
-                            pnl_dollars = (price - state['entry_price']) * state['position_size']
-                            logging.info(f"TQQQ Trade P&L: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)")
-
-                        # First, sell all existing positions
-                        if not sell_all_positions():
-                            logging.error("Failed to sell existing positions, skipping buy order")
-                        else:
-                            # Then buy SQQQ - pass previous entry conditions for context
-                            previous_entry_conditions = state.get('entry_conditions')
-                            order = place_buy_order('SQQQ', POSITION_SIZE, price, note, entry_conditions=previous_entry_conditions)
-                            if order:
-                                state['current_position'] = 'SQQQ'
-                                state['entry_price'] = price
-                                state['entry_time'] = str(timestamp)
-                                state['entry_conditions'] = note  # Store new entry conditions for SQQQ
-                                state['position_size'] = POSITION_SIZE
-                                state['order_ids'].append(order['order_id'])
-
-                    # Update last check time
-                    state['last_check_time'] = str(timestamp)
-                    save_state(state)
+                    # Process signal using configuration
+                    if process_signal_with_config(event, price, note, timestamp, state):
+                        # Update last check time only if signal was processed
+                        state['last_check_time'] = str(timestamp)
+                        save_state(state)
                 else:
                     logging.info("Signal already processed")
             else:
@@ -870,6 +1037,55 @@ def display_settings(settings):
     logging.info("=" * 60)
 
 
+def display_signal_actions(signal_actions):
+    """Display signal-to-action mappings in a formatted way"""
+    if not signal_actions:
+        logging.warning("No signal actions configuration found. Using defaults.")
+        return
+
+    logging.info("=" * 60)
+    logging.info("SIGNAL → ACTION MAPPINGS")
+    logging.info("=" * 60)
+
+    signal_config = signal_actions.get('signal_actions', {})
+    for signal_type, config in signal_config.items():
+        enabled_status = "✅" if config.get('enabled', False) else "❌"
+
+        # Support both old format (single action) and new format (multiple actions)
+        actions = config.get('actions', [])
+
+        # Backward compatibility with old format
+        if not actions and config.get('action'):
+            old_action = config.get('action')
+            old_ticker = config.get('ticker')
+            if old_action == 'IGNORE' or not config.get('enabled', False):
+                logging.info(f"  {enabled_status} {signal_type:20s} → IGNORE")
+            else:
+                logging.info(f"  {enabled_status} {signal_type:20s} → {old_action} {old_ticker}")
+        elif not actions or not config.get('enabled', False):
+            logging.info(f"  {enabled_status} {signal_type:20s} → NO ACTIONS")
+        elif len(actions) == 1:
+            # Single action - show on one line
+            act = actions[0]
+            action_str = f"{act.get('type', 'BUY')} {act.get('quantity', '?')} {act.get('ticker', '?')}"
+            logging.info(f"  {enabled_status} {signal_type:20s} → {action_str}")
+        else:
+            # Multiple actions - show count and list
+            logging.info(f"  {enabled_status} {signal_type:20s} → {len(actions)} actions:")
+            for idx, act in enumerate(actions, 1):
+                action_str = f"{act.get('type', 'BUY')} {act.get('quantity', '?')} {act.get('ticker', '?')}"
+                logging.info(f"      {idx}. {action_str}")
+
+    # Display workflow settings
+    workflow = signal_actions.get('workflow', {})
+    logging.info("\nWorkflow Settings:")
+    logging.info(f"  - Clear positions before actions: {workflow.get('clear_positions_before_actions', True)}")
+    logging.info(f"  - Save state before actions: {workflow.get('save_state_before_actions', True)}")
+    logging.info(f"  - Log P&L on exit: {workflow.get('log_pnl_on_exit', True)}")
+
+    logging.info("=" * 60)
+
+
 def main():
     """Main trading loop"""
     logging.info("=" * 60)
@@ -890,6 +1106,12 @@ def main():
     # Load and display strategy settings
     settings = load_alpaca_settings()
     display_settings(settings)
+    logging.info("")
+
+    # Load signal-to-action mappings
+    global signal_actions_config
+    signal_actions_config = load_signal_actions()
+    display_signal_actions(signal_actions_config)
     logging.info("")
 
     # Initialize Alpaca
