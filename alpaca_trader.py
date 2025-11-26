@@ -19,7 +19,7 @@ from alpaca_wrapper import AlpacaAPI
 
 # Import functions from rules.py
 from rules import (
-    rsi, ema, bollinger_bands, macd, backtest_symbol, load_settings
+    rsi, ema, bollinger_bands, macd, backtest_symbol
 )
 
 # Setup logging
@@ -51,9 +51,73 @@ except ImportError:
 
 # Tracking file
 STATE_FILE = '.alpaca_trader_state.json'
+CONFIG_FILE = 'alpaca_strategy_config.json'
 
 # Alpaca API instance
 alpaca_api = None
+
+
+def load_alpaca_settings():
+    """Load settings from alpaca_strategy_config.json"""
+    if not os.path.exists(CONFIG_FILE):
+        logging.error(f"Configuration file {CONFIG_FILE} not found!")
+        return None
+
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+
+        # Flatten the nested structure into a flat settings dictionary
+        settings = {
+            'ticker': config.get('ticker', 'TQQQ'),
+            'interval': config.get('interval', '5m'),
+            'period': config.get('period', '1d'),
+        }
+
+        # Entry conditions
+        entry = config.get('entry_conditions', {})
+        settings['use_rsi'] = entry.get('use_rsi', False)
+        settings['rsi_threshold'] = entry.get('rsi_threshold', 30)
+        settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
+        settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
+        settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
+        settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
+        settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
+        settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
+        settings['macd_threshold'] = entry.get('macd_threshold', 0)
+        settings['use_macd_valley'] = entry.get('use_macd_valley', False)
+        settings['use_ema'] = entry.get('use_ema', False)
+        settings['use_volume'] = entry.get('use_volume', False)
+
+        # Exit conditions
+        exit_cond = config.get('exit_conditions', {})
+        settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
+        settings['rsi_exit_threshold'] = exit_cond.get('rsi_exit_threshold', 70)
+        settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
+        settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
+        settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
+        settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
+        settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
+        settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+
+        # Risk management
+        risk = config.get('risk_management', {})
+        settings['stop_loss'] = risk.get('stop_loss', 0.02)
+        settings['take_profit'] = risk.get('take_profit', 0.03)
+        settings['use_stop_loss'] = risk.get('use_stop_loss', True)
+        settings['use_take_profit'] = risk.get('use_take_profit', True)
+
+        # Trading settings
+        trading = config.get('trading', {})
+        settings['position_size'] = trading.get('position_size', 10)
+        settings['check_interval_seconds'] = trading.get('check_interval_seconds', 300)
+
+        logging.info(f"Loaded settings from {CONFIG_FILE}")
+        return settings
+
+    except Exception as e:
+        logging.error(f"Failed to load settings from {CONFIG_FILE}: {e}")
+        return None
 
 
 def load_state():
@@ -215,7 +279,7 @@ def initialize_alpaca():
         equity = float(account.equity) if account else 0
 
         # Load strategy settings
-        settings = load_settings()
+        settings = load_alpaca_settings()
 
         # Save initial portfolio state
         portfolio = save_portfolio_state()
@@ -594,10 +658,10 @@ def run_strategy():
         logging.info("SL/TP executed, skipping regular strategy check")
         return
 
-    settings = load_settings()
+    settings = load_alpaca_settings()
 
     if not settings:
-        logging.error("No settings file found. Please run the Streamlit app first.")
+        logging.error(f"No settings file found. Please create {CONFIG_FILE}")
         return
 
     ticker = settings.get('ticker', 'TQQQ')
@@ -809,7 +873,7 @@ def main():
     logging.info("")
 
     # Load and display strategy settings
-    settings = load_settings()
+    settings = load_alpaca_settings()
     display_settings(settings)
     logging.info("")
 
