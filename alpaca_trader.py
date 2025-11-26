@@ -585,25 +585,19 @@ def check_stop_loss_take_profit(state):
         if pnl_pct <= -STOP_LOSS_PCT:
             logging.warning(f"⚠️  STOP LOSS triggered! P&L: {pnl_pct*100:.2f}%")
 
-            # Place opposite order
-            if ticker == 'TQQQ':
-                # Sell TQQQ, Buy SQQQ
-                sell_order = place_sell_order('TQQQ', state['position_size'], current_price,
-                                             f"Stop Loss: {pnl_pct*100:.2f}%",
-                                             state.get('entry_conditions'))
-                buy_order = place_buy_order('SQQQ', POSITION_SIZE, current_price,
-                                           f"Stop Loss Exit from TQQQ")
-            else:
-                # Sell SQQQ, Buy TQQQ
-                sell_order = place_sell_order('SQQQ', state['position_size'], current_price,
-                                             f"Stop Loss: {pnl_pct*100:.2f}%",
-                                             state.get('entry_conditions'))
-                buy_order = place_buy_order('TQQQ', POSITION_SIZE, current_price,
-                                           f"Stop Loss Exit from SQQQ")
+            # Sell all existing positions first
+            if not sell_all_positions():
+                logging.error("Failed to sell positions for stop loss")
+                return False
 
-            if sell_order and buy_order:
+            # Then place opposite order
+            new_ticker = 'SQQQ' if ticker == 'TQQQ' else 'TQQQ'
+            buy_order = place_buy_order(new_ticker, POSITION_SIZE, current_price,
+                                       f"Stop Loss Exit from {ticker}",
+                                       state.get('entry_conditions'))
+
+            if buy_order:
                 # Update state
-                new_ticker = 'SQQQ' if ticker == 'TQQQ' else 'TQQQ'
                 state['current_position'] = new_ticker
                 state['entry_price'] = current_price
                 state['entry_time'] = str(datetime.now())
@@ -616,21 +610,18 @@ def check_stop_loss_take_profit(state):
         if pnl_pct >= TAKE_PROFIT_PCT:
             logging.info(f"🎯 TAKE PROFIT triggered! P&L: {pnl_pct*100:.2f}%")
 
-            # Place opposite order
-            if ticker == 'TQQQ':
-                sell_order = place_sell_order('TQQQ', state['position_size'], current_price,
-                                             f"Take Profit: {pnl_pct*100:.2f}%",
-                                             state.get('entry_conditions'))
-                buy_order = place_buy_order('SQQQ', POSITION_SIZE, current_price,
-                                           f"Take Profit Exit from TQQQ")
-            else:
-                sell_order = place_sell_order('SQQQ', state['position_size'], current_price,
-                                             f"Take Profit: {pnl_pct*100:.2f}%",
-                                             state.get('entry_conditions'))
-                buy_order = place_buy_order('TQQQ', POSITION_SIZE, current_price,
-                                           f"Take Profit Exit from SQQQ")
+            # Sell all existing positions first
+            if not sell_all_positions():
+                logging.error("Failed to sell positions for take profit")
+                return False
 
-            if sell_order and buy_order:
+            # Then place opposite order
+            new_ticker = 'SQQQ' if ticker == 'TQQQ' else 'TQQQ'
+            buy_order = place_buy_order(new_ticker, POSITION_SIZE, current_price,
+                                       f"Take Profit Exit from {ticker}",
+                                       state.get('entry_conditions'))
+
+            if buy_order:
                 new_ticker = 'SQQQ' if ticker == 'TQQQ' else 'TQQQ'
                 state['current_position'] = new_ticker
                 state['entry_price'] = current_price
@@ -748,15 +739,19 @@ def run_strategy():
                     if event == 'entry':
                         logging.info("📈 BUY SIGNAL: Buying TQQQ")
 
-                        # Buy TQQQ
-                        order = place_buy_order('TQQQ', POSITION_SIZE, price, note)
-                        if order:
-                            state['current_position'] = 'TQQQ'
-                            state['entry_price'] = price
-                            state['entry_time'] = str(timestamp)
-                            state['entry_conditions'] = note  # Store detailed entry conditions
-                            state['position_size'] = POSITION_SIZE
-                            state['order_ids'].append(order['order_id'])
+                        # First, sell all existing positions
+                        if not sell_all_positions():
+                            logging.error("Failed to sell existing positions, skipping buy order")
+                        else:
+                            # Then buy TQQQ
+                            order = place_buy_order('TQQQ', POSITION_SIZE, price, note)
+                            if order:
+                                state['current_position'] = 'TQQQ'
+                                state['entry_price'] = price
+                                state['entry_time'] = str(timestamp)
+                                state['entry_conditions'] = note  # Store detailed entry conditions
+                                state['position_size'] = POSITION_SIZE
+                                state['order_ids'].append(order['order_id'])
 
                     # EXIT SIGNAL - Buy SQQQ
                     elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
@@ -769,16 +764,20 @@ def run_strategy():
                             pnl_dollars = (price - state['entry_price']) * state['position_size']
                             logging.info(f"TQQQ Trade P&L: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)")
 
-                        # Buy SQQQ - pass previous entry conditions for context
-                        previous_entry_conditions = state.get('entry_conditions')
-                        order = place_buy_order('SQQQ', POSITION_SIZE, price, note, entry_conditions=previous_entry_conditions)
-                        if order:
-                            state['current_position'] = 'SQQQ'
-                            state['entry_price'] = price
-                            state['entry_time'] = str(timestamp)
-                            state['entry_conditions'] = note  # Store new entry conditions for SQQQ
-                            state['position_size'] = POSITION_SIZE
-                            state['order_ids'].append(order['order_id'])
+                        # First, sell all existing positions
+                        if not sell_all_positions():
+                            logging.error("Failed to sell existing positions, skipping buy order")
+                        else:
+                            # Then buy SQQQ - pass previous entry conditions for context
+                            previous_entry_conditions = state.get('entry_conditions')
+                            order = place_buy_order('SQQQ', POSITION_SIZE, price, note, entry_conditions=previous_entry_conditions)
+                            if order:
+                                state['current_position'] = 'SQQQ'
+                                state['entry_price'] = price
+                                state['entry_time'] = str(timestamp)
+                                state['entry_conditions'] = note  # Store new entry conditions for SQQQ
+                                state['position_size'] = POSITION_SIZE
+                                state['order_ids'].append(order['order_id'])
 
                     # Update last check time
                     state['last_check_time'] = str(timestamp)
