@@ -14,8 +14,8 @@
     "use_macd_threshold": false,
     "macd_threshold": 0,
     "use_macd_valley": true,
-    "use_ema": true,
-    "use_volume": true
+    "use_ema": false,
+    "use_volume": false
   },
 
   "exit_conditions": {
@@ -32,12 +32,12 @@
   "risk_management": {
     "stop_loss": 0.02,
     "take_profit": 0.03,
-    "use_stop_loss": true,
-    "use_take_profit": true
+    "use_stop_loss": false,
+    "use_take_profit": false
   },
 
   "trading": {
-    "position_size": 10,
+    "position_size": 100,
     "check_interval_seconds": 300
   },
 
