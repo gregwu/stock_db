@@ -32,7 +32,7 @@
   "risk_management": {
     "stop_loss": 0.02,
     "take_profit": 0.03,
-    "use_stop_loss": false,
+    "use_stop_loss": true,
     "use_take_profit": false
   },
 
