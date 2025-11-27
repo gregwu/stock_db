@@ -1098,12 +1098,28 @@ def run_strategy():
     interval = settings.get('interval', '5m')
     period = settings.get('period', '1d')
 
-    logging.info(f"Monitoring {len(tickers)} ticker(s): {', '.join(tickers)}")
+    # Filter to only enabled tickers for display
+    ticker_configs = signal_actions_config.get('tickers', {})
+    enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
+    disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
+
+    if enabled_tickers:
+        logging.info(f"✅ Monitoring {len(enabled_tickers)} enabled ticker(s): {', '.join(enabled_tickers)}")
+    if disabled_tickers:
+        logging.info(f"⚠️  Skipping {len(disabled_tickers)} disabled ticker(s): {', '.join(disabled_tickers)}")
 
     # Check each ticker for signals
     for ticker in tickers:
         logging.info("-" * 60)
         logging.info(f"Checking {ticker}...")
+
+        # Check if ticker is enabled in signal_actions config
+        ticker_configs = signal_actions_config.get('tickers', {})
+        if ticker in ticker_configs:
+            ticker_enabled = ticker_configs[ticker].get('enabled', True)
+            if not ticker_enabled:
+                logging.info(f"⚠️  Ticker {ticker} is DISABLED - Skipping")
+                continue
 
         # Download recent data
         try:
@@ -1430,11 +1446,20 @@ def main():
 
     # Send startup email notification
     tickers = settings.get('tickers', []) if settings else []
-    ticker_list = ', '.join(tickers) if tickers else 'N/A'
+
+    # Filter to only enabled tickers
+    ticker_configs = signal_actions_config.get('tickers', {})
+    enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
+    disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
+
+    enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
+    disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
+
     startup_message = f"""Alpaca Trading Bot Started
 
 Mode: {account_type}
-Monitoring: {ticker_list}
+Monitoring: {enabled_list}
+Disabled: {disabled_list}
 Interval: {check_interval} seconds ({check_interval/60:.1f} minutes)
 Check Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
