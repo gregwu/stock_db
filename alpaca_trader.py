@@ -1110,16 +1110,16 @@ def run_strategy():
 
     # Check each ticker for signals
     for ticker in tickers:
-        logging.info("-" * 60)
-        logging.info(f"Checking {ticker}...")
-
-        # Check if ticker is enabled in signal_actions config
+        # Check if ticker is enabled in signal_actions config FIRST
         ticker_configs = signal_actions_config.get('tickers', {})
         if ticker in ticker_configs:
             ticker_enabled = ticker_configs[ticker].get('enabled', True)
             if not ticker_enabled:
-                logging.info(f"⚠️  Ticker {ticker} is DISABLED - Skipping")
+                # Skip disabled ticker silently (already shown in summary above)
                 continue
+
+        logging.info("-" * 60)
+        logging.info(f"Checking {ticker}...")
 
         # Download recent data
         try:
@@ -1443,32 +1443,6 @@ def main():
     check_interval = settings.get('check_interval_seconds', 120) if settings else 120
     logging.info(f"Check interval: {check_interval} seconds ({check_interval/60:.1f} minutes)")
     logging.info("")
-
-    # Send startup email notification
-    tickers = settings.get('tickers', []) if settings else []
-
-    # Filter to only enabled tickers
-    ticker_configs = signal_actions_config.get('tickers', {})
-    enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
-    disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
-
-    enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
-    disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
-
-    startup_message = f"""Alpaca Trading Bot Started
-
-Mode: {account_type}
-Monitoring: {enabled_list}
-Disabled: {disabled_list}
-Interval: {check_interval} seconds ({check_interval/60:.1f} minutes)
-Check Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-Stop Loss: {STOP_LOSS_PCT*100:.1f}%
-Take Profit: {TAKE_PROFIT_PCT*100:.1f}%
-
-Bot is now monitoring for signals..."""
-
-    send_email_alert("🚀 Trading Bot Started", startup_message)
 
     # Run immediately on start
     run_strategy()
