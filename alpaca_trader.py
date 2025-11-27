@@ -1454,7 +1454,26 @@ def main():
             run_strategy()
     except KeyboardInterrupt:
         logging.info("\nAlpaca Strategy Trader Stopped")
-        send_email_alert("🛑 Trading Bot Stopped", "Alpaca strategy trader has been stopped manually")
+
+        # Build stop email with enabled tickers info
+        tickers = settings.get('tickers', []) if settings else []
+        ticker_configs = signal_actions_config.get('tickers', {})
+        enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
+        disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
+
+        enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
+        disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
+
+        stop_message = f"""Alpaca Trading Bot Stopped
+
+Mode: {account_type}
+Monitored Tickers: {enabled_list}
+Disabled Tickers: {disabled_list}
+Stop Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Bot has been stopped manually."""
+
+        send_email_alert("🛑 Trading Bot Stopped", stop_message)
 
 
 if __name__ == "__main__":
