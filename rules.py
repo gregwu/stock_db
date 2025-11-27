@@ -11,25 +11,268 @@ from scipy.signal import argrelextrema
 # ---------- Settings persistence ----------
 
 SETTINGS_FILE = ".streamlit/rules_settings.json"
+ALPACA_CONFIG_FILE = "alpaca.json"
 
-def load_settings():
-    """Load settings from file"""
+def load_alpaca_config():
+    """Load alpaca.json configuration"""
+    if os.path.exists(ALPACA_CONFIG_FILE):
+        try:
+            with open(ALPACA_CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            st.error(f"Error loading {ALPACA_CONFIG_FILE}: {e}")
+            return None
+    return None
+
+def get_available_tickers():
+    """Get list of tickers from alpaca.json"""
+    config = load_alpaca_config()
+    if config and 'signal_actions' in config and 'tickers' in config['signal_actions']:
+        return list(config['signal_actions']['tickers'].keys())
+    return ['TQQQ']  # Fallback default
+
+def load_strategy_from_alpaca(ticker=None):
+    """Load strategy settings from alpaca.json, with optional ticker-specific overrides"""
+    config = load_alpaca_config()
+    if not config or 'strategy' not in config:
+        return None
+
+    strategy = config['strategy']
+
+    # If ticker specified, check for ticker-specific overrides
+    if ticker and 'signal_actions' in config:
+        ticker_configs = config['signal_actions'].get('tickers', {})
+        ticker_config = ticker_configs.get(ticker, {})
+        ticker_strategy = ticker_config.get('strategy', {})
+
+        if ticker_strategy:
+            # Merge ticker-specific overrides
+            import copy
+            merged_strategy = copy.deepcopy(strategy)
+
+            if 'entry_conditions' in ticker_strategy:
+                if 'entry_conditions' not in merged_strategy:
+                    merged_strategy['entry_conditions'] = {}
+                merged_strategy['entry_conditions'].update(ticker_strategy['entry_conditions'])
+
+            if 'exit_conditions' in ticker_strategy:
+                if 'exit_conditions' not in merged_strategy:
+                    merged_strategy['exit_conditions'] = {}
+                merged_strategy['exit_conditions'].update(ticker_strategy['exit_conditions'])
+
+            if 'risk_management' in ticker_strategy:
+                if 'risk_management' not in merged_strategy:
+                    merged_strategy['risk_management'] = {}
+                merged_strategy['risk_management'].update(ticker_strategy['risk_management'])
+
+            return merged_strategy
+
+    return strategy
+
+def load_settings(ticker=None):
+    """Load settings from file, optionally for a specific ticker"""
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, 'r') as f:
-                return json.load(f)
+                all_settings = json.load(f)
+
+            # If ticker specified, return ticker-specific settings
+            if ticker and isinstance(all_settings, dict) and 'tickers' in all_settings:
+                return all_settings.get('tickers', {}).get(ticker)
+
+            # Return global settings (backward compatibility)
+            return all_settings
         except Exception:
             pass
     return None
 
-def save_settings(settings):
-    """Save settings to file"""
+def save_settings(settings, ticker=None):
+    """Save settings to file, optionally for a specific ticker"""
     try:
         os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+
+        # Load existing settings
+        all_settings = {}
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                with open(SETTINGS_FILE, 'r') as f:
+                    all_settings = json.load(f)
+            except Exception:
+                pass
+
+        # If ticker specified, save under ticker key
+        if ticker:
+            if 'tickers' not in all_settings:
+                all_settings['tickers'] = {}
+            all_settings['tickers'][ticker] = settings
+        else:
+            # Save as global settings (backward compatibility)
+            all_settings = settings
+
+        # Write back to file
         with open(SETTINGS_FILE, 'w') as f:
-            json.dump(settings, f, indent=2)
+            json.dump(all_settings, f, indent=2)
     except Exception:
         pass
+
+def save_settings_to_alpaca(settings, ticker):
+    """Save settings to alpaca.json for a specific ticker"""
+    try:
+        config = load_alpaca_config()
+        if not config:
+            return False
+
+        # Convert UI settings to alpaca.json format
+        entry_conditions = {
+            'use_rsi': settings.get('use_rsi', False),
+            'rsi_threshold': settings.get('rsi_threshold', 30),
+            'use_ema_cross_up': settings.get('use_ema_cross_up', False),
+            'use_bb_cross_up': settings.get('use_bb_cross_up', False),
+            'use_macd_cross_up': settings.get('use_macd_cross_up', False),
+            'use_price_vs_ema9': settings.get('use_price_vs_ema9', False),
+            'use_price_vs_ema21': settings.get('use_price_vs_ema21', False),
+            'use_macd_threshold': settings.get('use_macd_threshold', False),
+            'macd_threshold': settings.get('macd_threshold', 0.1),
+            'use_macd_valley': settings.get('use_macd_valley', False),
+            'use_ema': settings.get('use_ema', False),
+            'use_volume': settings.get('use_volume', False)
+        }
+
+        exit_conditions = {
+            'use_rsi_exit': settings.get('use_rsi_exit', False),
+            'rsi_exit_threshold': settings.get('rsi_exit_threshold', 70),
+            'use_ema_cross_down': settings.get('use_ema_cross_down', False),
+            'use_bb_cross_down': settings.get('use_bb_cross_down', False),
+            'use_macd_cross_down': settings.get('use_macd_cross_down', False),
+            'use_price_vs_ema9_exit': settings.get('use_price_vs_ema9_exit', False),
+            'use_price_vs_ema21_exit': settings.get('use_price_vs_ema21_exit', False),
+            'use_macd_peak': settings.get('use_macd_peak', False)
+        }
+
+        risk_management = {
+            'stop_loss': settings.get('stop_loss', 0.02),
+            'take_profit': settings.get('take_profit', 0.03),
+            'use_stop_loss': settings.get('use_stop_loss', True),
+            'use_take_profit': settings.get('use_take_profit', False)
+        }
+
+        # Prepare ticker strategy
+        ticker_strategy = {
+            'entry_conditions': entry_conditions,
+            'exit_conditions': exit_conditions,
+            'risk_management': risk_management
+        }
+
+        # Update config
+        if 'signal_actions' not in config:
+            config['signal_actions'] = {'tickers': {}}
+        if 'tickers' not in config['signal_actions']:
+            config['signal_actions']['tickers'] = {}
+        if ticker not in config['signal_actions']['tickers']:
+            return False
+
+        # Save strategy to ticker config
+        config['signal_actions']['tickers'][ticker]['strategy'] = ticker_strategy
+
+        # Write back to alpaca.json
+        with open(ALPACA_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+
+        return True
+    except Exception as e:
+        st.error(f"Error saving to alpaca.json: {e}")
+        return False
+
+def update_ticker_enabled_status(ticker, enabled):
+    """Update ticker enabled status in alpaca.json"""
+    try:
+        config = load_alpaca_config()
+        if not config:
+            return False
+
+        if 'signal_actions' not in config or 'tickers' not in config['signal_actions']:
+            return False
+
+        if ticker not in config['signal_actions']['tickers']:
+            return False
+
+        # Update enabled status
+        config['signal_actions']['tickers'][ticker]['enabled'] = enabled
+
+        # Save back to file
+        with open(ALPACA_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+
+        return True
+    except Exception as e:
+        st.error(f"Error updating ticker status: {e}")
+        return False
+
+def get_ticker_enabled_status(ticker):
+    """Get ticker enabled status from alpaca.json"""
+    config = load_alpaca_config()
+    if config and 'signal_actions' in config and 'tickers' in config['signal_actions']:
+        ticker_config = config['signal_actions']['tickers'].get(ticker, {})
+        return ticker_config.get('enabled', True)
+    return True
+
+def get_ticker_default_quantity(ticker):
+    """Get ticker default_quantity from alpaca.json"""
+    config = load_alpaca_config()
+    if config and 'signal_actions' in config and 'tickers' in config['signal_actions']:
+        ticker_config = config['signal_actions']['tickers'].get(ticker, {})
+        return ticker_config.get('default_quantity', 100)
+    return 100
+
+def update_ticker_default_quantity(ticker, quantity):
+    """Update ticker default_quantity in alpaca.json"""
+    try:
+        config = load_alpaca_config()
+        if not config:
+            return False
+
+        if 'signal_actions' not in config or 'tickers' not in config['signal_actions']:
+            return False
+
+        if ticker not in config['signal_actions']['tickers']:
+            return False
+
+        # Update default_quantity
+        config['signal_actions']['tickers'][ticker]['default_quantity'] = quantity
+
+        # Save back to file
+        with open(ALPACA_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+
+        return True
+    except Exception as e:
+        st.error(f"Error updating default_quantity: {e}")
+        return False
+
+def delete_ticker(ticker):
+    """Delete ticker from alpaca.json"""
+    try:
+        config = load_alpaca_config()
+        if not config:
+            return False
+
+        if 'signal_actions' not in config or 'tickers' not in config['signal_actions']:
+            return False
+
+        if ticker not in config['signal_actions']['tickers']:
+            return False
+
+        # Delete ticker
+        del config['signal_actions']['tickers'][ticker]
+
+        # Save back to file
+        with open(ALPACA_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+
+        return True
+    except Exception as e:
+        st.error(f"Error deleting ticker: {e}")
+        return False
 
 # ---------- Indicator helpers ----------
 
@@ -456,14 +699,18 @@ st.title("Strategy Scalping ")
 
 # Initialize session state for settings persistence
 if 'settings' not in st.session_state:
-    # Try to load saved settings from file
-    saved_settings = load_settings()
+    # Initialize with default ticker
+    default_ticker = get_available_tickers()[0]
+
+    # Try to load saved settings for default ticker
+    saved_settings = load_settings(default_ticker)
     if saved_settings:
         st.session_state.settings = saved_settings
+        st.session_state.settings['ticker'] = default_ticker  # Ensure ticker is set
     else:
         # Default settings
         st.session_state.settings = {
-            'ticker': 'TQQQ',
+            'ticker': default_ticker,
             'period': '1d',
             'interval': '1m',
             'chart_height': 1150,
@@ -500,8 +747,214 @@ if 'settings' not in st.session_state:
 
 with st.sidebar:
     st.header("Settings")
-    ticker = st.text_input("Main ticker", st.session_state.settings['ticker'])
+
+    # Get available tickers from alpaca.json
+    available_tickers = get_available_tickers()
+
+    # Add option to create new ticker
+    ticker_options = available_tickers + ["➕ Create New Ticker..."]
+
+    # Get current ticker from settings, or use first available
+    current_ticker = st.session_state.settings.get('ticker', available_tickers[0])
+
+    # Find index of current ticker in available list
+    try:
+        ticker_index = ticker_options.index(current_ticker)
+    except (ValueError, AttributeError):
+        ticker_index = 0
+
+    selected_option = st.selectbox(
+        "Main ticker",
+        ticker_options,
+        index=ticker_index,
+        help="Select ticker from alpaca.json or create a new one"
+    )
+
+    # Handle new ticker creation
+    if selected_option == "➕ Create New Ticker...":
+        new_ticker = st.text_input(
+            "Enter new ticker symbol",
+            placeholder="e.g., AAPL, MSFT, etc.",
+            help="Enter a valid ticker symbol to create"
+        ).upper()
+
+        if new_ticker:
+            if new_ticker in available_tickers:
+                st.warning(f"⚠️ {new_ticker} already exists in configuration")
+                ticker = new_ticker
+            else:
+                if st.button("✅ Create Ticker", use_container_width=True):
+                    # Create new ticker in alpaca.json with default configuration
+                    config = load_alpaca_config()
+                    if config and 'signal_actions' in config and 'tickers' in config['signal_actions']:
+                        config['signal_actions']['tickers'][new_ticker] = {
+                            "enabled": False,
+                            "default_quantity": 100,
+                            "entry": {
+                                "actions": [
+                                    {"type": "BUY", "ticker": new_ticker, "quantity": 100}
+                                ],
+                                "description": f"{new_ticker} entry signal - Go long"
+                            },
+                            "exit_conditions_met": {
+                                "actions": [
+                                    {"type": "SELL_ALL", "ticker": new_ticker}
+                                ],
+                                "description": f"{new_ticker} exit conditions met - Close position"
+                            },
+                            "exit_SL": {
+                                "actions": [
+                                    {"type": "SELL_ALL", "ticker": new_ticker}
+                                ],
+                                "description": f"{new_ticker} stop loss hit - Close position"
+                            }
+                        }
+
+                        try:
+                            with open(ALPACA_CONFIG_FILE, 'w') as f:
+                                json.dump(config, f, indent=2)
+                            st.success(f"✅ Created new ticker {new_ticker} in alpaca.json (disabled)")
+                            st.session_state.settings['ticker'] = new_ticker
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to create ticker: {e}")
+                    else:
+                        st.error("Failed to load alpaca.json")
+                ticker = current_ticker  # Keep current ticker while creating
+        else:
+            ticker = current_ticker  # Keep current ticker if no input
+    else:
+        ticker = selected_option
+
     st.session_state.settings['ticker'] = ticker
+
+    # Auto-load strategy from alpaca.json when ticker changes
+    if 'previous_ticker' not in st.session_state:
+        st.session_state.previous_ticker = ticker
+
+    if ticker != st.session_state.previous_ticker:
+        # Ticker changed, auto-load strategy from alpaca.json
+        alpaca_strategy = load_strategy_from_alpaca(ticker)
+        if alpaca_strategy:
+            # Update settings from alpaca.json
+            entry = alpaca_strategy.get('entry_conditions', {})
+            exit_cond = alpaca_strategy.get('exit_conditions', {})
+            risk = alpaca_strategy.get('risk_management', {})
+
+            # Entry conditions
+            st.session_state.settings['use_rsi'] = entry.get('use_rsi', False)
+            st.session_state.settings['rsi_threshold'] = entry.get('rsi_threshold', 30)
+            st.session_state.settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
+            st.session_state.settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
+            st.session_state.settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
+            st.session_state.settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
+            st.session_state.settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
+            st.session_state.settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
+            st.session_state.settings['macd_threshold'] = entry.get('macd_threshold', 0.1)
+            st.session_state.settings['use_macd_valley'] = entry.get('use_macd_valley', False)
+
+            # Exit conditions
+            st.session_state.settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
+            st.session_state.settings['rsi_exit_threshold'] = exit_cond.get('rsi_exit_threshold', 70)
+            st.session_state.settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
+            st.session_state.settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
+            st.session_state.settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
+            st.session_state.settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
+            st.session_state.settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
+            st.session_state.settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+
+            # Risk management
+            st.session_state.settings['stop_loss'] = risk.get('stop_loss', 0.02)
+            st.session_state.settings['take_profit'] = risk.get('take_profit', 0.03)
+
+            # Interval and period
+            st.session_state.settings['interval'] = alpaca_strategy.get('interval', '5m')
+            st.session_state.settings['period'] = alpaca_strategy.get('period', '1d')
+
+            # Update previous ticker
+            st.session_state.previous_ticker = ticker
+            st.rerun()
+
+    # Add ticker enable/disable control
+    st.divider()
+
+    current_status = get_ticker_enabled_status(ticker)
+    status_emoji = "✅" if current_status else "❌"
+    status_text = "Enabled" if current_status else "Disabled"
+
+    st.markdown(f"**Ticker Status:** {status_emoji} {status_text}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Enable", use_container_width=True, disabled=current_status):
+            if update_ticker_enabled_status(ticker, True):
+                st.success(f"✅ {ticker} enabled in alpaca.json")
+                st.rerun()
+            else:
+                st.error(f"Failed to enable {ticker}")
+
+    with col2:
+        if st.button("❌ Disable", use_container_width=True, disabled=not current_status):
+            if update_ticker_enabled_status(ticker, False):
+                st.warning(f"❌ {ticker} disabled in alpaca.json")
+                st.rerun()
+            else:
+                st.error(f"Failed to disable {ticker}")
+
+    # Add delete ticker button with confirmation
+    if 'confirm_delete_ticker' not in st.session_state:
+        st.session_state.confirm_delete_ticker = None
+
+    if st.session_state.confirm_delete_ticker == ticker:
+        # Show confirmation state
+        st.warning(f"⚠️ Are you sure you want to delete {ticker}?")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Confirm Delete", use_container_width=True, key=f"confirm_del_{ticker}"):
+                if delete_ticker(ticker):
+                    st.success(f"✅ Deleted {ticker} from alpaca.json")
+                    st.session_state.confirm_delete_ticker = None
+                    # Switch to first available ticker
+                    available_tickers = get_available_tickers()
+                    if available_tickers:
+                        st.session_state.settings['ticker'] = available_tickers[0]
+                        st.session_state.previous_ticker = available_tickers[0]
+                    st.rerun()
+                else:
+                    st.error(f"Failed to delete {ticker}")
+                    st.session_state.confirm_delete_ticker = None
+        with col2:
+            if st.button("❌ Cancel", use_container_width=True, key=f"cancel_del_{ticker}"):
+                st.session_state.confirm_delete_ticker = None
+                st.rerun()
+    else:
+        # Show delete button
+        if st.button("🗑️ Delete Ticker", use_container_width=True, type="secondary", key=f"delete_{ticker}"):
+            st.session_state.confirm_delete_ticker = ticker
+            st.rerun()
+
+    st.divider()
+
+    # Add default_quantity control
+    current_quantity = get_ticker_default_quantity(ticker)
+    new_quantity = st.number_input(
+        "Default Quantity",
+        min_value=1,
+        max_value=10000,
+        value=current_quantity,
+        step=1,
+        help="Number of shares to trade for this ticker"
+    )
+
+    if new_quantity != current_quantity:
+        if st.button("💾 Update Quantity", use_container_width=True):
+            if update_ticker_default_quantity(ticker, new_quantity):
+                st.success(f"✅ Updated {ticker} default_quantity to {new_quantity}")
+                st.rerun()
+            else:
+                st.error(f"Failed to update default_quantity for {ticker}")
+
+    st.divider()
 
     period_options = ["1d", "5d", "2wk", "1mo", "2mo", "3mo", "6mo", "1y"]
     try:
@@ -738,6 +1191,13 @@ with st.sidebar:
     save_settings(st.session_state.settings)
 
 if run_backtest_btn:
+    # Save current settings to alpaca.json before running backtest
+    with st.spinner(f"Saving strategy for {ticker} to alpaca.json..."):
+        if save_settings_to_alpaca(st.session_state.settings, ticker):
+            st.success(f"💾 Saved strategy for {ticker} to alpaca.json", icon="✅")
+        else:
+            st.warning(f"⚠️ Could not save strategy for {ticker}")
+
     # ---- Main ticker ----
     with st.spinner(f"Downloading {ticker} data..."):
         # Map period to yfinance compatible values and adjust for better data display

@@ -106,20 +106,68 @@ def load_config():
         raise
 
 
-def load_alpaca_settings():
+def get_ticker_strategy(ticker, default_strategy, signal_actions_config):
     """
-    Load strategy settings and return flattened dictionary
-    This function maintains compatibility with existing code
+    Get strategy settings for a specific ticker, with ticker-level overrides
+
+    Args:
+        ticker: Ticker symbol (e.g., 'TQQQ')
+        default_strategy: Default strategy settings from strategy section
+        signal_actions_config: Signal actions config containing ticker-specific overrides
+
+    Returns:
+        Merged strategy settings for the ticker
     """
-    strategy, _ = load_config()
+    # Start with default strategy
+    strategy = default_strategy.copy()
 
-    if not strategy:
-        return None
+    # Check if ticker has strategy overrides
+    ticker_configs = signal_actions_config.get('tickers', {})
+    ticker_config = ticker_configs.get(ticker, {})
+    ticker_strategy = ticker_config.get('strategy', {})
 
-    # Flatten the nested structure into a flat settings dictionary
+    if ticker_strategy:
+        # Merge ticker-specific strategy settings
+        # Ticker settings override defaults
+
+        # Override entry_conditions if present
+        if 'entry_conditions' in ticker_strategy:
+            if 'entry_conditions' not in strategy:
+                strategy['entry_conditions'] = {}
+            strategy['entry_conditions'].update(ticker_strategy['entry_conditions'])
+
+        # Override exit_conditions if present
+        if 'exit_conditions' in ticker_strategy:
+            if 'exit_conditions' not in strategy:
+                strategy['exit_conditions'] = {}
+            strategy['exit_conditions'].update(ticker_strategy['exit_conditions'])
+
+        # Override risk_management if present
+        if 'risk_management' in ticker_strategy:
+            if 'risk_management' not in strategy:
+                strategy['risk_management'] = {}
+            strategy['risk_management'].update(ticker_strategy['risk_management'])
+
+        # Override trading if present
+        if 'trading' in ticker_strategy:
+            if 'trading' not in strategy:
+                strategy['trading'] = {}
+            strategy['trading'].update(ticker_strategy['trading'])
+
+    return strategy
+
+
+def flatten_strategy(strategy):
+    """
+    Flatten nested strategy structure into flat settings dictionary
+
+    Args:
+        strategy: Nested strategy structure
+
+    Returns:
+        Flattened settings dictionary
+    """
     settings = {
-        'tickers': strategy.get('tickers', None),
-        'ticker': strategy.get('ticker', 'TQQQ'),  # Legacy single ticker
         'interval': strategy.get('interval', '5m'),
         'period': strategy.get('period', '1d'),
     }
@@ -168,6 +216,20 @@ def load_alpaca_settings():
     settings['avoid_after_time'] = time_filter.get('avoid_after_time', '15:00')
 
     return settings
+
+
+def load_alpaca_settings():
+    """
+    Load DEFAULT strategy settings and return flattened dictionary
+    This function maintains compatibility with existing code
+    For ticker-specific settings, use get_ticker_strategy() + flatten_strategy()
+    """
+    strategy, _ = load_config()
+
+    if not strategy:
+        return None
+
+    return flatten_strategy(strategy)
 
 
 def load_signal_actions():
@@ -1116,11 +1178,15 @@ def run_strategy():
         logging.info("SL/TP executed, skipping regular strategy check")
         return
 
-    settings = load_alpaca_settings()
+    # Load default strategy settings
+    default_settings = load_alpaca_settings()
 
-    if not settings:
+    if not default_settings:
         logging.error(f"No settings file found. Please create {CONFIG_FILE}")
         return
+
+    # Load default strategy (for merging with ticker-specific overrides)
+    default_strategy, _ = load_config()
 
     # Get tickers from signal_actions config (tickers defined there, not in strategy)
     ticker_configs = signal_actions_config.get('tickers', {})
@@ -1130,8 +1196,8 @@ def run_strategy():
         logging.error("No tickers defined in signal_actions config")
         return
 
-    interval = settings.get('interval', '5m')
-    period = settings.get('period', '1d')
+    interval = default_settings.get('interval', '5m')
+    period = default_settings.get('period', '1d')
 
     # Filter to only enabled tickers for display
     ticker_configs = signal_actions_config.get('tickers', {})
@@ -1174,36 +1240,45 @@ def run_strategy():
 
             df = raw.copy()
 
+            # Get ticker-specific strategy settings (with overrides)
+            ticker_strategy = get_ticker_strategy(ticker, default_strategy, signal_actions_config)
+            ticker_settings = flatten_strategy(ticker_strategy)
+
+            # Log if using ticker-specific overrides
+            ticker_config = ticker_configs.get(ticker, {})
+            if 'strategy' in ticker_config:
+                logging.info(f"  ℹ️  Using ticker-specific strategy overrides for {ticker}")
+
             # Run backtest to get latest signal
             logging.info(f"Running backtest for {ticker}...")
             df1, df5, trades_df, logs_df = backtest_symbol(
                 df1=df,
-                rsi_threshold=settings.get('rsi_threshold', 30),
-                use_rsi=settings.get('use_rsi', True),
-                use_ema=settings.get('use_ema', True),
-                use_volume=settings.get('use_volume', True),
-                stop_loss=settings.get('stop_loss', 0.02),
-                tp_pct=settings.get('take_profit', 0.03),
+                rsi_threshold=ticker_settings.get('rsi_threshold', 30),
+                use_rsi=ticker_settings.get('use_rsi', True),
+                use_ema=ticker_settings.get('use_ema', True),
+                use_volume=ticker_settings.get('use_volume', True),
+                stop_loss=ticker_settings.get('stop_loss', 0.02),
+                tp_pct=ticker_settings.get('take_profit', 0.03),
                 avoid_after=None,  # Time filter disabled
-                use_stop_loss=settings.get('use_stop_loss', True),
-                use_take_profit=settings.get('use_take_profit', True),
-                use_rsi_overbought=settings.get('use_rsi_exit', False),
-                rsi_overbought_threshold=settings.get('rsi_exit_threshold', 70),
-                use_ema_cross_up=settings.get('use_ema_cross_up', False),
-                use_ema_cross_down=settings.get('use_ema_cross_down', False),
-                use_price_below_ema9=settings.get('use_price_vs_ema9_exit', False),
-                use_bb_cross_up=settings.get('use_bb_cross_up', False),
-                use_bb_cross_down=settings.get('use_bb_cross_down', False),
-                use_macd_cross_up=settings.get('use_macd_cross_up', False),
-                use_macd_cross_down=settings.get('use_macd_cross_down', False),
-                use_price_above_ema21=settings.get('use_price_vs_ema21', False),
-                use_price_below_ema21=settings.get('use_price_vs_ema21_exit', False),
-                use_macd_below_threshold=settings.get('use_macd_threshold', False),
-                macd_below_threshold=settings.get('macd_threshold', 0),
-                use_macd_above_threshold=settings.get('use_macd_threshold', False),
-                macd_above_threshold=settings.get('macd_threshold', 0),
-                use_macd_peak=settings.get('use_macd_peak', False),
-                use_macd_valley=settings.get('use_macd_valley', False)
+                use_stop_loss=ticker_settings.get('use_stop_loss', True),
+                use_take_profit=ticker_settings.get('use_take_profit', True),
+                use_rsi_overbought=ticker_settings.get('use_rsi_exit', False),
+                rsi_overbought_threshold=ticker_settings.get('rsi_exit_threshold', 70),
+                use_ema_cross_up=ticker_settings.get('use_ema_cross_up', False),
+                use_ema_cross_down=ticker_settings.get('use_ema_cross_down', False),
+                use_price_below_ema9=ticker_settings.get('use_price_vs_ema9_exit', False),
+                use_bb_cross_up=ticker_settings.get('use_bb_cross_up', False),
+                use_bb_cross_down=ticker_settings.get('use_bb_cross_down', False),
+                use_macd_cross_up=ticker_settings.get('use_macd_cross_up', False),
+                use_macd_cross_down=ticker_settings.get('use_macd_cross_down', False),
+                use_price_above_ema21=ticker_settings.get('use_price_vs_ema21', False),
+                use_price_below_ema21=ticker_settings.get('use_price_vs_ema21_exit', False),
+                use_macd_below_threshold=ticker_settings.get('use_macd_threshold', False),
+                macd_below_threshold=ticker_settings.get('macd_threshold', 0),
+                use_macd_above_threshold=ticker_settings.get('use_macd_threshold', False),
+                macd_above_threshold=ticker_settings.get('macd_threshold', 0),
+                use_macd_peak=ticker_settings.get('use_macd_peak', False),
+                use_macd_valley=ticker_settings.get('use_macd_valley', False)
             )
 
             # Get current price from DataFrame

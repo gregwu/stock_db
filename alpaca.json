@@ -2,7 +2,6 @@
   "strategy": {
     "interval": "5m",
     "period": "1d",
-
     "entry_conditions": {
       "use_rsi": true,
       "rsi_threshold": 30,
@@ -17,10 +16,9 @@
       "use_ema": false,
       "use_volume": false
     },
-
     "exit_conditions": {
       "use_rsi_exit": true,
-      "rsi_exit_threshold": 70,
+      "rsi_exit_threshold": 66,
       "use_ema_cross_down": false,
       "use_bb_cross_down": false,
       "use_macd_cross_down": false,
@@ -28,20 +26,17 @@
       "use_price_vs_ema21_exit": false,
       "use_macd_peak": true
     },
-
     "risk_management": {
       "stop_loss": 0.02,
       "take_profit": 0.03,
       "use_stop_loss": true,
       "use_take_profit": false
     },
-
     "trading": {
       "position_size": 100,
       "check_interval_seconds": 120
     }
   },
-
   "signal_actions": {
     "tickers": {
       "TQQQ": {
@@ -55,11 +50,6 @@
               "ticker": "TQQQ",
               "quantity": 100,
               "description": "Buy TQQQ on TQQQ entry signal"
-            },
-            {
-              "type": "SELL_ALL",
-              "ticker": "SQQQ",
-              "description": "Sell SQQQ on TQQQ entry signal"
             }
           ],
           "description": "TQQQ entry signal - Go long"
@@ -71,15 +61,9 @@
               "type": "SELL_ALL",
               "ticker": "TQQQ",
               "description": "Sell TQQQ on TQQQ exit signal"
-            },
-            {
-              "type": "BUY",
-              "ticker": "SQQQ",
-              "quantity": 100,
-              "description": "Buy SQQQ on TQQQ exit signal"
             }
           ],
-          "description": "TQQQ exit conditions met - Go short"
+          "description": "TQQQ exit conditions met - Close position"
         },
         "exit_SL": {
           "enabled": true,
@@ -108,7 +92,6 @@
           "description": "Overbought alert - Informational only"
         }
       },
-
       "QQQ": {
         "enabled": false,
         "default_quantity": 100,
@@ -173,10 +156,17 @@
           "description": "Overbought alert - Informational only"
         }
       },
-
       "SPY": {
         "enabled": true,
         "default_quantity": 100,
+        "strategy": {
+          "entry_conditions": {
+            "rsi_threshold": 35
+          },
+          "exit_conditions": {
+            "rsi_exit_threshold": 65
+          }
+        },
         "entry": {
           "enabled": true,
           "actions": [
@@ -185,11 +175,6 @@
               "ticker": "UPRO",
               "quantity": 100,
               "description": "Buy UPRO on SPY entry signal"
-            },
-            {
-              "type": "SELL_ALL",
-              "ticker": "SPXS",
-              "description": "Sell SPXS on SPY entry signal"
             }
           ],
           "description": "SPY entry signal - Go long on leveraged"
@@ -201,15 +186,9 @@
               "type": "SELL_ALL",
               "ticker": "UPRO",
               "description": "Sell UPRO on SPY exit signal"
-            },
-            {
-              "type": "BUY",
-              "ticker": "SPXS",
-              "quantity": 100,
-              "description": "Buy SPXS on SPY exit signal"
             }
           ],
-          "description": "SPY exit conditions met - Go short on leveraged"
+          "description": "SPY exit conditions met - Close position"
         },
         "exit_SL": {
           "enabled": true,
@@ -237,9 +216,114 @@
           "actions": [],
           "description": "Overbought alert - Informational only"
         }
+      },
+      "SQQQ": {
+        "enabled": false,
+        "default_quantity": 100,
+        "entry": {
+          "enabled": true,
+          "actions": [
+            {
+              "type": "BUY",
+              "ticker": "SQQQ",
+              "quantity": 100,
+              "description": "Buy SQQQ on entry signal (short QQQ)"
+            }
+          ],
+          "description": "SQQQ entry signal - Go short QQQ (inverse)"
+        },
+        "exit_conditions_met": {
+          "enabled": true,
+          "actions": [
+            {
+              "type": "SELL_ALL",
+              "ticker": "SQQQ",
+              "description": "Sell SQQQ on exit signal"
+            }
+          ],
+          "description": "SQQQ exit conditions met - Close short position"
+        },
+        "exit_SL": {
+          "enabled": true,
+          "actions": [
+            {
+              "type": "SELL_ALL",
+              "ticker": "SQQQ",
+              "description": "Sell SQQQ on stop loss"
+            }
+          ],
+          "description": "SQQQ stop loss triggered"
+        },
+        "exit_TP": {
+          "enabled": false,
+          "actions": [],
+          "description": "SQQQ take profit (disabled)"
+        },
+        "oversold_alert": {
+          "enabled": false,
+          "actions": [],
+          "description": "Oversold alert - Informational only"
+        },
+        "overbought_alert": {
+          "enabled": false,
+          "actions": [],
+          "description": "Overbought alert - Informational only"
+        }
+      },
+      "SPXS": {
+        "enabled": false,
+        "default_quantity": 100,
+        "entry": {
+          "enabled": true,
+          "actions": [
+            {
+              "type": "BUY",
+              "ticker": "SPXS",
+              "quantity": 100,
+              "description": "Buy SPXS on entry signal (short SPY)"
+            }
+          ],
+          "description": "SPXS entry signal - Go short SPY (inverse)"
+        },
+        "exit_conditions_met": {
+          "enabled": true,
+          "actions": [
+            {
+              "type": "SELL_ALL",
+              "ticker": "SPXS",
+              "description": "Sell SPXS on exit signal"
+            }
+          ],
+          "description": "SPXS exit conditions met - Close short position"
+        },
+        "exit_SL": {
+          "enabled": true,
+          "actions": [
+            {
+              "type": "SELL_ALL",
+              "ticker": "SPXS",
+              "description": "Sell SPXS on stop loss"
+            }
+          ],
+          "description": "SPXS stop loss triggered"
+        },
+        "exit_TP": {
+          "enabled": false,
+          "actions": [],
+          "description": "SPXS take profit (disabled)"
+        },
+        "oversold_alert": {
+          "enabled": false,
+          "actions": [],
+          "description": "Oversold alert - Informational only"
+        },
+        "overbought_alert": {
+          "enabled": false,
+          "actions": [],
+          "description": "Overbought alert - Informational only"
+        }
       }
     },
-
     "default": {
       "entry": {
         "enabled": true,
@@ -273,12 +357,10 @@
       }
     }
   },
-
   "workflow": {
     "clear_positions_before_actions": false,
     "save_state_before_actions": true,
     "log_pnl_on_exit": true
   },
-
   "notes": "Unified configuration file for Alpaca trading bot. Contains strategy settings (monitored tickers, entry/exit conditions, risk management) and signal actions (what to do when each ticker generates a signal). Each monitored ticker can have different actions for the same signal type."
 }
