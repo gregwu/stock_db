@@ -368,9 +368,8 @@ def initialize_alpaca(settings_config=None, signal_actions=None):
         if settings:
             settings_summary = f"""
 ═══════════════════════════════════════
-STRATEGY SETTINGS
+STRATEGY SETTINGS (Applies to All Tickers)
 ═══════════════════════════════════════
-Ticker: {settings.get('ticker', 'TQQQ')}
 Interval: {settings.get('interval', '5m')}
 Period: {settings.get('period', '1d')}
 
@@ -401,11 +400,12 @@ Entry Conditions:"""
         disabled_list = "N/A"
         trading_strategies = ""
 
-        if signal_actions and settings:
-            tickers = settings.get('tickers', [])
+        if signal_actions:
             ticker_configs = signal_actions.get('tickers', {})
-            enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
-            disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
+            # Get all tickers from signal_actions config
+            all_tickers = list(ticker_configs.keys())
+            enabled_tickers = [t for t in all_tickers if ticker_configs.get(t, {}).get('enabled', True)]
+            disabled_tickers = [t for t in all_tickers if not ticker_configs.get(t, {}).get('enabled', True)]
             enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
             disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
 
@@ -1122,15 +1122,13 @@ def run_strategy():
         logging.error(f"No settings file found. Please create {CONFIG_FILE}")
         return
 
-    # Support both old format (single ticker) and new format (multiple tickers)
-    tickers = settings.get('tickers', None)
-    if tickers is None:
-        # Fallback to old 'ticker' field for backward compatibility
-        ticker = settings.get('ticker', 'TQQQ')
-        tickers = [ticker]
+    # Get tickers from signal_actions config (tickers defined there, not in strategy)
+    ticker_configs = signal_actions_config.get('tickers', {})
+    tickers = list(ticker_configs.keys())
 
-    if not isinstance(tickers, list):
-        tickers = [tickers]
+    if not tickers:
+        logging.error("No tickers defined in signal_actions config")
+        return
 
     interval = settings.get('interval', '5m')
     period = settings.get('period', '1d')
@@ -1279,17 +1277,8 @@ def display_settings(settings):
     logging.info("STRATEGY SETTINGS")
     logging.info("=" * 60)
 
-    # Basic settings - support both old and new format
-    tickers = settings.get('tickers', None)
-    if tickers is None:
-        # Fallback to old 'ticker' field
-        ticker = settings.get('ticker', 'N/A')
-        logging.info(f"Ticker: {ticker}")
-    else:
-        if isinstance(tickers, list):
-            logging.info(f"Tickers: {', '.join(tickers)} ({len(tickers)} total)")
-        else:
-            logging.info(f"Tickers: {tickers}")
+    # Tickers are now defined in signal_actions, not in strategy settings
+    # Strategy settings apply to all tickers
 
     logging.info(f"Interval: {settings.get('interval', 'N/A')}")
     logging.info(f"Period: {settings.get('period', 'N/A')}")
@@ -1494,10 +1483,10 @@ def main():
         logging.info("\nAlpaca Strategy Trader Stopped")
 
         # Build stop email with enabled tickers info
-        tickers = settings.get('tickers', []) if settings else []
-        ticker_configs = signal_actions_config.get('tickers', {})
-        enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
-        disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
+        ticker_configs = signal_actions_config.get('tickers', {}) if signal_actions_config else {}
+        all_tickers = list(ticker_configs.keys())
+        enabled_tickers = [t for t in all_tickers if ticker_configs.get(t, {}).get('enabled', True)]
+        disabled_tickers = [t for t in all_tickers if not ticker_configs.get(t, {}).get('enabled', True)]
 
         enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
         disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
