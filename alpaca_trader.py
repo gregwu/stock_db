@@ -1312,9 +1312,14 @@ def display_signal_actions(signal_actions):
                 logging.info(f"    ⚠️  All signals DISABLED at ticker level")
                 continue
 
+            # Get signal configs - check both old format (signal_actions key) and new format (top level)
             signal_config = ticker_config.get('signal_actions', ticker_config)
 
+            # Iterate through signal types, skipping ticker-level settings
             for signal_type, config in signal_config.items():
+                # Skip ticker-level settings
+                if signal_type in ['enabled', 'default_quantity']:
+                    continue
                 enabled_status = "✅" if config.get('enabled', False) else "❌"
                 actions = config.get('actions', [])
 
@@ -1422,6 +1427,23 @@ def main():
     check_interval = settings.get('check_interval_seconds', 120) if settings else 120
     logging.info(f"Check interval: {check_interval} seconds ({check_interval/60:.1f} minutes)")
     logging.info("")
+
+    # Send startup email notification
+    tickers = settings.get('tickers', []) if settings else []
+    ticker_list = ', '.join(tickers) if tickers else 'N/A'
+    startup_message = f"""Alpaca Trading Bot Started
+
+Mode: {account_type}
+Monitoring: {ticker_list}
+Interval: {check_interval} seconds ({check_interval/60:.1f} minutes)
+Check Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Stop Loss: {STOP_LOSS_PCT*100:.1f}%
+Take Profit: {TAKE_PROFIT_PCT*100:.1f}%
+
+Bot is now monitoring for signals..."""
+
+    send_email_alert("🚀 Trading Bot Started", startup_message)
 
     # Run immediately on start
     run_strategy()
