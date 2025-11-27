@@ -396,9 +396,11 @@ Entry Conditions:"""
             settings_summary += f"\n  - Stop Loss: {settings.get('stop_loss', 0.02)*100:.1f}%"
             settings_summary += f"\n  - Take Profit: {settings.get('take_profit', 0.03)*100:.1f}%"
 
-        # Build enabled/disabled ticker lists
+        # Build enabled/disabled ticker lists and trading strategies
         enabled_list = "N/A"
         disabled_list = "N/A"
+        trading_strategies = ""
+
         if signal_actions and settings:
             tickers = settings.get('tickers', [])
             ticker_configs = signal_actions.get('tickers', {})
@@ -406,6 +408,30 @@ Entry Conditions:"""
             disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
             enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
             disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
+
+            # Build trading strategies for each enabled ticker
+            for ticker in enabled_tickers:
+                ticker_config = ticker_configs.get(ticker, {})
+
+                # Get entry actions
+                entry_actions = ticker_config.get('entry', {}).get('actions', [])
+                entry_tickers = [a.get('ticker') for a in entry_actions if a.get('type') == 'BUY']
+                sell_tickers = [a.get('ticker') for a in entry_actions if a.get('type') == 'SELL_ALL']
+
+                # Get exit actions
+                exit_actions = ticker_config.get('exit_conditions_met', {}).get('actions', [])
+                exit_buy_tickers = [a.get('ticker') for a in exit_actions if a.get('type') == 'BUY']
+                exit_sell_tickers = [a.get('ticker') for a in exit_actions if a.get('type') == 'SELL_ALL']
+
+                trading_strategies += f"\n\n{ticker} Strategy:"
+                if entry_tickers:
+                    trading_strategies += f"\n  Entry Signal → Buy {', '.join(entry_tickers)}"
+                if sell_tickers:
+                    trading_strategies += f"\n  Entry Signal → Sell {', '.join(sell_tickers)}"
+                if exit_sell_tickers:
+                    trading_strategies += f"\n  Exit Signal → Sell {', '.join(exit_sell_tickers)}"
+                if exit_buy_tickers:
+                    trading_strategies += f"\n  Exit Signal → Buy {', '.join(exit_buy_tickers)}"
 
         message = f"""🤖 ALPACA TRADING BOT STARTED
 
@@ -424,14 +450,11 @@ TRADING CONFIGURATION
 Position Size: {POSITION_SIZE} shares
 Stop Loss: {STOP_LOSS_PCT*100:.1f}%
 Take Profit: {TAKE_PROFIT_PCT*100:.1f}%
-Strategy: TQQQ/SQQQ Pair Trading
 
 Monitored Tickers: {enabled_list}
 Disabled Tickers: {disabled_list}
 
-Signal Logic:
-  Entry Signal → Buy TQQQ
-  Exit Signal → Buy SQQQ
+Trading Strategies:{trading_strategies}
 {settings_summary}
 """
 
