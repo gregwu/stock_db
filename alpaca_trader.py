@@ -331,7 +331,7 @@ def sell_all_positions():
         return False
 
 
-def initialize_alpaca():
+def initialize_alpaca(settings_config=None, signal_actions=None):
     """Initialize and connect to Alpaca"""
     global alpaca_api
 
@@ -351,8 +351,8 @@ def initialize_alpaca():
         cash = float(account.cash) if account else 0
         equity = float(account.equity) if account else 0
 
-        # Load strategy settings
-        settings = load_alpaca_settings()
+        # Load strategy settings if not provided
+        settings = settings_config if settings_config else load_alpaca_settings()
 
         # Save initial portfolio state
         portfolio = save_portfolio_state()
@@ -396,6 +396,17 @@ Entry Conditions:"""
             settings_summary += f"\n  - Stop Loss: {settings.get('stop_loss', 0.02)*100:.1f}%"
             settings_summary += f"\n  - Take Profit: {settings.get('take_profit', 0.03)*100:.1f}%"
 
+        # Build enabled/disabled ticker lists
+        enabled_list = "N/A"
+        disabled_list = "N/A"
+        if signal_actions and settings:
+            tickers = settings.get('tickers', [])
+            ticker_configs = signal_actions.get('tickers', {})
+            enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
+            disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
+            enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
+            disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
+
         message = f"""🤖 ALPACA TRADING BOT STARTED
 
 ═══════════════════════════════════════
@@ -414,6 +425,9 @@ Position Size: {POSITION_SIZE} shares
 Stop Loss: {STOP_LOSS_PCT*100:.1f}%
 Take Profit: {TAKE_PROFIT_PCT*100:.1f}%
 Strategy: TQQQ/SQQQ Pair Trading
+
+Monitored Tickers: {enabled_list}
+Disabled Tickers: {disabled_list}
 
 Signal Logic:
   Entry Signal → Buy TQQQ
@@ -1434,8 +1448,8 @@ def main():
     display_signal_actions(signal_actions_config)
     logging.info("")
 
-    # Initialize Alpaca
-    if not initialize_alpaca():
+    # Initialize Alpaca with settings and signal actions for startup email
+    if not initialize_alpaca(settings, signal_actions_config):
         logging.error("Cannot proceed without Alpaca connection")
         return
 
@@ -1443,6 +1457,7 @@ def main():
     check_interval = settings.get('check_interval_seconds', 120) if settings else 120
     logging.info(f"Check interval: {check_interval} seconds ({check_interval/60:.1f} minutes)")
     logging.info("")
+
 
     # Run immediately on start
     run_strategy()
