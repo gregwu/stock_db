@@ -1031,7 +1031,7 @@ with st.sidebar:
             st.session_state.previous_ticker = ticker
             st.rerun()
 
-    # Add ticker enable/disable control
+    # Add ticker enable/disable/delete control in one line
     st.divider()
 
     current_status = get_ticker_enabled_status(ticker)
@@ -1040,35 +1040,18 @@ with st.sidebar:
 
     st.markdown(f"**Ticker Status:** {status_emoji} {status_text}")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("✅ Enable", use_container_width=True, disabled=current_status):
-            if update_ticker_enabled_status(ticker, True):
-                st.success(f"✅ {ticker} enabled in alpaca.json")
-                st.rerun()
-            else:
-                st.error(f"Failed to enable {ticker}")
-
-    with col2:
-        if st.button("❌ Disable", use_container_width=True, disabled=not current_status):
-            if update_ticker_enabled_status(ticker, False):
-                st.warning(f"❌ {ticker} disabled in alpaca.json")
-                st.rerun()
-            else:
-                st.error(f"Failed to disable {ticker}")
-
-    # Add delete ticker button with confirmation
+    # Check if in delete confirmation mode
     if 'confirm_delete_ticker' not in st.session_state:
         st.session_state.confirm_delete_ticker = None
 
     if st.session_state.confirm_delete_ticker == ticker:
-        # Show confirmation state
-        st.warning(f"⚠️ Are you sure you want to delete {ticker}?")
+        # Show confirmation state with confirm/cancel buttons
+        st.warning(f"⚠️ Delete {ticker}?")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("✅ Confirm Delete", use_container_width=True, key=f"confirm_del_{ticker}"):
+            if st.button("✅ Confirm", use_container_width=True, key=f"confirm_del_{ticker}"):
                 if delete_ticker(ticker):
-                    st.success(f"✅ Deleted {ticker} from alpaca.json")
+                    st.success(f"✅ Deleted {ticker}")
                     st.session_state.confirm_delete_ticker = None
                     # Switch to first available ticker
                     available_tickers = get_available_tickers()
@@ -1084,10 +1067,28 @@ with st.sidebar:
                 st.session_state.confirm_delete_ticker = None
                 st.rerun()
     else:
-        # Show delete button
-        if st.button("🗑️ Delete Ticker", use_container_width=True, type="secondary", key=f"delete_{ticker}"):
-            st.session_state.confirm_delete_ticker = ticker
-            st.rerun()
+        # Show all three buttons in one line
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("✅ Enable", use_container_width=True, disabled=current_status, key=f"enable_{ticker}"):
+                if update_ticker_enabled_status(ticker, True):
+                    st.success(f"✅ {ticker} enabled")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to enable {ticker}")
+
+        with col2:
+            if st.button("❌ Disable", use_container_width=True, disabled=not current_status, key=f"disable_{ticker}"):
+                if update_ticker_enabled_status(ticker, False):
+                    st.warning(f"❌ {ticker} disabled")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to disable {ticker}")
+
+        with col3:
+            if st.button("🗑️ Delete", use_container_width=True, type="secondary", key=f"delete_{ticker}"):
+                st.session_state.confirm_delete_ticker = ticker
+                st.rerun()
 
     st.divider()
 
