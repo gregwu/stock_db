@@ -1,6 +1,5 @@
 {
   "strategy": {
-    "tickers": ["TQQQ", "QQQ", "SPY"],
     "interval": "5m",
     "period": "1d",
 
@@ -98,11 +97,6 @@
           "actions": [],
           "description": "TQQQ take profit (disabled)"
         },
-        "exit_EOD": {
-          "enabled": false,
-          "actions": [],
-          "description": "End of data (backtest artifact) - Ignore"
-        },
         "oversold_alert": {
           "enabled": false,
           "actions": [],
@@ -167,11 +161,6 @@
           "enabled": false,
           "actions": [],
           "description": "QQQ take profit (disabled)"
-        },
-        "exit_EOD": {
-          "enabled": false,
-          "actions": [],
-          "description": "End of data - Ignore"
         },
         "oversold_alert": {
           "enabled": false,
@@ -238,11 +227,6 @@
           "actions": [],
           "description": "SPY take profit (disabled)"
         },
-        "exit_EOD": {
-          "enabled": false,
-          "actions": [],
-          "description": "End of data - Ignore"
-        },
         "oversold_alert": {
           "enabled": false,
           "actions": [],
@@ -276,11 +260,6 @@
         "enabled": false,
         "actions": [],
         "description": "Default take profit (disabled)"
-      },
-      "exit_EOD": {
-        "enabled": false,
-        "actions": [],
-        "description": "End of data - Ignore"
       },
       "oversold_alert": {
         "enabled": false,
