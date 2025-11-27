@@ -6,6 +6,8 @@ import datetime as dt
 import plotly.graph_objs as go
 import json
 import os
+import subprocess
+import signal
 from scipy.signal import argrelextrema
 
 # ---------- Settings persistence ----------
@@ -273,6 +275,103 @@ def delete_ticker(ticker):
     except Exception as e:
         st.error(f"Error deleting ticker: {e}")
         return False
+
+# ---------- Bot control functions ----------
+
+def get_bot_status():
+    """Check if alpaca_trader.py is running"""
+    pid_file = ".alpaca_trader.pid"
+
+    if not os.path.exists(pid_file):
+        return False, None
+
+    try:
+        with open(pid_file, 'r') as f:
+            pid = int(f.read().strip())
+
+        # Check if process is running
+        try:
+            os.kill(pid, 0)  # Signal 0 doesn't kill, just checks if process exists
+            return True, pid
+        except OSError:
+            # Process doesn't exist, remove stale PID file
+            os.remove(pid_file)
+            return False, None
+    except Exception:
+        return False, None
+
+def start_bot():
+    """Start alpaca_trader.py in background"""
+    try:
+        # Check if already running
+        is_running, pid = get_bot_status()
+        if is_running:
+            return False, f"Bot already running (PID: {pid})"
+
+        # Start bot in background
+        process = subprocess.Popen(
+            ['python3', 'alpaca_trader.py'],
+            stdout=open('alpaca_trader.out', 'w'),
+            stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid  # Create new process group
+        )
+
+        # Save PID
+        with open('.alpaca_trader.pid', 'w') as f:
+            f.write(str(process.pid))
+
+        return True, f"Bot started successfully (PID: {process.pid})"
+    except Exception as e:
+        return False, f"Failed to start bot: {e}"
+
+def stop_bot():
+    """Stop alpaca_trader.py"""
+    try:
+        is_running, pid = get_bot_status()
+
+        if not is_running:
+            return False, "Bot is not running"
+
+        # Try graceful shutdown first
+        try:
+            os.kill(pid, signal.SIGTERM)
+
+            # Wait a bit for graceful shutdown
+            import time
+            time.sleep(2)
+
+            # Check if still running
+            try:
+                os.kill(pid, 0)
+                # Still running, force kill
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                # Process stopped
+                pass
+        except Exception as e:
+            return False, f"Failed to stop bot: {e}"
+
+        # Remove PID file
+        if os.path.exists('.alpaca_trader.pid'):
+            os.remove('.alpaca_trader.pid')
+
+        return True, "Bot stopped successfully"
+    except Exception as e:
+        return False, f"Failed to stop bot: {e}"
+
+def restart_bot():
+    """Restart alpaca_trader.py"""
+    # Stop first
+    success, msg = stop_bot()
+    if not success and "not running" not in msg:
+        return False, msg
+
+    # Wait a bit
+    import time
+    time.sleep(1)
+
+    # Start
+    return start_bot()
 
 # ---------- Indicator helpers ----------
 
@@ -747,6 +846,63 @@ if 'settings' not in st.session_state:
 
 with st.sidebar:
     st.header("Settings")
+
+    # Add custom CSS for extremely small button text
+    st.markdown("""
+        <style>
+        div.stButton > button {
+            font-size: 9px !important;
+            padding: 2px 4px !important;
+            min-height: 25px !important;
+        }
+        div.stButton > button p {
+            font-size: 9px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Bot Control Section
+    st.subheader("🤖 Trading Bot Control")
+
+    # Check bot status
+    is_running, pid = get_bot_status()
+    if is_running:
+        st.success(f"✅ Bot Running (PID: {pid})")
+    else:
+        st.warning("❌ Bot Stopped")
+
+    # Control buttons
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("▶️ Start", use_container_width=True, disabled=is_running):
+            success, msg = start_bot()
+            if success:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    with col2:
+        if st.button("⏹️ Stop", use_container_width=True, disabled=not is_running):
+            success, msg = stop_bot()
+            if success:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    with col3:
+        if st.button("🔄 Restart", use_container_width=True):
+            with st.spinner("Restarting bot..."):
+                success, msg = restart_bot()
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    st.divider()
 
     # Get available tickers from alpaca.json
     available_tickers = get_available_tickers()
