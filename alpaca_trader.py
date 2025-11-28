@@ -1301,30 +1301,34 @@ def run_strategy():
                     logging.info(f"Price: ${price:.2f}")
                     logging.info(f"Details: {note}")
 
-                    # Create unique check key per ticker to track signals independently
-                    ticker_check_key = f'last_check_{ticker}'
-                    if ticker_check_key not in state:
-                        state[ticker_check_key] = None
+                    # Skip exit_EOD signals (end of data, not actionable)
+                    if event != 'exit_EOD':
+                        # Create unique check key per ticker to track signals independently
+                        ticker_check_key = f'last_check_{ticker}'
+                        if ticker_check_key not in state:
+                            state[ticker_check_key] = None
 
-                    # Check if this is a new signal (not already processed)
-                    if state[ticker_check_key] != str(timestamp):
-                        logging.info("=" * 60)
-                        logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
-                        logging.info("=" * 60)
+                        # Check if this is a new signal (not already processed)
+                        if state[ticker_check_key] != str(timestamp):
+                            logging.info("=" * 60)
+                            logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
+                            logging.info("=" * 60)
 
-                        # [1] Signal Classification
-                        logging.info("[1/4] Classifying signal...")
+                            # [1] Signal Classification
+                            logging.info("[1/4] Classifying signal...")
 
-                        # Add ticker metadata to note
-                        note_with_ticker = f"[{ticker}] {note}"
+                            # Add ticker metadata to note
+                            note_with_ticker = f"[{ticker}] {note}"
 
-                        # Process signal using configuration (pass ticker for ticker-specific actions)
-                        if process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker):
-                            # Update last check time for this ticker only if signal was processed
-                            state[ticker_check_key] = str(timestamp)
-                            save_state(state)
+                            # Process signal using configuration (pass ticker for ticker-specific actions)
+                            if process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker):
+                                # Update last check time for this ticker only if signal was processed
+                                state[ticker_check_key] = str(timestamp)
+                                save_state(state)
+                        else:
+                            logging.info(f"Signal for {ticker} already processed")
                     else:
-                        logging.info(f"Signal for {ticker} already processed")
+                        logging.info(f"Skipping exit_EOD signal (end of data marker)")
                 else:
                     # No signals in last 5 minutes - show the most recent one for info
                     if len(logs_df) > 0:
