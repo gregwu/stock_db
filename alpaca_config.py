@@ -20,9 +20,21 @@ ALPACA_SECRET_KEY = os.getenv('ALPACA_SECRET_KEY')
 STOP_LOSS_PCT = 0.02  # 2% stop loss
 TAKE_PROFIT_PCT = 0.03  # 3% take profit
 POSITION_SIZE = 100  # Default position size (fallback if not specified in action)
+# NOTE: CHECK_INTERVAL_SECONDS is configured in alpaca.json under trading.check_interval_seconds
 
 # Logging
 LOG_FILE = "alpaca_trader.log"
+
+# Email Notifications (loaded from .env for security)
+# Set to True to enable email notifications for trading events
+EMAIL_NOTIFICATIONS_ENABLED = True
+
+# Which events should trigger email notifications
+EMAIL_ON_BOT_START = True       # Send email when bot starts
+EMAIL_ON_BOT_STOP = True        # Send email when bot stops
+EMAIL_ON_ENTRY = True           # Send email on entry signals (BUY orders)
+EMAIL_ON_EXIT = True            # Send email on exit signals (SELL orders)
+EMAIL_ON_ERRORS = True          # Send email on errors
 
 # Validate credentials
 if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:

@@ -102,14 +102,15 @@
             "use_macd_cross_up": false,
             "use_price_vs_ema9": false,
             "use_price_vs_ema21": false,
-            "use_macd_threshold": true,
+            "use_macd_threshold": false,
             "macd_threshold": 0.1,
             "use_macd_valley": true,
             "use_ema": false,
-            "use_volume": false
+            "use_volume": false,
+            "min_hold_entry_minutes": 10
           },
           "exit_conditions": {
-            "use_rsi_exit": true,
+            "use_rsi_exit": false,
             "rsi_exit_threshold": 66,
             "use_ema_cross_down": false,
             "use_bb_cross_down": false,
@@ -123,8 +124,9 @@
           "risk_management": {
             "stop_loss": 0.02,
             "take_profit": 0.03,
-            "use_stop_loss": false,
-            "use_take_profit": false
+            "use_stop_loss": true,
+            "use_take_profit": false,
+            "min_hold_minutes": 10
           }
         }
       },

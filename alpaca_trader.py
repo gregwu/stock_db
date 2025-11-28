@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 import logging
+import signal
+import sys
 
 # Import Alpaca
 from alpaca_wrapper import AlpacaAPI
@@ -41,13 +43,23 @@ GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 
 # Alpaca Configuration from alpaca_config.py
 try:
-    from alpaca_config import USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT
+    from alpaca_config import (
+        USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT,
+        EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP,
+        EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
+    )
 except ImportError:
     # Defaults if config doesn't exist
     USE_PAPER = True  # SAFETY: Default to paper trading
     POSITION_SIZE = 10
     STOP_LOSS_PCT = 0.02
     TAKE_PROFIT_PCT = 0.03
+    EMAIL_NOTIFICATIONS_ENABLED = True
+    EMAIL_ON_BOT_START = True
+    EMAIL_ON_BOT_STOP = True
+    EMAIL_ON_ENTRY = True
+    EMAIL_ON_EXIT = True
+    EMAIL_ON_ERRORS = True
 
 # Tracking files
 STATE_FILE = '.alpaca_trader_state.json'
@@ -277,8 +289,20 @@ def save_state(state):
         json.dump(state, f, indent=2, default=str)
 
 
-def send_email_alert(subject, message):
-    """Send alert via email"""
+def send_email_alert(subject, message, force=False):
+    """
+    Send alert via email
+
+    Args:
+        subject: Email subject
+        message: Email body
+        force: If True, bypass EMAIL_NOTIFICATIONS_ENABLED check (for critical alerts)
+    """
+    # Check if email notifications are enabled (unless forced)
+    if not force and not EMAIL_NOTIFICATIONS_ENABLED:
+        logging.debug(f"Email notifications disabled. Skipping: {subject}")
+        return False
+
     if not all([GMAIL_ADDRESS, GMAIL_APP_PASSWORD]):
         logging.warning("Gmail credentials not configured. Alert not sent.")
         return False
@@ -293,10 +317,10 @@ def send_email_alert(subject, message):
             smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
             smtp.send_message(msg)
 
-        logging.info(f"Alert sent: {subject}")
+        logging.info(f"✉️  Email sent: {subject}")
         return True
     except Exception as e:
-        logging.error(f"Failed to send alert: {e}")
+        logging.error(f"Failed to send email alert: {e}")
         return False
 
 
@@ -425,37 +449,15 @@ def initialize_alpaca(settings_config=None, signal_actions=None):
             for pos in portfolio['positions']:
                 position_summary.append(f"  {pos['ticker']}: {pos['quantity']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pnl']:.2f})")
 
-        # Build settings summary
+        # Build ticker-specific strategy settings summary
         settings_summary = ""
         if settings:
             settings_summary = f"""
 ═══════════════════════════════════════
-STRATEGY SETTINGS (Applies to All Tickers)
+GLOBAL SETTINGS
 ═══════════════════════════════════════
 Interval: {settings.get('interval', '5m')}
-Period: {settings.get('period', '1d')}
-
-Entry Conditions:"""
-            if settings.get('use_rsi'):
-                settings_summary += f"\n  - RSI < {settings.get('rsi_threshold', 30)}"
-            if settings.get('use_ema_cross_up'):
-                settings_summary += f"\n  - EMA9 cross above EMA21"
-            if settings.get('use_price_vs_ema21'):
-                settings_summary += f"\n  - Price > EMA21"
-            if settings.get('use_macd_valley'):
-                settings_summary += f"\n  - MACD Valley (turning up)"
-
-            settings_summary += "\n\nExit Conditions:"
-            if settings.get('use_rsi_exit'):
-                settings_summary += f"\n  - RSI > {settings.get('rsi_exit_threshold', 70)}"
-            if settings.get('use_ema_cross_down'):
-                settings_summary += f"\n  - EMA9 cross below EMA21"
-            if settings.get('use_macd_peak'):
-                settings_summary += f"\n  - MACD Peak (turning down)"
-
-            settings_summary += f"\n\nRisk Management:"
-            settings_summary += f"\n  - Stop Loss: {settings.get('stop_loss', 0.02)*100:.1f}%"
-            settings_summary += f"\n  - Take Profit: {settings.get('take_profit', 0.03)*100:.1f}%"
+Period: {settings.get('period', '1d')}"""
 
         # Build enabled/disabled ticker lists and trading strategies
         enabled_list = "N/A"
@@ -475,6 +477,12 @@ Entry Conditions:"""
             for ticker in enabled_tickers:
                 ticker_config = ticker_configs.get(ticker, {})
 
+                # Get strategy configuration
+                strategy = ticker_config.get('strategy', {})
+                entry_cond = strategy.get('entry_conditions', {})
+                exit_cond = strategy.get('exit_conditions', {})
+                risk_mgmt = strategy.get('risk_management', {})
+
                 # Get entry actions
                 entry_actions = ticker_config.get('entry', {}).get('actions', [])
                 entry_tickers = [a.get('ticker') for a in entry_actions if a.get('type') == 'BUY']
@@ -485,15 +493,96 @@ Entry Conditions:"""
                 exit_buy_tickers = [a.get('ticker') for a in exit_actions if a.get('type') == 'BUY']
                 exit_sell_tickers = [a.get('ticker') for a in exit_actions if a.get('type') == 'SELL_ALL']
 
-                trading_strategies += f"\n\n{ticker} Strategy:"
-                if entry_tickers:
-                    trading_strategies += f"\n  Entry Signal → Buy {', '.join(entry_tickers)}"
-                if sell_tickers:
-                    trading_strategies += f"\n  Entry Signal → Sell {', '.join(sell_tickers)}"
-                if exit_sell_tickers:
-                    trading_strategies += f"\n  Exit Signal → Sell {', '.join(exit_sell_tickers)}"
-                if exit_buy_tickers:
-                    trading_strategies += f"\n  Exit Signal → Buy {', '.join(exit_buy_tickers)}"
+                trading_strategies += f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                trading_strategies += f"\n{ticker} STRATEGY"
+                trading_strategies += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+                # Entry conditions
+                trading_strategies += f"\n\nEntry Conditions:"
+                entry_conditions_list = []
+                if entry_cond.get('use_rsi'):
+                    entry_conditions_list.append(f"RSI < {entry_cond.get('rsi_threshold', 30)}")
+                if entry_cond.get('use_ema_cross_up'):
+                    entry_conditions_list.append("EMA9 cross above EMA21")
+                if entry_cond.get('use_bb_cross_up'):
+                    entry_conditions_list.append("Price cross above BB Upper")
+                if entry_cond.get('use_bb_width'):
+                    entry_conditions_list.append(f"BB Width > {entry_cond.get('bb_width_threshold', 0.4)}%")
+                if entry_cond.get('use_macd_cross_up'):
+                    entry_conditions_list.append("MACD cross above Signal")
+                if entry_cond.get('use_price_vs_ema9'):
+                    entry_conditions_list.append("Price > EMA9")
+                if entry_cond.get('use_price_vs_ema21'):
+                    entry_conditions_list.append("Price > EMA21")
+                if entry_cond.get('use_macd_threshold'):
+                    entry_conditions_list.append(f"MACD < {entry_cond.get('macd_threshold', 0.1)}")
+                if entry_cond.get('use_macd_valley'):
+                    entry_conditions_list.append("MACD Valley (turning up)")
+                if entry_cond.get('use_volume'):
+                    entry_conditions_list.append("Volume Rising")
+
+                if entry_conditions_list:
+                    for cond in entry_conditions_list:
+                        trading_strategies += f"\n  ✓ {cond}"
+                    if entry_cond.get('min_hold_entry_minutes', 0) > 0:
+                        trading_strategies += f"\n  ⏱  Min {entry_cond.get('min_hold_entry_minutes')} min after exit"
+                else:
+                    trading_strategies += "\n  (No conditions - any signal triggers)"
+
+                # Entry actions
+                if entry_tickers or sell_tickers:
+                    trading_strategies += f"\n\n  Actions:"
+                    if entry_tickers:
+                        trading_strategies += f"\n    → BUY {', '.join(entry_tickers)}"
+                    if sell_tickers:
+                        trading_strategies += f"\n    → SELL {', '.join(sell_tickers)}"
+
+                # Exit conditions
+                trading_strategies += f"\n\nExit Conditions:"
+                exit_conditions_list = []
+                if exit_cond.get('use_rsi_exit'):
+                    exit_conditions_list.append(f"RSI > {exit_cond.get('rsi_exit_threshold', 70)}")
+                if exit_cond.get('use_ema_cross_down'):
+                    exit_conditions_list.append("EMA9 cross below EMA21")
+                if exit_cond.get('use_bb_cross_down'):
+                    exit_conditions_list.append("Price cross below BB Lower")
+                if exit_cond.get('use_bb_width_exit'):
+                    exit_conditions_list.append(f"BB Width > {exit_cond.get('bb_width_exit_threshold', 0.4)}%")
+                if exit_cond.get('use_macd_cross_down'):
+                    exit_conditions_list.append("MACD cross below Signal")
+                if exit_cond.get('use_price_vs_ema9_exit'):
+                    exit_conditions_list.append("Price < EMA9")
+                if exit_cond.get('use_price_vs_ema21_exit'):
+                    exit_conditions_list.append("Price < EMA21")
+                if exit_cond.get('use_macd_peak'):
+                    exit_conditions_list.append("MACD Peak (turning down)")
+
+                if exit_conditions_list:
+                    for cond in exit_conditions_list:
+                        trading_strategies += f"\n  ✓ {cond}"
+                    if risk_mgmt.get('min_hold_minutes', 0) > 0:
+                        trading_strategies += f"\n  ⏱  Min {risk_mgmt.get('min_hold_minutes')} min hold time"
+                else:
+                    trading_strategies += "\n  (No conditions - any signal triggers)"
+
+                # Exit actions
+                if exit_sell_tickers or exit_buy_tickers:
+                    trading_strategies += f"\n\n  Actions:"
+                    if exit_sell_tickers:
+                        trading_strategies += f"\n    → SELL {', '.join(exit_sell_tickers)}"
+                    if exit_buy_tickers:
+                        trading_strategies += f"\n    → BUY {', '.join(exit_buy_tickers)}"
+
+                # Risk management
+                trading_strategies += f"\n\nRisk Management:"
+                if risk_mgmt.get('use_stop_loss'):
+                    trading_strategies += f"\n  🛑 Stop Loss: {risk_mgmt.get('stop_loss', 0.02)*100:.1f}%"
+                else:
+                    trading_strategies += f"\n  🛑 Stop Loss: Disabled"
+                if risk_mgmt.get('use_take_profit'):
+                    trading_strategies += f"\n  🎯 Take Profit: {risk_mgmt.get('take_profit', 0.03)*100:.1f}%"
+                else:
+                    trading_strategies += f"\n  🎯 Take Profit: Disabled"
 
         message = f"""🤖 ALPACA TRADING BOT STARTED
 
@@ -535,12 +624,16 @@ CURRENT POSITIONS
   No open positions
 """
 
+        # Get check interval from settings
+        check_interval_seconds = settings.get('check_interval_seconds', 120) if settings else 120
+        check_interval_minutes = check_interval_seconds / 60
+
         message += f"""
 ═══════════════════════════════════════
 MONITORING
 ═══════════════════════════════════════
-Check Frequency: Every 5 minutes
-Email Alerts: Enabled
+Check Frequency: Every {check_interval_minutes:.1f} minute{'' if check_interval_minutes == 1 else 's'} ({check_interval_seconds} seconds)
+Email Alerts: {'Enabled' if EMAIL_NOTIFICATIONS_ENABLED else 'Disabled'}
 Started: {pd.Timestamp.now()}
 ═══════════════════════════════════════
 
@@ -548,7 +641,8 @@ The bot is now actively monitoring for trading signals.
 You will receive email alerts for all trades.
 """
 
-        send_email_alert("🤖 Alpaca Trading Bot Started", message)
+        if EMAIL_ON_BOT_START:
+            send_email_alert("🤖 Alpaca Trading Bot Started", message)
         return True
 
     except Exception as e:
@@ -757,51 +851,41 @@ def check_stop_loss_take_profit(state):
         if pnl_pct <= -STOP_LOSS_PCT:
             logging.warning(f"⚠️  STOP LOSS triggered! P&L: {pnl_pct*100:.2f}%")
 
-            # Sell all existing positions first
+            # Sell all existing positions
             if not sell_all_positions():
                 logging.error("Failed to sell positions for stop loss")
                 return False
 
-            # Then place opposite order
-            new_ticker = 'SQQQ' if ticker == 'TQQQ' else 'TQQQ'
-            buy_order = place_buy_order(new_ticker, POSITION_SIZE, current_price,
-                                       f"Stop Loss Exit from {ticker}",
-                                       state.get('entry_conditions'))
+            # Clear position state
+            state['current_position'] = None
+            state['entry_price'] = None
+            state['entry_time'] = None
+            state['entry_conditions'] = None
+            state['position_size'] = 0
+            save_state(state)
 
-            if buy_order:
-                # Update state
-                state['current_position'] = new_ticker
-                state['entry_price'] = current_price
-                state['entry_time'] = str(datetime.now())
-                state['entry_conditions'] = f"Stop Loss Exit from {ticker}"
-                state['position_size'] = POSITION_SIZE
-                save_state(state)
-                return True
+            logging.info(f"✅ Stop loss executed - all positions closed")
+            return True
 
         # Check take profit
         if pnl_pct >= TAKE_PROFIT_PCT:
             logging.info(f"🎯 TAKE PROFIT triggered! P&L: {pnl_pct*100:.2f}%")
 
-            # Sell all existing positions first
+            # Sell all existing positions
             if not sell_all_positions():
                 logging.error("Failed to sell positions for take profit")
                 return False
 
-            # Then place opposite order
-            new_ticker = 'SQQQ' if ticker == 'TQQQ' else 'TQQQ'
-            buy_order = place_buy_order(new_ticker, POSITION_SIZE, current_price,
-                                       f"Take Profit Exit from {ticker}",
-                                       state.get('entry_conditions'))
+            # Clear position state
+            state['current_position'] = None
+            state['entry_price'] = None
+            state['entry_time'] = None
+            state['entry_conditions'] = None
+            state['position_size'] = 0
+            save_state(state)
 
-            if buy_order:
-                new_ticker = 'SQQQ' if ticker == 'TQQQ' else 'TQQQ'
-                state['current_position'] = new_ticker
-                state['entry_price'] = current_price
-                state['entry_time'] = str(datetime.now())
-                state['entry_conditions'] = f"Take Profit Exit from {ticker}"
-                state['position_size'] = POSITION_SIZE
-                save_state(state)
-                return True
+            logging.info(f"✅ Take profit executed - all positions closed")
+            return True
 
     except Exception as e:
         logging.error(f"Error checking SL/TP: {e}")
@@ -863,6 +947,28 @@ def execute_action(action_config, price, note, timestamp, state):
                     'quantity': quantity
                 }
 
+            # Send email notification for entry
+            if EMAIL_ON_ENTRY:
+                email_subject = f"🟢 ENTRY SIGNAL - {ticker}"
+                email_body = f"""Entry Signal Executed
+
+Ticker: {ticker}
+Action: BUY {quantity} shares
+Price: ${price:.2f}
+Time: {timestamp}
+
+Details: {note}
+
+Reason: {description if description else 'Entry signal detected'}
+
+Order ID: {order.get('order_id', 'N/A')}
+Status: {order.get('status', 'N/A')}
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                send_email_alert(email_subject, email_body)
+
             return True
         else:
             logging.error(f"      ❌ BUY order failed for {ticker}")
@@ -897,6 +1003,15 @@ def execute_action(action_config, price, note, timestamp, state):
         if order:
             logging.info(f"      ✅ SELL order placed: {sell_qty} shares of {ticker} @ ${price:.2f}")
 
+            # Calculate P&L if we have entry price
+            pnl_info = ""
+            if 'positions' in state and ticker in state['positions']:
+                entry_price = state['positions'][ticker].get('entry_price', 0)
+                if entry_price > 0:
+                    pnl_dollars = (price - entry_price) * sell_qty
+                    pnl_pct = ((price - entry_price) / entry_price) * 100
+                    pnl_info = f"\n\nP&L:\nEntry Price: ${entry_price:.2f}\nExit Price: ${price:.2f}\nProfit/Loss: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)"
+
             # Update multi-ticker tracking
             if 'positions' in state and ticker in state['positions']:
                 current_qty = state['positions'][ticker].get('quantity', 0)
@@ -910,6 +1025,28 @@ def execute_action(action_config, price, note, timestamp, state):
                     # Partially sold
                     state['positions'][ticker]['quantity'] = remaining_qty
                     logging.info(f"      📊 Position in {ticker} reduced to {remaining_qty} shares")
+
+            # Send email notification for exit
+            if EMAIL_ON_EXIT:
+                email_subject = f"🔴 EXIT SIGNAL - {ticker}"
+                email_body = f"""Exit Signal Executed
+
+Ticker: {ticker}
+Action: SELL {sell_qty} shares
+Price: ${price:.2f}
+Time: {timestamp}
+
+Details: {note}
+
+Reason: {description if description else 'Exit signal detected'}{pnl_info}
+
+Order ID: {order.get('order_id', 'N/A')}
+Status: {order.get('status', 'N/A')}
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                send_email_alert(email_subject, email_body)
 
             return True
         else:
@@ -1238,6 +1375,13 @@ def run_strategy():
             if isinstance(raw.columns, pd.MultiIndex):
                 raw.columns = raw.columns.get_level_values(0)
 
+            # Convert timezone from UTC to US Eastern Time (New York)
+            if hasattr(raw.index, 'tz'):
+                if raw.index.tz is not None:
+                    raw.index = raw.index.tz_convert('America/New_York')
+                else:
+                    raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
+
             df = raw.copy()
 
             # Get ticker-specific strategy settings (with overrides)
@@ -1284,13 +1428,15 @@ def run_strategy():
             # Get current price from DataFrame
             current_price = df['Close'].iloc[-1]
 
-            # Check for recent signals (last 5 minutes)
+            # Check for recent signals in backtest data
             if not logs_df.empty:
-                now = pd.Timestamp.now(tz=logs_df['time'].iloc[-1].tz)
-                recent_logs = logs_df[logs_df['time'] >= now - pd.Timedelta(minutes=5)]
+                # Get most recent signal from backtest (not based on current time)
+                # Filter out exit_EOD first
+                actionable_logs = logs_df[logs_df['event'] != 'exit_EOD']
 
-                if not recent_logs.empty:
-                    latest_log = recent_logs.iloc[-1]
+                if not actionable_logs.empty:
+                    # Use the most recent actionable signal
+                    latest_log = actionable_logs.tail(1).iloc[-1]
                     event = latest_log['event']
                     price = latest_log['price']
                     note = latest_log['note']
@@ -1301,49 +1447,40 @@ def run_strategy():
                     logging.info(f"Price: ${price:.2f}")
                     logging.info(f"Details: {note}")
 
-                    # Skip exit_EOD signals (end of data, not actionable)
-                    if event != 'exit_EOD':
-                        # Create unique check key per ticker to track signals independently
-                        ticker_check_key = f'last_check_{ticker}'
-                        if ticker_check_key not in state:
-                            state[ticker_check_key] = None
+                    # Create unique check key per ticker to track signals independently
+                    ticker_check_key = f'last_check_{ticker}'
+                    if ticker_check_key not in state:
+                        state[ticker_check_key] = None
 
-                        # Check if this is a new signal (not already processed)
-                        if state[ticker_check_key] != str(timestamp):
-                            logging.info("=" * 60)
-                            logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
-                            logging.info("=" * 60)
+                    # Check if this is a new signal (not already processed)
+                    if state[ticker_check_key] != str(timestamp):
+                        logging.info("=" * 60)
+                        logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
+                        logging.info("=" * 60)
 
-                            # [1] Signal Classification
-                            logging.info("[1/4] Classifying signal...")
+                        # [1] Signal Classification
+                        logging.info("[1/4] Classifying signal...")
 
-                            # Add ticker metadata to note
-                            note_with_ticker = f"[{ticker}] {note}"
+                        # Add ticker metadata to note
+                        note_with_ticker = f"[{ticker}] {note}"
 
-                            # Process signal using configuration (pass ticker for ticker-specific actions)
-                            if process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker):
-                                # Update last check time for this ticker only if signal was processed
-                                state[ticker_check_key] = str(timestamp)
-                                save_state(state)
-                        else:
-                            logging.info(f"Signal for {ticker} already processed")
+                        # Process signal using configuration (pass ticker for ticker-specific actions)
+                        if process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker):
+                            # Update last check time for this ticker only if signal was processed
+                            state[ticker_check_key] = str(timestamp)
+                            save_state(state)
                     else:
-                        logging.info(f"Skipping exit_EOD signal (end of data marker)")
+                        logging.info(f"Signal for {ticker} already processed")
                 else:
-                    # No signals in last 5 minutes - show the most recent one for info
-                    if len(logs_df) > 0:
-                        last_signal = logs_df.iloc[-1]
-                        time_diff = now - last_signal['time']
-                        logging.info(f"No recent signals for {ticker} (last 5 minutes)")
-                        logging.info(f"Most recent signal: {last_signal['event']} at {last_signal['time']} ({time_diff.total_seconds()/60:.1f} minutes ago)")
-                    else:
-                        logging.info(f"No signals in backtest logs for {ticker}")
+                    # No actionable signals (only exit_EOD)
+                    logging.info(f"No actionable signals for {ticker} (only exit_EOD markers)")
             else:
                 logging.info(f"No signals in backtest logs for {ticker}")
 
         except Exception as e:
             logging.error(f"Error running strategy for {ticker}: {e}", exc_info=True)
-            send_email_alert("❌ Strategy Error", f"Error for {ticker}: {e}")
+            if EMAIL_ON_ERRORS:
+                send_email_alert("❌ Strategy Error", f"Error for {ticker}: {e}")
 
 
 def display_settings(settings):
@@ -1511,22 +1648,66 @@ def display_signal_actions(signal_actions):
     logging.info("=" * 60)
 
 
+def send_stop_email(account_type):
+    """Send email notification when bot stops"""
+    try:
+        # Build stop email with enabled tickers info
+        ticker_configs = signal_actions_config.get('tickers', {}) if signal_actions_config else {}
+        all_tickers = list(ticker_configs.keys())
+        enabled_tickers = [t for t in all_tickers if ticker_configs.get(t, {}).get('enabled', True)]
+        disabled_tickers = [t for t in all_tickers if not ticker_configs.get(t, {}).get('enabled', True)]
+
+        enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
+        disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
+
+        stop_message = f"""Alpaca Trading Bot Stopped
+
+Mode: {account_type}
+Monitored Tickers: {enabled_list}
+Disabled Tickers: {disabled_list}
+Stop Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Bot has been stopped manually."""
+
+        if EMAIL_ON_BOT_STOP:
+            send_email_alert("🛑 Trading Bot Stopped", stop_message)
+    except Exception as e:
+        logging.error(f"Failed to send stop email: {e}")
+
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals (SIGTERM, SIGINT)"""
+    logging.info("\nReceived shutdown signal. Stopping bot...")
+
+    # Determine account type for email
+    account_type = "PAPER TRADING" if USE_PAPER else "⚠️  LIVE TRADING ⚠️"
+
+    # Send stop email
+    send_stop_email(account_type)
+
+    # Exit gracefully
+    sys.exit(0)
+
+
 def main():
     """Main trading loop"""
     logging.info("=" * 60)
-    logging.info("ALPACA STRATEGY TRADER - AUTOMATED PAIR TRADING")
+    logging.info("ALPACA STRATEGY TRADER - AUTOMATED TRADING")
     logging.info("=" * 60)
 
     account_type = "PAPER TRADING" if USE_PAPER else "⚠️  LIVE TRADING ⚠️"
     logging.info(f"Mode: {account_type}")
-    logging.info(f"Position Size: {POSITION_SIZE} shares")
-    logging.info(f"Strategy: TQQQ (long) / SQQQ (short)")
+    logging.info(f"Position Size: {POSITION_SIZE} shares (default)")
     logging.info(f"Email: {GMAIL_ADDRESS}")
     logging.info(f"Stop Loss: {STOP_LOSS_PCT*100:.1f}%")
     logging.info(f"Take Profit: {TAKE_PROFIT_PCT*100:.1f}%")
     logging.info("Press Ctrl+C to stop")
     logging.info("=" * 60)
     logging.info("")
+
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, signal_handler)  # Handle kill command
+    signal.signal(signal.SIGINT, signal_handler)   # Handle Ctrl+C
 
     # Load and display strategy settings
     settings = load_alpaca_settings()
@@ -1559,27 +1740,9 @@ def main():
             time.sleep(check_interval)
             run_strategy()
     except KeyboardInterrupt:
-        logging.info("\nAlpaca Strategy Trader Stopped")
-
-        # Build stop email with enabled tickers info
-        ticker_configs = signal_actions_config.get('tickers', {}) if signal_actions_config else {}
-        all_tickers = list(ticker_configs.keys())
-        enabled_tickers = [t for t in all_tickers if ticker_configs.get(t, {}).get('enabled', True)]
-        disabled_tickers = [t for t in all_tickers if not ticker_configs.get(t, {}).get('enabled', True)]
-
-        enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
-        disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
-
-        stop_message = f"""Alpaca Trading Bot Stopped
-
-Mode: {account_type}
-Monitored Tickers: {enabled_list}
-Disabled Tickers: {disabled_list}
-Stop Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-Bot has been stopped manually."""
-
-        send_email_alert("🛑 Trading Bot Stopped", stop_message)
+        # Handle Ctrl+C (already handled by signal handler, but kept for fallback)
+        logging.info("\nAlpaca Strategy Trader Stopped (KeyboardInterrupt)")
+        send_stop_email(account_type)
 
 
 if __name__ == "__main__":
