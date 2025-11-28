@@ -1624,19 +1624,7 @@ if run_backtest_btn:
         fig = go.Figure()
 
         # Price chart - Candlestick (yaxis)
-        # Add BB width and RSI to customdata for hover tooltip
-        # Debug: Check if columns exist
-        if 'bb_width' not in df5_display.columns:
-            st.warning(f"bb_width column not found. Available columns: {df5_display.columns.tolist()}")
-
-        # Prepare customdata with bb_width and rsi
-        try:
-            customdata_array = df5_display[["bb_width", "rsi"]].fillna(0).values
-        except KeyError as e:
-            st.error(f"Error accessing columns: {e}")
-            customdata_array = None
-
-        candlestick_trace = go.Candlestick(
+        fig.add_trace(go.Candlestick(
             x=df5_display.index,
             open=df5_display["Open"],
             high=df5_display["High"],
@@ -1644,23 +1632,7 @@ if run_backtest_btn:
             close=df5_display["Close"],
             name=ticker,
             yaxis='y'
-        )
-
-        # Add customdata if available
-        if customdata_array is not None:
-            candlestick_trace.customdata = customdata_array
-            candlestick_trace.hovertemplate = (
-                '<b>%{x}</b><br>' +
-                'Open: %{open:.2f}<br>' +
-                'High: %{high:.2f}<br>' +
-                'Low: %{low:.2f}<br>' +
-                'Close: %{close:.2f}<br>' +
-                'BB Width: %{customdata[0]:.2f}%<br>' +
-                'RSI: %{customdata[1]:.1f}' +
-                '<extra></extra>'
-            )
-
-        fig.add_trace(candlestick_trace)
+        ))
 
         # Add Bollinger Bands in grey
         fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["bb_up"],
