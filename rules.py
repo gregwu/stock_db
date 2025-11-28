@@ -1536,11 +1536,17 @@ if run_backtest_btn:
                 # Entry signals at RSI level 20 (bottom)
                 # Exit signals at RSI level 80 (top)
 
-                # Get entry notes - use entry_reason column
-                entry_notes = completed_trades["entry_reason"].tolist()
+                # Build enhanced entry tooltips with buy price
+                entry_tooltips = []
+                for _, row in completed_trades.iterrows():
+                    tooltip = f"{row['entry_reason']}<br>Buy: ${row['entry_price']:.2f}"
+                    entry_tooltips.append(tooltip)
 
-                # Get exit info - use exit_reason column
-                exit_info = completed_trades["exit_reason"].tolist()
+                # Build enhanced exit tooltips with sell price and return
+                exit_tooltips = []
+                for _, row in completed_trades.iterrows():
+                    tooltip = f"{row['exit_reason']}<br>Sell: ${row['exit_price']:.2f}<br>Return: {row['return_pct']:.2f}%"
+                    exit_tooltips.append(tooltip)
 
                 fig.add_trace(go.Scatter(
                     x=completed_trades["entry_time"],
@@ -1548,7 +1554,7 @@ if run_backtest_btn:
                     mode="markers",
                     marker=dict(size=12, symbol="triangle-up", color='green'),
                     name="Entries",
-                    text=entry_notes,
+                    text=entry_tooltips,
                     hoverinfo='text+x',
                     yaxis='y3'
                 ))
@@ -1558,7 +1564,7 @@ if run_backtest_btn:
                     mode="markers",
                     marker=dict(size=12, symbol="triangle-down", color='red'),
                     name="Exits",
-                    text=exit_info,
+                    text=exit_tooltips,
                     hoverinfo='text+x',
                     yaxis='y3'
                 ))
