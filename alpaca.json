@@ -90,131 +90,42 @@
           "enabled": false,
           "actions": [],
           "description": "Overbought alert - Informational only"
-        }
-      },
-      "QQQ": {
-        "enabled": false,
-        "default_quantity": 100,
-        "entry": {
-          "enabled": false,
-          "actions": [
-            {
-              "type": "BUY",
-              "ticker": "TQQQ",
-              "quantity": 100,
-              "description": "Buy TQQQ on QQQ entry signal"
-            },
-            {
-              "type": "SELL_ALL",
-              "ticker": "SQQQ",
-              "description": "Sell SQQQ on QQQ entry signal"
-            }
-          ],
-          "description": "QQQ entry signal - Go long on leveraged"
         },
-        "exit_conditions_met": {
-          "enabled": false,
-          "actions": [
-            {
-              "type": "SELL_ALL",
-              "ticker": "TQQQ",
-              "description": "Sell TQQQ on QQQ exit signal"
-            },
-            {
-              "type": "BUY",
-              "ticker": "SQQQ",
-              "quantity": 100,
-              "description": "Buy SQQQ on QQQ exit signal"
-            }
-          ],
-          "description": "QQQ exit conditions met - Go short on leveraged (DISABLED)"
-        },
-        "exit_SL": {
-          "enabled": false,
-          "actions": [
-            {
-              "type": "SELL_ALL",
-              "ticker": "TQQQ",
-              "description": "Sell TQQQ on QQQ stop loss"
-            }
-          ],
-          "description": "QQQ stop loss triggered (DISABLED)"
-        },
-        "exit_TP": {
-          "enabled": false,
-          "actions": [],
-          "description": "QQQ take profit (disabled)"
-        },
-        "oversold_alert": {
-          "enabled": false,
-          "actions": [],
-          "description": "Oversold alert - Informational only"
-        },
-        "overbought_alert": {
-          "enabled": false,
-          "actions": [],
-          "description": "Overbought alert - Informational only"
-        }
-      },
-      "SPY": {
-        "enabled": true,
-        "default_quantity": 100,
         "strategy": {
           "entry_conditions": {
-            "rsi_threshold": 35
+            "use_rsi": false,
+            "rsi_threshold": 30,
+            "use_ema_cross_up": false,
+            "use_bb_cross_up": false,
+            "use_bb_width": true,
+            "bb_width_threshold": 0.4,
+            "use_macd_cross_up": false,
+            "use_price_vs_ema9": false,
+            "use_price_vs_ema21": false,
+            "use_macd_threshold": true,
+            "macd_threshold": 0.1,
+            "use_macd_valley": true,
+            "use_ema": false,
+            "use_volume": false
           },
           "exit_conditions": {
-            "rsi_exit_threshold": 65
+            "use_rsi_exit": true,
+            "rsi_exit_threshold": 66,
+            "use_ema_cross_down": false,
+            "use_bb_cross_down": false,
+            "use_bb_width_exit": true,
+            "bb_width_exit_threshold": 0.4,
+            "use_macd_cross_down": false,
+            "use_price_vs_ema9_exit": false,
+            "use_price_vs_ema21_exit": false,
+            "use_macd_peak": true
+          },
+          "risk_management": {
+            "stop_loss": 0.02,
+            "take_profit": 0.03,
+            "use_stop_loss": false,
+            "use_take_profit": false
           }
-        },
-        "entry": {
-          "enabled": true,
-          "actions": [
-            {
-              "type": "BUY",
-              "ticker": "UPRO",
-              "quantity": 100,
-              "description": "Buy UPRO on SPY entry signal"
-            }
-          ],
-          "description": "SPY entry signal - Go long on leveraged"
-        },
-        "exit_conditions_met": {
-          "enabled": true,
-          "actions": [
-            {
-              "type": "SELL_ALL",
-              "ticker": "UPRO",
-              "description": "Sell UPRO on SPY exit signal"
-            }
-          ],
-          "description": "SPY exit conditions met - Close position"
-        },
-        "exit_SL": {
-          "enabled": true,
-          "actions": [
-            {
-              "type": "SELL_ALL",
-              "ticker": "UPRO",
-              "description": "Sell UPRO on SPY stop loss"
-            }
-          ],
-          "description": "SPY stop loss triggered"
-        },
-        "exit_TP": {
-          "enabled": false,
-          "actions": [],
-          "description": "SPY take profit (disabled)"
-        },
-        "oversold_alert": {
-          "enabled": false,
-          "actions": [],
-          "description": "Oversold alert - Informational only"
-        },
-        "overbought_alert": {
-          "enabled": false,
-          "actions": [],
-          "description": "Overbought alert - Informational only"
         }
       },
       "SQQQ": {
@@ -321,6 +232,70 @@
           "enabled": false,
           "actions": [],
           "description": "Overbought alert - Informational only"
+        }
+      },
+      "UPRO": {
+        "enabled": false,
+        "default_quantity": 200,
+        "entry": {
+          "actions": [
+            {
+              "type": "BUY",
+              "ticker": "UPRO",
+              "quantity": 100
+            }
+          ],
+          "description": "UPRO entry signal - Go long"
+        },
+        "exit_conditions_met": {
+          "actions": [
+            {
+              "type": "SELL_ALL",
+              "ticker": "UPRO"
+            }
+          ],
+          "description": "UPRO exit conditions met - Close position"
+        },
+        "exit_SL": {
+          "actions": [
+            {
+              "type": "SELL_ALL",
+              "ticker": "UPRO"
+            }
+          ],
+          "description": "UPRO stop loss hit - Close position"
+        },
+        "strategy": {
+          "entry_conditions": {
+            "use_rsi": true,
+            "rsi_threshold": 30,
+            "use_ema_cross_up": false,
+            "use_bb_cross_up": false,
+            "use_macd_cross_up": false,
+            "use_price_vs_ema9": false,
+            "use_price_vs_ema21": false,
+            "use_macd_threshold": true,
+            "macd_threshold": 0.1,
+            "use_macd_valley": true,
+            "use_ema": false,
+            "use_volume": false
+          },
+          "exit_conditions": {
+            "use_rsi_exit": true,
+            "rsi_exit_threshold": 66,
+            "use_ema_cross_down": false,
+            "use_bb_cross_down": false,
+            "use_macd_cross_down": false,
+            "use_price_vs_ema9_exit": false,
+            "use_price_vs_ema21_exit": false,
+            "use_macd_peak": true
+          },
+          "risk_management": {
+            "stop_loss": 0.02,
+            "take_profit": 0.03,
+            "use_stop_loss": false,
+            "use_take_profit": false
+          }
         }
       }
     },
