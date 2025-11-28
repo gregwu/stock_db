@@ -125,6 +125,7 @@ def settings_have_changed(current_settings, loaded_settings):
         'use_bb_width', 'bb_width_threshold',
         'use_macd_cross_up', 'use_price_vs_ema9', 'use_price_vs_ema21',
         'use_macd_threshold', 'macd_threshold', 'use_macd_valley',
+        'min_hold_entry_minutes',
         'use_rsi_exit', 'rsi_exit_threshold', 'use_ema_cross_down',
         'use_bb_cross_down', 'use_bb_width_exit', 'bb_width_exit_threshold',
         'use_macd_cross_down', 'use_price_vs_ema9_exit',
@@ -160,7 +161,8 @@ def save_settings_to_alpaca(settings, ticker):
             'macd_threshold': settings.get('macd_threshold', 0.1),
             'use_macd_valley': settings.get('use_macd_valley', False),
             'use_ema': settings.get('use_ema', False),
-            'use_volume': settings.get('use_volume', False)
+            'use_volume': settings.get('use_volume', False),
+            'min_hold_entry_minutes': settings.get('min_hold_entry_minutes', 0)
         }
 
         exit_conditions = {
@@ -478,6 +480,7 @@ def backtest_symbol(df1,
                     tp_pct=0.04,
                     avoid_after="15:00",
                     min_hold_minutes=5,
+                    min_hold_entry_minutes=0,
                     use_rsi=True,
                     rsi_threshold=30,
                     use_bb_cross_up=False,
@@ -574,6 +577,7 @@ def backtest_symbol(df1,
     trades = []
     position = None
     setup_active = False
+    last_exit_time = None  # Track last exit time to prevent rapid re-entry
 
     for t, row in df5.iterrows():
         time_str = t.strftime("%H:%M")
@@ -725,11 +729,19 @@ def backtest_symbol(df1,
                     "price": exit_price,
                     "note": f"Exit: {', '.join(exit_note_parts)}"
                 })
+                last_exit_time = t  # Save exit time to prevent rapid re-entry
                 position = None
                 continue
 
         # ---- If no position, look for setup / entry ----
         if position is None:
+            # Check if enough time has passed since last exit (prevent rapid re-entry)
+            if min_hold_entry_minutes > 0 and last_exit_time is not None:
+                time_since_exit = (t - last_exit_time).total_seconds() / 60
+                if time_since_exit < min_hold_entry_minutes:
+                    # Skip entry - too soon after last exit
+                    continue
+
             # 1) Oversold alert: 1m RSI < threshold (if enabled)
             if use_rsi and rsi_last < rsi_threshold:
                 if not setup_active:
@@ -889,7 +901,9 @@ if 'settings' not in st.session_state:
             'use_time_filter': False,
             'avoid_after_time': '15:00',
             'show_signals': True,
-            'show_reports': True
+            'show_reports': True,
+            'min_hold_minutes': 5,
+            'min_hold_entry_minutes': 0
         }
 
 with st.sidebar:
@@ -1058,6 +1072,7 @@ with st.sidebar:
             st.session_state.settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
             st.session_state.settings['macd_threshold'] = entry.get('macd_threshold', 0.1)
             st.session_state.settings['use_macd_valley'] = entry.get('use_macd_valley', False)
+            st.session_state.settings['min_hold_entry_minutes'] = entry.get('min_hold_entry_minutes', 0)
 
             # Exit conditions
             st.session_state.settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
@@ -1292,6 +1307,17 @@ with st.sidebar:
                             help="Current candle volume >= previous candle volume")
     st.session_state.settings['use_volume'] = use_volume
 
+    # Minimum time between exit and re-entry
+    if 'min_hold_entry_minutes' not in st.session_state.settings:
+        st.session_state.settings['min_hold_entry_minutes'] = 0
+
+    min_hold_entry_minutes = st.number_input("Min time after exit before re-entry (minutes)",
+                                              min_value=0, max_value=60,
+                                              value=st.session_state.settings['min_hold_entry_minutes'],
+                                              step=1,
+                                              help="Minimum time gap between exit and next entry (0 = no minimum, prevents rapid re-entry)")
+    st.session_state.settings['min_hold_entry_minutes'] = min_hold_entry_minutes
+
     # Exit Rules
     st.markdown("**Exit Rules (all must be met):**")
     use_stop_loss = st.checkbox("Exit on Stop Loss", value=st.session_state.settings['use_stop_loss'],
@@ -1324,7 +1350,7 @@ with st.sidebar:
                                        min_value=0, max_value=60,
                                        value=st.session_state.settings['min_hold_minutes'],
                                        step=1,
-                                       help="Minimum time to hold position before allowing exit (0 = no minimum)")
+                                       help="Minimum time to hold position before allowing exit (prevents quick exit after entry, 0 = no minimum)")
     st.session_state.settings['min_hold_minutes'] = min_hold_minutes
 
     use_rsi_overbought = st.checkbox("Exit on RSI Overbought",
@@ -1544,6 +1570,7 @@ if run_backtest_btn:
             tp_pct=take_profit_pct,
             avoid_after=avoid_after_time if use_time_filter else None,
             min_hold_minutes=min_hold_minutes,
+            min_hold_entry_minutes=min_hold_entry_minutes,
             use_rsi=use_rsi,
             rsi_threshold=rsi_threshold,
             use_bb_cross_up=use_bb_cross_up,
