@@ -117,6 +117,27 @@ def save_settings(settings, ticker=None):
     except Exception:
         pass
 
+def settings_have_changed(current_settings, loaded_settings):
+    """Check if current settings differ from loaded settings"""
+    # List of keys to compare (exclude non-strategy settings like ticker, period, interval)
+    strategy_keys = [
+        'use_rsi', 'rsi_threshold', 'use_ema_cross_up', 'use_bb_cross_up',
+        'use_bb_width', 'bb_width_threshold',
+        'use_macd_cross_up', 'use_price_vs_ema9', 'use_price_vs_ema21',
+        'use_macd_threshold', 'macd_threshold', 'use_macd_valley',
+        'use_rsi_exit', 'rsi_exit_threshold', 'use_ema_cross_down',
+        'use_bb_cross_down', 'use_bb_width_exit', 'bb_width_exit_threshold',
+        'use_macd_cross_down', 'use_price_vs_ema9_exit',
+        'use_price_vs_ema21_exit', 'use_macd_peak',
+        'stop_loss', 'take_profit', 'use_stop_loss', 'use_take_profit',
+        'min_hold_minutes'
+    ]
+
+    for key in strategy_keys:
+        if current_settings.get(key) != loaded_settings.get(key):
+            return True
+    return False
+
 def save_settings_to_alpaca(settings, ticker):
     """Save settings to alpaca.json for a specific ticker"""
     try:
@@ -130,6 +151,8 @@ def save_settings_to_alpaca(settings, ticker):
             'rsi_threshold': settings.get('rsi_threshold', 30),
             'use_ema_cross_up': settings.get('use_ema_cross_up', False),
             'use_bb_cross_up': settings.get('use_bb_cross_up', False),
+            'use_bb_width': settings.get('use_bb_width', False),
+            'bb_width_threshold': settings.get('bb_width_threshold', 5.0),
             'use_macd_cross_up': settings.get('use_macd_cross_up', False),
             'use_price_vs_ema9': settings.get('use_price_vs_ema9', False),
             'use_price_vs_ema21': settings.get('use_price_vs_ema21', False),
@@ -145,6 +168,8 @@ def save_settings_to_alpaca(settings, ticker):
             'rsi_exit_threshold': settings.get('rsi_exit_threshold', 70),
             'use_ema_cross_down': settings.get('use_ema_cross_down', False),
             'use_bb_cross_down': settings.get('use_bb_cross_down', False),
+            'use_bb_width_exit': settings.get('use_bb_width_exit', False),
+            'bb_width_exit_threshold': settings.get('bb_width_exit_threshold', 10.0),
             'use_macd_cross_down': settings.get('use_macd_cross_down', False),
             'use_price_vs_ema9_exit': settings.get('use_price_vs_ema9_exit', False),
             'use_price_vs_ema21_exit': settings.get('use_price_vs_ema21_exit', False),
@@ -155,7 +180,8 @@ def save_settings_to_alpaca(settings, ticker):
             'stop_loss': settings.get('stop_loss', 0.02),
             'take_profit': settings.get('take_profit', 0.03),
             'use_stop_loss': settings.get('use_stop_loss', True),
-            'use_take_profit': settings.get('use_take_profit', False)
+            'use_take_profit': settings.get('use_take_profit', False),
+            'min_hold_minutes': settings.get('min_hold_minutes', 5)
         }
 
         # Prepare ticker strategy
@@ -451,9 +477,12 @@ def backtest_symbol(df1,
                     stop_loss=0.02,
                     tp_pct=0.04,
                     avoid_after="15:00",
+                    min_hold_minutes=5,
                     use_rsi=True,
                     rsi_threshold=30,
                     use_bb_cross_up=False,
+                    use_bb_width=False,
+                    bb_width_threshold=5.0,
                     use_ema=True,
                     use_volume=True,
                     use_stop_loss=True,
@@ -464,6 +493,8 @@ def backtest_symbol(df1,
                     use_ema_cross_down=False,
                     use_price_below_ema9=False,
                     use_bb_cross_down=False,
+                    use_bb_width_exit=False,
+                    bb_width_exit_threshold=10.0,
                     use_macd_cross_up=False,
                     use_macd_cross_down=False,
                     use_price_above_ema21=False,
@@ -499,6 +530,8 @@ def backtest_symbol(df1,
     df5["bb_mid"] = bb_mid
     df5["bb_up"] = bb_up
     df5["bb_low"] = bb_low
+    # Calculate BB width (percentage of price)
+    df5["bb_width"] = ((bb_up - bb_low) / bb_mid * 100).fillna(0)
 
     # Calculate MACD
     macd_line, signal_line, histogram = macd(df5["Close"])
@@ -557,6 +590,7 @@ def backtest_symbol(df1,
         ema21_prev = row["ema21_prev"]
         bb_low_v = row["bb_low"]
         bb_up_v = row["bb_up"]
+        bb_width_val = row["bb_width"]
         rsi_last = row["rsi_last"]
         vol = row["Volume"]
         prev_vol = df5["Volume"].shift(1).loc[t]
@@ -639,6 +673,8 @@ def backtest_symbol(df1,
                 exit_conditions.append(ema9 is not np.nan and close < ema9)
             if use_bb_cross_down:
                 exit_conditions.append(bb_cross_down)
+            if use_bb_width_exit:
+                exit_conditions.append(bb_width_val is not np.nan and bb_width_val > bb_width_exit_threshold)
             if use_macd_cross_down:
                 exit_conditions.append(macd_cross_down)
             if use_price_below_ema21:
@@ -650,6 +686,12 @@ def backtest_symbol(df1,
 
             # Check if all enabled exit conditions are met
             if exit_conditions and all(exit_conditions):
+                # Check if minimum holding time has passed since entry
+                time_diff = (t - position["entry_time"]).total_seconds() / 60
+                if time_diff < min_hold_minutes:
+                    # Skip exit - not enough time has passed
+                    continue
+
                 exit_price = close
 
                 # Build exit note based on which conditions were checked
@@ -662,6 +704,8 @@ def backtest_symbol(df1,
                     exit_note_parts.append(f"Price < EMA9 (Close={close:.2f}, EMA9={ema9:.2f})")
                 if use_bb_cross_down:
                     exit_note_parts.append(f"Price crossed below BB lower (Close={close:.2f}, BB Low={bb_low_v:.2f})")
+                if use_bb_width_exit:
+                    exit_note_parts.append(f"BB width > {bb_width_exit_threshold}% (Width={bb_width_val:.2f}%)")
                 if use_macd_cross_down:
                     exit_note_parts.append(f"MACD crossed below signal (MACD={macd_val:.4f}, Signal={macd_signal_val:.4f})")
                 if use_price_below_ema21:
@@ -709,6 +753,8 @@ def backtest_symbol(df1,
                     conditions.append(ema_cross_up)
                 if use_bb_cross_up:
                     conditions.append(bb_cross_up)
+                if use_bb_width:
+                    conditions.append(bb_width_val is not np.nan and bb_width_val > bb_width_threshold)
                 if use_macd_cross_up:
                     conditions.append(macd_cross_up)
                 if use_ema:
@@ -737,6 +783,8 @@ def backtest_symbol(df1,
                         note_parts.append(f"EMA9 crossed above EMA21 (EMA9={ema9:.2f}, EMA21={ema21:.2f})")
                     if use_bb_cross_up:
                         note_parts.append(f"Price crossed above BB upper (Close={close:.2f}, BB Upper={bb_up_v:.2f})")
+                    if use_bb_width:
+                        note_parts.append(f"BB width > {bb_width_threshold}% (Width={bb_width_val:.2f}%)")
                     if use_macd_cross_up:
                         note_parts.append(f"MACD crossed above signal (MACD={macd_val:.4f}, Signal={macd_signal_val:.4f})")
                     if use_ema:
@@ -1002,6 +1050,8 @@ with st.sidebar:
             st.session_state.settings['rsi_threshold'] = entry.get('rsi_threshold', 30)
             st.session_state.settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
             st.session_state.settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
+            st.session_state.settings['use_bb_width'] = entry.get('use_bb_width', False)
+            st.session_state.settings['bb_width_threshold'] = entry.get('bb_width_threshold', 5.0)
             st.session_state.settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
             st.session_state.settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
             st.session_state.settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
@@ -1014,6 +1064,8 @@ with st.sidebar:
             st.session_state.settings['rsi_exit_threshold'] = exit_cond.get('rsi_exit_threshold', 70)
             st.session_state.settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
             st.session_state.settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
+            st.session_state.settings['use_bb_width_exit'] = exit_cond.get('use_bb_width_exit', False)
+            st.session_state.settings['bb_width_exit_threshold'] = exit_cond.get('bb_width_exit_threshold', 10.0)
             st.session_state.settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
             st.session_state.settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
             st.session_state.settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
@@ -1022,14 +1074,22 @@ with st.sidebar:
             # Risk management
             st.session_state.settings['stop_loss'] = risk.get('stop_loss', 0.02)
             st.session_state.settings['take_profit'] = risk.get('take_profit', 0.03)
+            st.session_state.settings['min_hold_minutes'] = risk.get('min_hold_minutes', 5)
 
             # Interval and period
             st.session_state.settings['interval'] = alpaca_strategy.get('interval', '5m')
             st.session_state.settings['period'] = alpaca_strategy.get('period', '1d')
 
+            # Save a snapshot of loaded settings to track changes
+            st.session_state.loaded_settings = st.session_state.settings.copy()
+
             # Update previous ticker
             st.session_state.previous_ticker = ticker
             st.rerun()
+
+    # Initialize loaded_settings if not exists (for first load)
+    if 'loaded_settings' not in st.session_state:
+        st.session_state.loaded_settings = st.session_state.settings.copy()
 
     # Add ticker enable/disable/delete control in one line
     st.divider()
@@ -1161,6 +1221,25 @@ with st.sidebar:
                                    help="Entry when price crosses above Bollinger Band upper line")
     st.session_state.settings['use_bb_cross_up'] = use_bb_cross_up
 
+    # Handle backwards compatibility for use_bb_width
+    if 'use_bb_width' not in st.session_state.settings:
+        st.session_state.settings['use_bb_width'] = False
+    if 'bb_width_threshold' not in st.session_state.settings:
+        st.session_state.settings['bb_width_threshold'] = 5.0
+
+    use_bb_width = st.checkbox("BB Width > threshold (high volatility)",
+                               value=st.session_state.settings['use_bb_width'],
+                               help="Entry when Bollinger Bands width is above threshold (high volatility - trending market)")
+    st.session_state.settings['use_bb_width'] = use_bb_width
+
+    bb_width_threshold = st.number_input("BB Width threshold (%)",
+                                         min_value=0.1, max_value=20.0,
+                                         value=st.session_state.settings['bb_width_threshold'],
+                                         step=0.1,
+                                         disabled=not use_bb_width,
+                                         help="Entry when BB width is above this percentage (typical: 5-10%)")
+    st.session_state.settings['bb_width_threshold'] = bb_width_threshold
+
     # Handle backwards compatibility for use_macd_cross_up
     if 'use_macd_cross_up' not in st.session_state.settings:
         st.session_state.settings['use_macd_cross_up'] = False
@@ -1237,6 +1316,17 @@ with st.sidebar:
     st.session_state.settings['take_profit_pct'] = take_profit_pct
     take_profit_pct = take_profit_pct / 100
 
+    # Minimum holding time
+    if 'min_hold_minutes' not in st.session_state.settings:
+        st.session_state.settings['min_hold_minutes'] = 5
+
+    min_hold_minutes = st.number_input("Minimum hold time (minutes)",
+                                       min_value=0, max_value=60,
+                                       value=st.session_state.settings['min_hold_minutes'],
+                                       step=1,
+                                       help="Minimum time to hold position before allowing exit (0 = no minimum)")
+    st.session_state.settings['min_hold_minutes'] = min_hold_minutes
+
     use_rsi_overbought = st.checkbox("Exit on RSI Overbought",
                                       value=st.session_state.settings['use_rsi_overbought'],
                                       help="Exit when RSI exceeds this level")
@@ -1272,6 +1362,25 @@ with st.sidebar:
                                      value=st.session_state.settings['use_bb_cross_down'],
                                      help="Exit when price crosses below Bollinger Band lower line")
     st.session_state.settings['use_bb_cross_down'] = use_bb_cross_down
+
+    # Handle backwards compatibility for use_bb_width_exit
+    if 'use_bb_width_exit' not in st.session_state.settings:
+        st.session_state.settings['use_bb_width_exit'] = False
+    if 'bb_width_exit_threshold' not in st.session_state.settings:
+        st.session_state.settings['bb_width_exit_threshold'] = 10.0
+
+    use_bb_width_exit = st.checkbox("Exit on BB Width > threshold (high volatility)",
+                                    value=st.session_state.settings['use_bb_width_exit'],
+                                    help="Exit when Bollinger Bands width exceeds threshold (volatility expanding - potential reversal)")
+    st.session_state.settings['use_bb_width_exit'] = use_bb_width_exit
+
+    bb_width_exit_threshold = st.number_input("BB Width exit threshold (%)",
+                                              min_value=0.1, max_value=20.0,
+                                              value=st.session_state.settings['bb_width_exit_threshold'],
+                                              step=0.1,
+                                              disabled=not use_bb_width_exit,
+                                              help="Exit when BB width exceeds this percentage (typical: 8-15%)")
+    st.session_state.settings['bb_width_exit_threshold'] = bb_width_exit_threshold
 
     # Handle backwards compatibility for use_macd_cross_down
     if 'use_macd_cross_down' not in st.session_state.settings:
@@ -1348,12 +1457,17 @@ with st.sidebar:
     save_settings(st.session_state.settings)
 
 if run_backtest_btn:
-    # Save current settings to alpaca.json before running backtest
-    with st.spinner(f"Saving strategy for {ticker} to alpaca.json..."):
-        if save_settings_to_alpaca(st.session_state.settings, ticker):
-            st.success(f"💾 Saved strategy for {ticker} to alpaca.json", icon="✅")
-        else:
-            st.warning(f"⚠️ Could not save strategy for {ticker}")
+    # Only save if settings have changed
+    if settings_have_changed(st.session_state.settings, st.session_state.get('loaded_settings', {})):
+        with st.spinner(f"Saving strategy for {ticker} to alpaca.json..."):
+            if save_settings_to_alpaca(st.session_state.settings, ticker):
+                st.success(f"💾 Saved strategy for {ticker} to alpaca.json", icon="✅")
+                # Update loaded_settings snapshot after successful save
+                st.session_state.loaded_settings = st.session_state.settings.copy()
+            else:
+                st.warning(f"⚠️ Could not save strategy for {ticker}")
+    else:
+        st.info(f"ℹ️ No changes detected - skipping save", icon="ℹ️")
 
     # ---- Main ticker ----
     with st.spinner(f"Downloading {ticker} data..."):
@@ -1429,9 +1543,12 @@ if run_backtest_btn:
             stop_loss=stop_loss_pct,
             tp_pct=take_profit_pct,
             avoid_after=avoid_after_time if use_time_filter else None,
+            min_hold_minutes=min_hold_minutes,
             use_rsi=use_rsi,
             rsi_threshold=rsi_threshold,
             use_bb_cross_up=use_bb_cross_up,
+            use_bb_width=use_bb_width,
+            bb_width_threshold=bb_width_threshold,
             use_ema=use_ema,
             use_volume=use_volume,
             use_stop_loss=use_stop_loss,
@@ -1442,6 +1559,8 @@ if run_backtest_btn:
             use_ema_cross_down=use_ema_cross_down,
             use_price_below_ema9=use_price_below_ema9,
             use_bb_cross_down=use_bb_cross_down,
+            use_bb_width_exit=use_bb_width_exit,
+            bb_width_exit_threshold=bb_width_exit_threshold,
             use_macd_cross_up=use_macd_cross_up,
             use_macd_cross_down=use_macd_cross_down,
             use_price_above_ema21=use_price_above_ema21,
@@ -1459,11 +1578,16 @@ if run_backtest_btn:
             last_time = df1.index[-1]
 
             if period == "1d":
-                # Show only last 26 hours for 1d period (for intraday) or 1 day (for daily)
+                # Show only last 1 trading day
                 if interval == "1d":
+                    # For daily interval, show 1 day
                     cutoff_time = last_time - pd.Timedelta(days=1)
                 else:
-                    cutoff_time = last_time - pd.Timedelta(hours=26)
+                    # For intraday, show only the last trading day (6.5 hours market + pre/post)
+                    # Get the date of the last timestamp
+                    last_date = last_time.date()
+                    # Set cutoff to start of that trading day (4:00 AM ET for pre-market)
+                    cutoff_time = pd.Timestamp(last_date).tz_localize('America/New_York') + pd.Timedelta(hours=4)
                 df1_display = df1[df1.index >= cutoff_time].copy()
                 df5_display = df5[df5.index >= cutoff_time].copy()
             elif period == "2wk":
@@ -1500,7 +1624,19 @@ if run_backtest_btn:
         fig = go.Figure()
 
         # Price chart - Candlestick (yaxis)
-        fig.add_trace(go.Candlestick(
+        # Add BB width and RSI to customdata for hover tooltip
+        # Debug: Check if columns exist
+        if 'bb_width' not in df5_display.columns:
+            st.warning(f"bb_width column not found. Available columns: {df5_display.columns.tolist()}")
+
+        # Prepare customdata with bb_width and rsi
+        try:
+            customdata_array = df5_display[["bb_width", "rsi"]].fillna(0).values
+        except KeyError as e:
+            st.error(f"Error accessing columns: {e}")
+            customdata_array = None
+
+        candlestick_trace = go.Candlestick(
             x=df5_display.index,
             open=df5_display["Open"],
             high=df5_display["High"],
@@ -1508,15 +1644,40 @@ if run_backtest_btn:
             close=df5_display["Close"],
             name=ticker,
             yaxis='y'
-        ))
+        )
+
+        # Add customdata if available
+        if customdata_array is not None:
+            candlestick_trace.customdata = customdata_array
+            candlestick_trace.hovertemplate = (
+                '<b>%{x}</b><br>' +
+                'Open: %{open:.2f}<br>' +
+                'High: %{high:.2f}<br>' +
+                'Low: %{low:.2f}<br>' +
+                'Close: %{close:.2f}<br>' +
+                'BB Width: %{customdata[0]:.2f}%<br>' +
+                'RSI: %{customdata[1]:.1f}' +
+                '<extra></extra>'
+            )
+
+        fig.add_trace(candlestick_trace)
 
         # Add Bollinger Bands in grey
         fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["bb_up"],
                                  name="BB Upper", line=dict(width=1, color='grey'),
                                  yaxis='y'))
-        fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["bb_mid"],
-                                 name="BB Mid", line=dict(width=1, color='grey'),
-                                 yaxis='y'))
+
+        # Add BB Mid with BB Width in customdata for tooltip
+        fig.add_trace(go.Scatter(
+            x=df5_display.index,
+            y=df5_display["bb_mid"],
+            name="BB Mid",
+            line=dict(width=1, color='grey'),
+            yaxis='y',
+            customdata=df5_display["bb_width"].fillna(0).values,
+            hovertemplate='BB Mid: %{y:.2f} (Width: %{customdata:.2f}%)<extra></extra>'
+        ))
+
         fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["bb_low"],
                                  name="BB Lower", line=dict(width=1, color='grey'),
                                  yaxis='y'))
