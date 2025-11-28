@@ -34,7 +34,16 @@
     },
     "trading": {
       "position_size": 100,
-      "check_interval_seconds": 120
+      "check_interval_seconds": 120,
+      "use_paper": true,
+      "email_notifications": {
+        "enabled": true,
+        "on_bot_start": true,
+        "on_bot_stop": true,
+        "on_entry": true,
+        "on_exit": true,
+        "on_errors": true
+      }
     }
   },
   "signal_actions": {
@@ -110,7 +119,7 @@
             "min_hold_entry_minutes": 10
           },
           "exit_conditions": {
-            "use_rsi_exit": false,
+            "use_rsi_exit": true,
             "rsi_exit_threshold": 66,
             "use_ema_cross_down": false,
             "use_bb_cross_down": false,

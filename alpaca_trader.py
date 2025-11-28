@@ -41,25 +41,17 @@ load_dotenv()
 GMAIL_ADDRESS = os.getenv('GMAIL_ADDRESS')
 GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 
-# Alpaca Configuration from alpaca_config.py
-try:
-    from alpaca_config import (
-        USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT,
-        EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP,
-        EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
-    )
-except ImportError:
-    # Defaults if config doesn't exist
-    USE_PAPER = True  # SAFETY: Default to paper trading
-    POSITION_SIZE = 10
-    STOP_LOSS_PCT = 0.02
-    TAKE_PROFIT_PCT = 0.03
-    EMAIL_NOTIFICATIONS_ENABLED = True
-    EMAIL_ON_BOT_START = True
-    EMAIL_ON_BOT_STOP = True
-    EMAIL_ON_ENTRY = True
-    EMAIL_ON_EXIT = True
-    EMAIL_ON_ERRORS = True
+# Default configuration values (will be overridden by alpaca.json)
+USE_PAPER = True  # SAFETY: Default to paper trading
+POSITION_SIZE = 100
+STOP_LOSS_PCT = 0.02
+TAKE_PROFIT_PCT = 0.03
+EMAIL_NOTIFICATIONS_ENABLED = True
+EMAIL_ON_BOT_START = True
+EMAIL_ON_BOT_STOP = True
+EMAIL_ON_ENTRY = True
+EMAIL_ON_EXIT = True
+EMAIL_ON_ERRORS = True
 
 # Tracking files
 STATE_FILE = '.alpaca_trader_state.json'
@@ -251,6 +243,46 @@ def load_signal_actions():
     """
     _, signal_actions = load_config()
     return signal_actions
+
+
+def load_trading_config():
+    """
+    Load trading configuration from alpaca.json and update global variables
+    """
+    global USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT
+    global EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP
+    global EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
+
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+
+        strategy = config.get('strategy', {})
+        trading = strategy.get('trading', {})
+
+        # Update trading settings
+        USE_PAPER = trading.get('use_paper', True)
+        POSITION_SIZE = trading.get('position_size', 100)
+
+        # Risk management (from strategy.risk_management)
+        risk_mgmt = strategy.get('risk_management', {})
+        STOP_LOSS_PCT = risk_mgmt.get('stop_loss', 0.02)
+        TAKE_PROFIT_PCT = risk_mgmt.get('take_profit', 0.03)
+
+        # Email notifications
+        email_config = trading.get('email_notifications', {})
+        EMAIL_NOTIFICATIONS_ENABLED = email_config.get('enabled', True)
+        EMAIL_ON_BOT_START = email_config.get('on_bot_start', True)
+        EMAIL_ON_BOT_STOP = email_config.get('on_bot_stop', True)
+        EMAIL_ON_ENTRY = email_config.get('on_entry', True)
+        EMAIL_ON_EXIT = email_config.get('on_exit', True)
+        EMAIL_ON_ERRORS = email_config.get('on_errors', True)
+
+        logging.info("✅ Trading configuration loaded from alpaca.json")
+
+    except Exception as e:
+        logging.warning(f"⚠️  Failed to load trading config from alpaca.json: {e}")
+        logging.warning("Using default values")
 
 
 def load_state():
@@ -1694,6 +1726,9 @@ def main():
     logging.info("=" * 60)
     logging.info("ALPACA STRATEGY TRADER - AUTOMATED TRADING")
     logging.info("=" * 60)
+
+    # Load trading configuration from alpaca.json first
+    load_trading_config()
 
     account_type = "PAPER TRADING" if USE_PAPER else "⚠️  LIVE TRADING ⚠️"
     logging.info(f"Mode: {account_type}")

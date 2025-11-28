@@ -861,31 +861,88 @@ if 'settings' not in st.session_state:
     # Initialize with default ticker
     default_ticker = get_available_tickers()[0]
 
-    # Try to load saved settings for default ticker
-    saved_settings = load_settings(default_ticker)
-    if saved_settings:
-        st.session_state.settings = saved_settings
-        st.session_state.settings['ticker'] = default_ticker  # Ensure ticker is set
+    # ALWAYS load from alpaca.json (single source of truth)
+    alpaca_strategy = load_strategy_from_alpaca(default_ticker)
+
+    if alpaca_strategy:
+        # Initialize settings from alpaca.json
+        entry = alpaca_strategy.get('entry_conditions', {})
+        exit_cond = alpaca_strategy.get('exit_conditions', {})
+        risk = alpaca_strategy.get('risk_management', {})
+
+        st.session_state.settings = {
+            'ticker': default_ticker,
+            'period': alpaca_strategy.get('period', '1d'),
+            'interval': alpaca_strategy.get('interval', '5m'),
+            'chart_height': 1150,
+            # Entry conditions from alpaca.json
+            'use_rsi': entry.get('use_rsi', False),
+            'rsi_threshold': entry.get('rsi_threshold', 30),
+            'use_ema_cross_up': entry.get('use_ema_cross_up', False),
+            'use_bb_cross_up': entry.get('use_bb_cross_up', False),
+            'use_bb_width': entry.get('use_bb_width', False),
+            'bb_width_threshold': entry.get('bb_width_threshold', 5.0),
+            'use_macd_cross_up': entry.get('use_macd_cross_up', False),
+            'use_ema': entry.get('use_ema', False),
+            'use_price_above_ema21': entry.get('use_price_above_ema21', False),
+            'use_price_vs_ema9': entry.get('use_price_vs_ema9', False),
+            'use_price_vs_ema21': entry.get('use_price_vs_ema21', False),
+            'use_volume': entry.get('use_volume', False),
+            'use_macd_threshold': entry.get('use_macd_threshold', False),
+            'macd_threshold': entry.get('macd_threshold', 0.1),
+            'use_macd_valley': entry.get('use_macd_valley', False),
+            'min_hold_entry_minutes': entry.get('min_hold_entry_minutes', 0),
+            # Exit conditions from alpaca.json
+            'use_rsi_exit': exit_cond.get('use_rsi_exit', False),
+            'rsi_exit_threshold': exit_cond.get('rsi_exit_threshold', 70),
+            'use_rsi_overbought': exit_cond.get('use_rsi_exit', False),  # Alias
+            'rsi_overbought_threshold': exit_cond.get('rsi_exit_threshold', 70),  # Alias
+            'use_ema_cross_down': exit_cond.get('use_ema_cross_down', False),
+            'use_price_below_ema9': exit_cond.get('use_price_vs_ema9_exit', False),
+            'use_price_below_ema21': exit_cond.get('use_price_vs_ema21_exit', False),
+            'use_bb_cross_down': exit_cond.get('use_bb_cross_down', False),
+            'use_bb_width_exit': exit_cond.get('use_bb_width_exit', False),
+            'bb_width_exit_threshold': exit_cond.get('bb_width_exit_threshold', 10.0),
+            'use_macd_cross_down': exit_cond.get('use_macd_cross_down', False),
+            'use_price_vs_ema9_exit': exit_cond.get('use_price_vs_ema9_exit', False),
+            'use_price_vs_ema21_exit': exit_cond.get('use_price_vs_ema21_exit', False),
+            'use_macd_peak': exit_cond.get('use_macd_peak', False),
+            # Risk management from alpaca.json
+            'use_stop_loss': risk.get('use_stop_loss', True),
+            'stop_loss_pct': risk.get('stop_loss', 0.02) * 100,  # Convert to percentage
+            'use_take_profit': risk.get('use_take_profit', False),
+            'take_profit_pct': risk.get('take_profit', 0.03) * 100,  # Convert to percentage
+            'min_hold_minutes': risk.get('min_hold_minutes', 5),
+            # UI settings
+            'use_macd_below_threshold': False,
+            'macd_below_threshold': 0.0,
+            'use_macd_above_threshold': False,
+            'macd_above_threshold': 0.0,
+            'use_time_filter': False,
+            'avoid_after_time': '15:00',
+            'show_signals': True,
+            'show_reports': True
+        }
     else:
-        # Default settings
+        # Fallback defaults if alpaca.json can't be loaded
         st.session_state.settings = {
             'ticker': default_ticker,
             'period': '1d',
-            'interval': '1m',
+            'interval': '5m',
             'chart_height': 1150,
-            'use_rsi': True,
+            'use_rsi': False,
             'rsi_threshold': 30,
             'use_ema_cross_up': False,
             'use_bb_cross_up': False,
             'use_macd_cross_up': False,
-            'use_ema': True,
+            'use_ema': False,
             'use_price_above_ema21': False,
-            'use_volume': True,
+            'use_volume': False,
             'use_stop_loss': True,
             'stop_loss_pct': 2.0,
-            'use_take_profit': True,
+            'use_take_profit': False,
             'take_profit_pct': 4.0,
-            'use_rsi_overbought': True,
+            'use_rsi_overbought': False,
             'rsi_overbought_threshold': 70,
             'use_ema_cross_down': False,
             'use_price_below_ema9': False,

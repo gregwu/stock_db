@@ -1,40 +1,59 @@
 # ----------------------------------------
 # ALPACA CONFIGURATION FILE
 # ----------------------------------------
+# This file ONLY contains API credentials and references.
+# ALL trading settings are configured in alpaca.json
+# ----------------------------------------
 import os
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Switch between LIVE and PAPER account
-USE_PAPER = True  # True = PAPER trading | False = LIVE trading ⚠️
-
 # Alpaca credentials (loaded from .env for security)
 ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
 ALPACA_SECRET_KEY = os.getenv('ALPACA_SECRET_KEY')
 
-# Trading settings
-# NOTE: TICKER and POSITION_SIZE are now configured in alpaca_signal_actions.json
-# Each action can specify its own ticker and quantity for maximum flexibility
-STOP_LOSS_PCT = 0.02  # 2% stop loss
-TAKE_PROFIT_PCT = 0.03  # 3% take profit
-POSITION_SIZE = 100  # Default position size (fallback if not specified in action)
-# NOTE: CHECK_INTERVAL_SECONDS is configured in alpaca.json under trading.check_interval_seconds
+# Email Configuration (loaded from .env for security)
+GMAIL_ADDRESS = os.getenv('GMAIL_ADDRESS')
+GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 
-# Logging
-LOG_FILE = "alpaca_trader.log"
-
-# Email Notifications (loaded from .env for security)
-# Set to True to enable email notifications for trading events
-EMAIL_NOTIFICATIONS_ENABLED = True
-
-# Which events should trigger email notifications
-EMAIL_ON_BOT_START = True       # Send email when bot starts
-EMAIL_ON_BOT_STOP = True        # Send email when bot stops
-EMAIL_ON_ENTRY = True           # Send email on entry signals (BUY orders)
-EMAIL_ON_EXIT = True            # Send email on exit signals (SELL orders)
-EMAIL_ON_ERRORS = True          # Send email on errors
+# ========================================
+# IMPORTANT: ALL TRADING SETTINGS ARE IN alpaca.json
+# ========================================
+#
+# DO NOT add settings here. Configure everything in alpaca.json:
+#
+# - use_paper (PAPER/LIVE trading mode)
+# - position_size (default shares per trade)
+# - check_interval_seconds (how often to check for signals)
+# - email_notifications (on_bot_start, on_bot_stop, on_entry, on_exit, on_errors)
+# - stop_loss / take_profit (in strategy.risk_management)
+# - All strategy settings (entry/exit conditions, risk management)
+# - All signal actions (what to do on each signal)
+#
+# Location: alpaca.json -> strategy -> trading
+#
+# Example:
+# {
+#   "strategy": {
+#     "trading": {
+#       "position_size": 100,
+#       "check_interval_seconds": 120,
+#       "use_paper": true,
+#       "email_notifications": {
+#         "enabled": true,
+#         "on_bot_start": true,
+#         "on_bot_stop": true,
+#         "on_entry": true,
+#         "on_exit": true,
+#         "on_errors": true
+#       }
+#     }
+#   }
+# }
+#
+# ========================================
 
 # Validate credentials
 if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
@@ -45,3 +64,13 @@ if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
     print("")
     print("Get your API keys from: https://app.alpaca.markets/paper/dashboard/overview")
     print("(Use Paper Trading keys for testing)")
+
+if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
+    print("")
+    print("⚠️  WARNING: Gmail credentials not found in .env file")
+    print("Email notifications will be disabled.")
+    print("To enable email notifications, add to your .env file:")
+    print("  GMAIL_ADDRESS=your-email@gmail.com")
+    print("  GMAIL_APP_PASSWORD=your-16-char-app-password")
+    print("")
+    print("Get Gmail App Password from: https://myaccount.google.com/apppasswords")
