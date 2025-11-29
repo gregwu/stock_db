@@ -229,6 +229,35 @@ class AlpacaAPI:
             print(f"[!] Failed to get orders: {e}")
             return []
 
+    def get_order(self, order_id):
+        """Get a specific order by ID"""
+        try:
+            from alpaca.trading.requests import GetOrderByIdRequest
+
+            order = self.trading_client.get_order_by_id(order_id)
+
+            if order:
+                return {
+                    'order_id': order.id,
+                    'symbol': order.symbol,
+                    'qty': float(order.qty),
+                    'filled_qty': float(order.filled_qty) if order.filled_qty else 0,
+                    'filled_avg_price': float(order.filled_avg_price) if order.filled_avg_price else None,
+                    'side': str(order.side),
+                    'type': str(order.type),
+                    'status': str(order.status),
+                    'created_at': order.created_at,
+                    'updated_at': order.updated_at,
+                    'filled_at': order.filled_at,
+                    'limit_price': float(order.limit_price) if order.limit_price else None,
+                    'stop_price': float(order.stop_price) if order.stop_price else None
+                }
+            return None
+
+        except Exception as e:
+            print(f"[!] Failed to get order {order_id}: {e}")
+            return None
+
 
 if __name__ == "__main__":
     # Test the API

@@ -15,13 +15,14 @@ from email.mime.text import MIMEText
 import logging
 import signal
 import sys
+import pytz
 
 # Import Alpaca
 from alpaca_wrapper import AlpacaAPI
 
 # Import functions from rules.py
 from rules import (
-    rsi, ema, bollinger_bands, macd, backtest_symbol
+    rsi, ema, bollinger_bands, macd, backtest_symbol, load_strategy_from_alpaca
 )
 
 # Setup logging
@@ -46,6 +47,8 @@ USE_PAPER = True  # SAFETY: Default to paper trading
 POSITION_SIZE = 100
 STOP_LOSS_PCT = 0.02
 TAKE_PROFIT_PCT = 0.03
+MAX_BUY_SLIPPAGE_PCT = 0.5  # Skip buy if price rose > 0.5%
+MAX_SELL_SLIPPAGE_PCT = 1.0  # Skip sell if price dropped > 1.0%
 EMAIL_NOTIFICATIONS_ENABLED = True
 EMAIL_ON_BOT_START = True
 EMAIL_ON_BOT_STOP = True
@@ -250,6 +253,7 @@ def load_trading_config():
     Load trading configuration from alpaca.json and update global variables
     """
     global USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT
+    global MAX_BUY_SLIPPAGE_PCT, MAX_SELL_SLIPPAGE_PCT
     global EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP
     global EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
 
@@ -263,6 +267,8 @@ def load_trading_config():
         # Update trading settings
         USE_PAPER = trading.get('use_paper', True)
         POSITION_SIZE = trading.get('position_size', 100)
+        MAX_BUY_SLIPPAGE_PCT = trading.get('max_buy_slippage_pct', 0.5)
+        MAX_SELL_SLIPPAGE_PCT = trading.get('max_sell_slippage_pct', 1.0)
 
         # Risk management (from strategy.risk_management)
         risk_mgmt = strategy.get('risk_management', {})
@@ -279,6 +285,8 @@ def load_trading_config():
         EMAIL_ON_ERRORS = email_config.get('on_errors', True)
 
         logging.info("✅ Trading configuration loaded from alpaca.json")
+        logging.info(f"   Max buy slippage: {MAX_BUY_SLIPPAGE_PCT}%")
+        logging.info(f"   Max sell slippage: {MAX_SELL_SLIPPAGE_PCT}%")
 
     except Exception as e:
         logging.warning(f"⚠️  Failed to load trading config from alpaca.json: {e}")
@@ -552,12 +560,13 @@ Period: {settings.get('period', '1d')}"""
                     entry_conditions_list.append("MACD Valley (turning up)")
                 if entry_cond.get('use_volume'):
                     entry_conditions_list.append("Volume Rising")
+                if entry_cond.get('use_price_drop_from_exit'):
+                    drop_pct = entry_cond.get('price_drop_from_exit_pct', 2.0)
+                    entry_conditions_list.append(f"Price must drop {drop_pct}% from last exit")
 
                 if entry_conditions_list:
                     for cond in entry_conditions_list:
                         trading_strategies += f"\n  ✓ {cond}"
-                    if entry_cond.get('min_hold_entry_minutes', 0) > 0:
-                        trading_strategies += f"\n  ⏱  Min {entry_cond.get('min_hold_entry_minutes')} min after exit"
                 else:
                     trading_strategies += "\n  (No conditions - any signal triggers)"
 
@@ -592,8 +601,6 @@ Period: {settings.get('period', '1d')}"""
                 if exit_conditions_list:
                     for cond in exit_conditions_list:
                         trading_strategies += f"\n  ✓ {cond}"
-                    if risk_mgmt.get('min_hold_minutes', 0) > 0:
-                        trading_strategies += f"\n  ⏱  Min {risk_mgmt.get('min_hold_minutes')} min hold time"
                 else:
                     trading_strategies += "\n  (No conditions - any signal triggers)"
 
@@ -660,13 +667,16 @@ CURRENT POSITIONS
         check_interval_seconds = settings.get('check_interval_seconds', 120) if settings else 120
         check_interval_minutes = check_interval_seconds / 60
 
+        eastern = pytz.timezone('America/New_York')
+        current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
         message += f"""
 ═══════════════════════════════════════
 MONITORING
 ═══════════════════════════════════════
 Check Frequency: Every {check_interval_minutes:.1f} minute{'' if check_interval_minutes == 1 else 's'} ({check_interval_seconds} seconds)
 Email Alerts: {'Enabled' if EMAIL_NOTIFICATIONS_ENABLED else 'Disabled'}
-Started: {pd.Timestamp.now()}
+Started: {current_time}
 ═══════════════════════════════════════
 
 The bot is now actively monitoring for trading signals.
@@ -862,6 +872,126 @@ Account: {'PAPER' if USE_PAPER else 'LIVE'}
         return None
 
 
+def check_order_status(order_id, ticker, action_type):
+    """
+    Check order status and send email notification when filled
+
+    Args:
+        order_id: Alpaca order ID
+        ticker: Stock ticker
+        action_type: 'BUY' or 'SELL'
+
+    Returns:
+        Order status dict or None
+    """
+    try:
+        import time
+
+        # Wait a moment for order to process
+        time.sleep(2)
+
+        order = alpaca_api.get_order(order_id)
+
+        if not order:
+            logging.warning(f"Could not retrieve order {order_id}")
+            return None
+
+        status = order['status']
+        filled_qty = order.get('filled_qty', 0)
+        filled_price = order.get('filled_avg_price')
+
+        logging.info(f"Order {order_id} status: {status}")
+
+        # Send notification based on status
+        eastern = pytz.timezone('America/New_York')
+        current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+        if status == 'filled':
+            # Order completely filled
+            emoji = "✅" if action_type == "BUY" else "💰"
+            subject = f"{emoji} ORDER FILLED - {ticker} {action_type}"
+
+            message = f"""Order Filled Successfully
+
+Ticker: {ticker}
+Action: {action_type}
+Quantity: {filled_qty} shares
+Filled Price: ${filled_price:.2f}
+Total Value: ${filled_qty * filled_price:.2f}
+Status: FILLED
+Order ID: {order_id}
+Filled Time: {current_time}
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+
+            if EMAIL_ON_ENTRY or EMAIL_ON_EXIT:
+                send_email_alert(subject, message)
+
+            logging.info(f"✅ Order {order_id} filled: {filled_qty} shares @ ${filled_price:.2f}")
+
+        elif status == 'partially_filled':
+            # Order partially filled
+            total_qty = order.get('qty', 0)
+            remaining_qty = total_qty - filled_qty
+
+            subject = f"⚠️ ORDER PARTIALLY FILLED - {ticker} {action_type}"
+
+            message = f"""Order Partially Filled
+
+Ticker: {ticker}
+Action: {action_type}
+Ordered: {total_qty} shares
+Filled: {filled_qty} shares
+Remaining: {remaining_qty} shares
+Filled Price: ${filled_price:.2f} (average)
+Status: PARTIALLY FILLED
+Order ID: {order_id}
+Time: {current_time}
+
+The order is still active and may fill completely.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+
+            if EMAIL_ON_ENTRY or EMAIL_ON_EXIT:
+                send_email_alert(subject, message)
+
+            logging.warning(f"⚠️  Order {order_id} partially filled: {filled_qty}/{total_qty} shares")
+
+        elif status in ['canceled', 'expired', 'rejected']:
+            # Order failed
+            subject = f"❌ ORDER {status.upper()} - {ticker} {action_type}"
+
+            message = f"""Order {status.capitalize()}
+
+Ticker: {ticker}
+Action: {action_type}
+Quantity: {order.get('qty', 0)} shares
+Status: {status.upper()}
+Order ID: {order_id}
+Time: {current_time}
+
+The order was {status} and did not fill.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+
+            if EMAIL_ON_ERRORS:
+                send_email_alert(subject, message)
+
+            logging.error(f"❌ Order {order_id} {status}")
+
+        return order
+
+    except Exception as e:
+        logging.error(f"Failed to check order status for {order_id}: {e}")
+        return None
+
+
 def check_stop_loss_take_profit(state):
     """Check if stop loss or take profit levels are hit"""
     if not state['current_position'] or not state['entry_price']:
@@ -944,9 +1074,124 @@ def execute_action(action_config, price, note, timestamp, state):
         if description:
             logging.info(f"      Reason: {description}")
 
+        # Check current market price before placing order
+        try:
+            quote = alpaca_api.quote(ticker)
+            if quote and 'last' in quote:
+                current_price = quote['last']
+                signal_price = price
+                price_diff_pct = ((current_price - signal_price) / signal_price) * 100
+
+                logging.info(f"      Signal price: ${signal_price:.2f}")
+                logging.info(f"      Current price: ${current_price:.2f}")
+                logging.info(f"      Price difference: {price_diff_pct:+.2f}%")
+
+                # Skip buy if current price is higher than signal price by max slippage threshold
+                if price_diff_pct > MAX_BUY_SLIPPAGE_PCT:
+                    logging.warning(f"      ⚠️  SKIPPING BUY - Current price ${current_price:.2f} is {price_diff_pct:.2f}% higher than signal price ${signal_price:.2f}")
+
+                    # Still send email notification
+                    if EMAIL_ON_ENTRY:
+                        eastern = pytz.timezone('America/New_York')
+                        current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                        email_subject = f"⚠️ BUY SKIPPED - {ticker} (Price Too High)"
+                        email_body = f"""Buy Order Skipped - Price Moved Too Much
+
+Ticker: {ticker}
+Action: BUY {quantity} shares (SKIPPED)
+Signal Price: ${signal_price:.2f}
+Current Price: ${current_price:.2f}
+Price Difference: {price_diff_pct:+.2f}%
+Time: {current_time}
+
+Details: {note}
+
+Reason: Current market price is {price_diff_pct:.2f}% higher than signal price.
+This indicates the signal is too old or market has moved significantly.
+
+Order was NOT placed to avoid buying at a worse price.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                        send_email_alert(email_subject, email_body)
+
+                    return False
+        except Exception as e:
+            logging.warning(f"      Could not verify current price: {e}. Proceeding with order.")
+
+        # Check if current price is at least X% below last exit price
+        # Load strategy config to get the threshold
+        try:
+            strategy = load_strategy_from_alpaca(ticker)
+            if strategy:
+                entry_cond = strategy.get('entry_conditions', {})
+                use_price_drop = entry_cond.get('use_price_drop_from_exit', False)
+                price_drop_threshold = entry_cond.get('price_drop_from_exit_pct', 2.0)
+
+                if use_price_drop:
+                    # Check if we have a last exit price for this ticker
+                    if 'last_exit_prices' in state and ticker in state['last_exit_prices']:
+                        last_exit_price = state['last_exit_prices'][ticker]
+                        current_price = price  # Use signal price as current
+
+                        # Calculate how much price has dropped from last exit
+                        price_drop_pct = ((last_exit_price - current_price) / last_exit_price) * 100
+
+                        logging.info(f"      Last exit price: ${last_exit_price:.2f}")
+                        logging.info(f"      Current price: ${current_price:.2f}")
+                        logging.info(f"      Price drop from exit: {price_drop_pct:.2f}%")
+
+                        # Skip buy if price hasn't dropped enough from last exit
+                        if price_drop_pct < price_drop_threshold:
+                            logging.warning(f"      ⚠️  SKIPPING BUY - Price only dropped {price_drop_pct:.2f}% from last exit (need {price_drop_threshold}%)")
+
+                            # Send email notification
+                            if EMAIL_ON_ENTRY:
+                                eastern = pytz.timezone('America/New_York')
+                                current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                                email_subject = f"⚠️ BUY SKIPPED - {ticker} (Price Not Low Enough)"
+                                email_body = f"""Buy Order Skipped - Price Has Not Dropped Enough From Last Exit
+
+Ticker: {ticker}
+Action: BUY {quantity} shares (SKIPPED)
+Last Exit Price: ${last_exit_price:.2f}
+Current Price: ${current_price:.2f}
+Price Drop: {price_drop_pct:.2f}%
+Required Drop: {price_drop_threshold}%
+Time: {current_time}
+
+Details: {note}
+
+Reason: Current price is only {price_drop_pct:.2f}% below the last exit price.
+Strategy requires at least {price_drop_threshold}% drop before re-entering.
+
+This prevents buying back at a similar or higher price after exiting.
+
+Order was NOT placed.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                                send_email_alert(email_subject, email_body)
+
+                            return False
+                        else:
+                            logging.info(f"      ✅ Price drop check passed: {price_drop_pct:.2f}% >= {price_drop_threshold}%")
+                    else:
+                        logging.info(f"      No previous exit price found for {ticker}, skipping price drop check")
+        except Exception as e:
+            logging.warning(f"      Could not check price drop from exit: {e}. Proceeding with order.")
+
         order = place_buy_order(ticker, quantity, price, note)
         if order:
             logging.info(f"      ✅ BUY order placed: {quantity} shares of {ticker} @ ${price:.2f}")
+
+            # Check order status after placement
+            if 'order_id' in order:
+                check_order_status(order['order_id'], ticker, 'BUY')
 
             # Update state - both legacy single position and new multi-ticker tracking
             state['current_position'] = ticker
@@ -981,13 +1226,17 @@ def execute_action(action_config, price, note, timestamp, state):
 
             # Send email notification for entry
             if EMAIL_ON_ENTRY:
+                eastern = pytz.timezone('America/New_York')
+                current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
                 email_subject = f"🟢 ENTRY SIGNAL - {ticker}"
                 email_body = f"""Entry Signal Executed
 
 Ticker: {ticker}
 Action: BUY {quantity} shares
 Price: ${price:.2f}
-Time: {timestamp}
+Signal Time: {timestamp}
+Current Time: {current_time}
 
 Details: {note}
 
@@ -1035,14 +1284,23 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         if order:
             logging.info(f"      ✅ SELL order placed: {sell_qty} shares of {ticker} @ ${price:.2f}")
 
+            # Check order status after placement
+            if 'order_id' in order:
+                check_order_status(order['order_id'], ticker, 'SELL')
+
             # Calculate P&L if we have entry price
             pnl_info = ""
+            pnl_dollars = 0
+            pnl_pct = 0
+            has_pnl = False
+
             if 'positions' in state and ticker in state['positions']:
                 entry_price = state['positions'][ticker].get('entry_price', 0)
                 if entry_price > 0:
                     pnl_dollars = (price - entry_price) * sell_qty
                     pnl_pct = ((price - entry_price) / entry_price) * 100
                     pnl_info = f"\n\nP&L:\nEntry Price: ${entry_price:.2f}\nExit Price: ${price:.2f}\nProfit/Loss: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)"
+                    has_pnl = True
 
             # Update multi-ticker tracking
             if 'positions' in state and ticker in state['positions']:
@@ -1060,13 +1318,29 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
             # Send email notification for exit
             if EMAIL_ON_EXIT:
-                email_subject = f"🔴 EXIT SIGNAL - {ticker}"
+                eastern = pytz.timezone('America/New_York')
+                current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                # Choose emoji based on P&L
+                if has_pnl:
+                    if pnl_dollars >= 0:
+                        exit_emoji = "💰"  # Green/Profit
+                        result_text = "PROFIT"
+                    else:
+                        exit_emoji = "⬛"  # Black/Loss
+                        result_text = "LOSS"
+                    email_subject = f"{exit_emoji} EXIT SIGNAL - {ticker} ({result_text})"
+                else:
+                    exit_emoji = "🔴"  # Red (unknown P&L)
+                    email_subject = f"{exit_emoji} EXIT SIGNAL - {ticker}"
+
                 email_body = f"""Exit Signal Executed
 
 Ticker: {ticker}
 Action: SELL {sell_qty} shares
 Price: ${price:.2f}
-Time: {timestamp}
+Signal Time: {timestamp}
+Current Time: {current_time}
 
 Details: {note}
 
@@ -1109,9 +1383,66 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
             logging.info(f"      Found {available_qty} shares of {ticker} to sell")
 
+            # Check current market price before placing sell order
+            try:
+                quote = alpaca_api.quote(ticker)
+                if quote and 'last' in quote:
+                    current_price = quote['last']
+                    signal_price = price
+                    price_diff_pct = ((signal_price - current_price) / signal_price) * 100
+
+                    logging.info(f"      Signal price: ${signal_price:.2f}")
+                    logging.info(f"      Current price: ${current_price:.2f}")
+                    logging.info(f"      Price difference: {price_diff_pct:+.2f}%")
+
+                    # Skip sell if signal price is greater than current price by max slippage threshold
+                    if price_diff_pct > MAX_SELL_SLIPPAGE_PCT:
+                        logging.warning(f"      ⚠️  SKIPPING SELL - Signal price ${signal_price:.2f} is {price_diff_pct:.2f}% higher than current price ${current_price:.2f}")
+
+                        # Still send email notification
+                        if EMAIL_ON_EXIT:
+                            eastern = pytz.timezone('America/New_York')
+                            current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                            email_subject = f"⚠️ SELL SKIPPED - {ticker} (Price Too Low)"
+                            email_body = f"""Sell Order Skipped - Price Dropped Too Much
+
+Ticker: {ticker}
+Action: SELL {available_qty} shares (SKIPPED)
+Signal Price: ${signal_price:.2f}
+Current Price: ${current_price:.2f}
+Price Drop: {price_diff_pct:.2f}%
+Time: {current_time}
+
+Details: {note}
+
+Reason: Current market price is {price_diff_pct:.2f}% lower than signal price.
+This indicates the signal is too old or market has dropped significantly.
+
+Order was NOT placed to avoid selling at a worse price.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                            send_email_alert(email_subject, email_body)
+
+                        return False
+            except Exception as e:
+                logging.warning(f"      Could not verify current price: {e}. Proceeding with order.")
+
             order = place_sell_order(ticker, available_qty, price, note)
             if order:
                 logging.info(f"      ✅ SELL ALL order placed: {available_qty} shares of {ticker} @ ${price:.2f}")
+
+                # Check order status after placement
+                if 'order_id' in order:
+                    check_order_status(order['order_id'], ticker, 'SELL')
+
+                # Track last exit price before removing position
+                if 'last_exit_prices' not in state:
+                    state['last_exit_prices'] = {}
+                state['last_exit_prices'][ticker] = price
+                logging.info(f"      📊 Last exit price for {ticker}: ${price:.2f}")
 
                 # Update multi-ticker tracking - remove this ticker completely
                 if 'positions' in state and ticker in state['positions']:
@@ -1692,12 +2023,15 @@ def send_stop_email(account_type):
         enabled_list = ', '.join(enabled_tickers) if enabled_tickers else 'None'
         disabled_list = ', '.join(disabled_tickers) if disabled_tickers else 'None'
 
+        eastern = pytz.timezone('America/New_York')
+        current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
         stop_message = f"""Alpaca Trading Bot Stopped
 
 Mode: {account_type}
 Monitored Tickers: {enabled_list}
 Disabled Tickers: {disabled_list}
-Stop Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Stop Time: {current_time}
 
 Bot has been stopped manually."""
 
