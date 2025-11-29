@@ -104,7 +104,7 @@
         },
         "strategy": {
           "interval": "5m",
-          "period": "5d",
+          "period": "1d",
           "entry_conditions": {
             "use_rsi": false,
             "rsi_threshold": 30,
@@ -121,7 +121,8 @@
             "use_ema": false,
             "use_volume": false,
             "use_price_drop_from_exit": true,
-            "price_drop_from_exit_pct": 0.35000000000000003
+            "price_drop_from_exit_pct": 0.37000000000000005,
+            "price_drop_reset_minutes": 60
           },
           "exit_conditions": {
             "use_rsi_exit": false,
@@ -135,7 +136,7 @@
             "use_price_vs_ema21_exit": false,
             "use_macd_peak": true,
             "use_min_profit_exit": true,
-            "min_profit_pct": 1.0
+            "min_profit_pct": 0.25
           },
           "risk_management": {
             "stop_loss": 0.02,

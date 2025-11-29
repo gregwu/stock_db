@@ -138,7 +138,7 @@ def settings_have_changed(current_settings, loaded_settings):
         'use_macd_cross_down', 'use_price_below_ema9',
         'use_price_below_ema21', 'use_macd_peak',
         'stop_loss_pct', 'take_profit_pct', 'use_stop_loss', 'use_take_profit',
-        'use_volume', 'use_price_drop_from_exit', 'price_drop_from_exit_pct',
+        'use_volume', 'use_price_drop_from_exit', 'price_drop_from_exit_pct', 'price_drop_reset_minutes',
         'use_min_profit_exit', 'min_profit_pct',
         'use_macd_below_threshold', 'macd_below_threshold',
         'use_macd_above_threshold', 'macd_above_threshold'
@@ -173,7 +173,8 @@ def save_settings_to_alpaca(settings, ticker):
             'use_ema': settings.get('use_ema', False),  # Also keep this for backward compatibility
             'use_volume': settings.get('use_volume', False),
             'use_price_drop_from_exit': settings.get('use_price_drop_from_exit', False),
-            'price_drop_from_exit_pct': settings.get('price_drop_from_exit_pct', 2.0)
+            'price_drop_from_exit_pct': settings.get('price_drop_from_exit_pct', 2.0),
+            'price_drop_reset_minutes': settings.get('price_drop_reset_minutes', 30)
         }
 
         exit_conditions = {
@@ -522,6 +523,7 @@ def backtest_symbol(df1,
                     use_macd_valley=False,
                     use_price_drop_from_exit=False,
                     price_drop_from_exit_pct=2.0,
+                    price_drop_reset_minutes=30,
                     use_min_profit_exit=False,
                     min_profit_pct=1.0):
     """
@@ -594,6 +596,7 @@ def backtest_symbol(df1,
     position = None
     setup_active = False
     last_exit_price = None  # Track last exit price for price drop check
+    last_exit_time = None  # Track last exit time for timeout reset
 
     for t, row in df5.iterrows():
         time_str = t.strftime("%H:%M")
@@ -665,6 +668,7 @@ def backtest_symbol(df1,
                     "note": "Stop loss hit"
                 })
                 last_exit_price = exit_price  # Save exit price for price drop check
+                last_exit_time = t  # Save exit time for timeout reset
                 position = None
                 continue
 
@@ -681,6 +685,7 @@ def backtest_symbol(df1,
                     "note": "Take profit hit"
                 })
                 last_exit_price = exit_price  # Save exit price for price drop check
+                last_exit_time = t  # Save exit time for timeout reset
                 position = None
                 continue
 
@@ -749,6 +754,7 @@ def backtest_symbol(df1,
                     "note": f"Exit: {', '.join(exit_note_parts)}"
                 })
                 last_exit_price = exit_price  # Save exit price for price drop check
+                last_exit_time = t  # Save exit time for timeout reset
                 position = None
                 continue
 
@@ -756,10 +762,17 @@ def backtest_symbol(df1,
         if position is None:
             # Check if price has dropped enough from last exit (prevent rapid re-entry at same/higher price)
             if use_price_drop_from_exit and last_exit_price is not None:
-                price_drop_pct = ((last_exit_price - close) / last_exit_price) * 100
-                if price_drop_pct < price_drop_from_exit_pct:
-                    # Skip entry - price hasn't dropped enough from last exit
-                    continue
+                # Check if timeout has elapsed - if so, reset the price drop requirement
+                time_since_exit = None
+                if last_exit_time is not None:
+                    time_since_exit = (t - last_exit_time).total_seconds() / 60  # Convert to minutes
+
+                # Only enforce price drop if timeout hasn't elapsed
+                if time_since_exit is None or time_since_exit < price_drop_reset_minutes:
+                    price_drop_pct = ((last_exit_price - close) / last_exit_price) * 100
+                    if price_drop_pct < price_drop_from_exit_pct:
+                        # Skip entry - price hasn't dropped enough from last exit
+                        continue
 
             # 1) Oversold alert: 1m RSI < threshold (if enabled)
             if use_rsi and rsi_last < rsi_threshold:
@@ -912,6 +925,7 @@ if 'settings' not in st.session_state:
             'use_macd_valley': entry.get('use_macd_valley', False),
             'use_price_drop_from_exit': entry.get('use_price_drop_from_exit', False),
             'price_drop_from_exit_pct': entry.get('price_drop_from_exit_pct', 2.0),
+            'price_drop_reset_minutes': entry.get('price_drop_reset_minutes', 30),
             # Exit conditions from alpaca.json
             'use_rsi_exit': exit_cond.get('use_rsi_exit', False),
             'rsi_exit_threshold': exit_cond.get('rsi_exit_threshold', 70),
@@ -983,7 +997,8 @@ if 'settings' not in st.session_state:
             'show_signals': True,
             'show_reports': True,
             'use_price_drop_from_exit': False,
-            'price_drop_from_exit_pct': 2.0
+            'price_drop_from_exit_pct': 2.0,
+            'price_drop_reset_minutes': 30
         }
 
 with st.sidebar:
@@ -1406,6 +1421,17 @@ with st.sidebar:
                                                 help="Minimum % price must drop from last exit before re-entering (prevents buying back at similar price)")
     st.session_state.settings['price_drop_from_exit_pct'] = price_drop_from_exit_pct
 
+    if 'price_drop_reset_minutes' not in st.session_state.settings:
+        st.session_state.settings['price_drop_reset_minutes'] = 30
+
+    price_drop_reset_minutes = st.number_input("Reset price drop requirement after (minutes)",
+                                                min_value=1, max_value=240,
+                                                value=st.session_state.settings['price_drop_reset_minutes'],
+                                                step=1,
+                                                disabled=not use_price_drop_from_exit,
+                                                help="After this many minutes from exit, ignore price drop requirement and allow re-entry (0 = never reset)")
+    st.session_state.settings['price_drop_reset_minutes'] = price_drop_reset_minutes
+
     # Exit Rules
     st.markdown("**Exit Rules (all must be met):**")
     use_stop_loss = st.checkbox("Exit on Stop Loss", value=st.session_state.settings['use_stop_loss'],
@@ -1694,6 +1720,7 @@ if run_backtest_btn:
             use_macd_valley=use_macd_valley,
             use_price_drop_from_exit=use_price_drop_from_exit,
             price_drop_from_exit_pct=price_drop_from_exit_pct,
+            price_drop_reset_minutes=price_drop_reset_minutes,
             use_min_profit_exit=use_min_profit_exit,
             min_profit_pct=min_profit_pct
         )
@@ -1796,24 +1823,45 @@ if run_backtest_btn:
 
                 # Build enhanced entry tooltips with buy price and price difference from last exit
                 entry_tooltips = []
-                last_exit_price = None
                 for idx, row in completed_trades.iterrows():
+                    # Start with entry reason and buy price only
                     tooltip = f"{row['entry_reason']}<br>Buy: ${row['entry_price']:.2f}"
 
-                    # Add price difference from last exit if available and use_price_drop_from_exit is enabled
-                    if use_price_drop_from_exit and last_exit_price is not None:
-                        price_diff_pct = ((last_exit_price - row['entry_price']) / last_exit_price) * 100
-                        tooltip += f"<br>Drop from exit: {price_diff_pct:.2f}%"
+                    # Find the most recent exit that occurred BEFORE this entry
+                    if use_price_drop_from_exit:
+                        # Get all trades with exit times before this entry time
+                        prev_trades = completed_trades[completed_trades['exit_time'] < row['entry_time']]
+                        if not prev_trades.empty:
+                            # Get the most recent one (max exit_time)
+                            most_recent_prev = prev_trades.loc[prev_trades['exit_time'].idxmax()]
+                            prev_exit_price = most_recent_prev['exit_price']
+                            prev_exit_time = most_recent_prev['exit_time']
+
+                            price_diff_pct = ((prev_exit_price - row['entry_price']) / prev_exit_price) * 100
+                            # Ensure timezone is properly displayed (convert to ET if needed)
+                            prev_exit_display = prev_exit_time
+                            if hasattr(prev_exit_display, 'tz_convert'):
+                                prev_exit_display = prev_exit_display.tz_convert('America/New_York')
+                            prev_exit_time_str = prev_exit_display.strftime('%Y-%m-%d %H:%M %Z')
+                            tooltip += f"<br>Prev exit: {prev_exit_time_str}<br>Drop from prev exit: {price_diff_pct:.2f}%"
 
                     entry_tooltips.append(tooltip)
-                    # Update last_exit_price for next iteration
-                    last_exit_price = row['exit_price']
 
                 # Build enhanced exit tooltips with sell price and return
                 exit_tooltips = []
                 exit_colors = []
                 for _, row in completed_trades.iterrows():
-                    tooltip = f"{row['exit_reason']}<br>Sell: ${row['exit_price']:.2f}<br>Return: {row['return_pct']:.2f}%"
+                    # Format both entry and exit times for verification
+                    # Ensure timezone is properly displayed (convert to ET if needed)
+                    entry_display = row['entry_time']
+                    exit_display = row['exit_time']
+                    if hasattr(entry_display, 'tz_convert'):
+                        entry_display = entry_display.tz_convert('America/New_York')
+                    if hasattr(exit_display, 'tz_convert'):
+                        exit_display = exit_display.tz_convert('America/New_York')
+                    entry_time_str = entry_display.strftime('%Y-%m-%d %H:%M %Z')
+                    exit_time_str = exit_display.strftime('%Y-%m-%d %H:%M %Z')
+                    tooltip = f"{row['exit_reason']}<br>Entry: {entry_time_str}<br>Exit: {exit_time_str}<br>Sell: ${row['exit_price']:.2f}<br>Return: {row['return_pct']:.2f}%"
                     exit_tooltips.append(tooltip)
                     # Use red for profit, black for loss
                     exit_colors.append('red' if row['return_pct'] >= 0 else 'black')
@@ -1825,7 +1873,7 @@ if run_backtest_btn:
                     marker=dict(size=12, symbol="triangle-up", color='green'),
                     name="Entries",
                     text=entry_tooltips,
-                    hoverinfo='text+x',
+                    hoverinfo='text',
                     yaxis='y3'
                 ))
                 fig.add_trace(go.Scatter(
@@ -1835,7 +1883,7 @@ if run_backtest_btn:
                     marker=dict(size=12, symbol="triangle-down", color=exit_colors),
                     name="Exits",
                     text=exit_tooltips,
-                    hoverinfo='text+x',
+                    hoverinfo='text',
                     yaxis='y3'
                 ))
 
@@ -2057,6 +2105,35 @@ if run_backtest_btn:
             else:
                 # Filter for rows that have exit_reason (completed trades) for display
                 display_trades = trades_df[trades_df["exit_reason"].notna()].copy()
+
+                # Enhance entry_reason with previous exit information if price drop feature is enabled
+                if use_price_drop_from_exit:
+                    enhanced_entry_reasons = []
+                    for idx, row in display_trades.iterrows():
+                        entry_reason = row['entry_reason']
+
+                        # Find the most recent exit that occurred BEFORE this entry
+                        prev_trades = display_trades[display_trades['exit_time'] < row['entry_time']]
+                        if not prev_trades.empty:
+                            # Get the most recent one (max exit_time)
+                            most_recent_prev = prev_trades.loc[prev_trades['exit_time'].idxmax()]
+                            prev_exit_price = most_recent_prev['exit_price']
+                            prev_exit_time = most_recent_prev['exit_time']
+
+                            price_diff_pct = ((prev_exit_price - row['entry_price']) / prev_exit_price) * 100
+
+                            # Format the previous exit time
+                            prev_exit_display = prev_exit_time
+                            if hasattr(prev_exit_display, 'tz_convert'):
+                                prev_exit_display = prev_exit_display.tz_convert('America/New_York')
+                            prev_exit_time_str = prev_exit_display.strftime('%Y-%m-%d %H:%M')
+
+                            # Append previous exit info to entry reason
+                            entry_reason = f"{entry_reason} | Prev exit: {prev_exit_time_str} | Drop: {price_diff_pct:.2f}%"
+
+                        enhanced_entry_reasons.append(entry_reason)
+
+                    display_trades['entry_reason'] = enhanced_entry_reasons
 
                 st.dataframe(display_trades)
                 total = len(display_trades)
