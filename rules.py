@@ -167,8 +167,9 @@ def save_settings_to_alpaca(settings, ticker):
             'use_macd_cross_up': settings.get('use_macd_cross_up', False),
             'use_price_vs_ema9': settings.get('use_ema', False),  # Map UI field to alpaca.json field
             'use_price_vs_ema21': settings.get('use_price_above_ema21', False),  # Map UI field to alpaca.json field
-            'use_macd_threshold': settings.get('use_macd_threshold', False),
-            'macd_threshold': settings.get('macd_threshold', 0.1),
+            # Map UI field use_macd_below_threshold to alpaca.json field use_macd_threshold
+            'use_macd_threshold': settings.get('use_macd_below_threshold', False),
+            'macd_threshold': settings.get('macd_below_threshold', 0.1),
             'use_macd_valley': settings.get('use_macd_valley', False),
             'use_ema': settings.get('use_ema', False),  # Also keep this for backward compatibility
             'use_volume': settings.get('use_volume', False),
@@ -922,6 +923,9 @@ if 'settings' not in st.session_state:
             'use_volume': entry.get('use_volume', False),
             'use_macd_threshold': entry.get('use_macd_threshold', False),
             'macd_threshold': entry.get('macd_threshold', 0.1),
+            # Map use_macd_threshold to UI field use_macd_below_threshold
+            'use_macd_below_threshold': entry.get('use_macd_threshold', False),
+            'macd_below_threshold': entry.get('macd_threshold', 0.1),
             'use_macd_valley': entry.get('use_macd_valley', False),
             'use_price_drop_from_exit': entry.get('use_price_drop_from_exit', False),
             'price_drop_from_exit_pct': entry.get('price_drop_from_exit_pct', 2.0),
@@ -1145,55 +1149,71 @@ with st.sidebar:
     if 'previous_ticker' not in st.session_state:
         st.session_state.previous_ticker = ticker
 
-    if ticker != st.session_state.previous_ticker:
-        # Ticker changed, auto-load strategy from alpaca.json
-        alpaca_strategy = load_strategy_from_alpaca(ticker)
-        if alpaca_strategy:
-            # Update settings from alpaca.json
-            entry = alpaca_strategy.get('entry_conditions', {})
-            exit_cond = alpaca_strategy.get('exit_conditions', {})
-            risk = alpaca_strategy.get('risk_management', {})
+    # Always reload strategy from alpaca.json to ensure UI shows current config file values
+    # This ensures settings are fresh even if user switches to another ticker and back
+    alpaca_strategy = load_strategy_from_alpaca(ticker)
+    if alpaca_strategy:
+        # Update settings from alpaca.json
+        entry = alpaca_strategy.get('entry_conditions', {})
+        exit_cond = alpaca_strategy.get('exit_conditions', {})
+        risk = alpaca_strategy.get('risk_management', {})
 
-            # Entry conditions
-            st.session_state.settings['use_rsi'] = entry.get('use_rsi', False)
-            st.session_state.settings['rsi_threshold'] = entry.get('rsi_threshold', 30)
-            st.session_state.settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
-            st.session_state.settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
-            st.session_state.settings['use_bb_width'] = entry.get('use_bb_width', False)
-            st.session_state.settings['bb_width_threshold'] = entry.get('bb_width_threshold', 5.0)
-            st.session_state.settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
-            st.session_state.settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
-            st.session_state.settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
-            st.session_state.settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
-            st.session_state.settings['macd_threshold'] = entry.get('macd_threshold', 0.1)
-            st.session_state.settings['use_macd_valley'] = entry.get('use_macd_valley', False)
-            st.session_state.settings['min_hold_entry_minutes'] = entry.get('min_hold_entry_minutes', 0)
+        # Entry conditions from alpaca.json
+        st.session_state.settings['use_rsi'] = entry.get('use_rsi', False)
+        st.session_state.settings['rsi_threshold'] = entry.get('rsi_threshold', 30)
+        st.session_state.settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
+        st.session_state.settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
+        st.session_state.settings['use_bb_width'] = entry.get('use_bb_width', False)
+        st.session_state.settings['bb_width_threshold'] = entry.get('bb_width_threshold', 5.0)
+        st.session_state.settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
+        st.session_state.settings['use_ema'] = entry.get('use_ema', False)
+        st.session_state.settings['use_price_above_ema21'] = entry.get('use_price_above_ema21', False)
+        st.session_state.settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
+        st.session_state.settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
+        st.session_state.settings['use_volume'] = entry.get('use_volume', False)
+        st.session_state.settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
+        st.session_state.settings['macd_threshold'] = entry.get('macd_threshold', 0.1)
+        # Map use_macd_threshold to UI field use_macd_below_threshold
+        st.session_state.settings['use_macd_below_threshold'] = entry.get('use_macd_threshold', False)
+        st.session_state.settings['macd_below_threshold'] = entry.get('macd_threshold', 0.1)
+        st.session_state.settings['use_macd_valley'] = entry.get('use_macd_valley', False)
+        st.session_state.settings['use_price_drop_from_exit'] = entry.get('use_price_drop_from_exit', False)
+        st.session_state.settings['price_drop_from_exit_pct'] = entry.get('price_drop_from_exit_pct', 2.0)
+        st.session_state.settings['price_drop_reset_minutes'] = entry.get('price_drop_reset_minutes', 30)
 
-            # Exit conditions
-            st.session_state.settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
-            st.session_state.settings['rsi_exit_threshold'] = exit_cond.get('rsi_exit_threshold', 70)
-            st.session_state.settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
-            st.session_state.settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
-            st.session_state.settings['use_bb_width_exit'] = exit_cond.get('use_bb_width_exit', False)
-            st.session_state.settings['bb_width_exit_threshold'] = exit_cond.get('bb_width_exit_threshold', 10.0)
-            st.session_state.settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
-            st.session_state.settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
-            st.session_state.settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
-            st.session_state.settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+        # Exit conditions from alpaca.json
+        st.session_state.settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
+        st.session_state.settings['rsi_exit_threshold'] = exit_cond.get('rsi_exit_threshold', 70)
+        st.session_state.settings['use_rsi_overbought'] = exit_cond.get('use_rsi_exit', False)  # Alias
+        st.session_state.settings['rsi_overbought_threshold'] = exit_cond.get('rsi_exit_threshold', 70)  # Alias
+        st.session_state.settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
+        st.session_state.settings['use_price_below_ema9'] = exit_cond.get('use_price_vs_ema9_exit', False)
+        st.session_state.settings['use_price_below_ema21'] = exit_cond.get('use_price_vs_ema21_exit', False)
+        st.session_state.settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
+        st.session_state.settings['use_bb_width_exit'] = exit_cond.get('use_bb_width_exit', False)
+        st.session_state.settings['bb_width_exit_threshold'] = exit_cond.get('bb_width_exit_threshold', 10.0)
+        st.session_state.settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
+        st.session_state.settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
+        st.session_state.settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
+        st.session_state.settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+        st.session_state.settings['use_min_profit_exit'] = exit_cond.get('use_min_profit_exit', False)
+        st.session_state.settings['min_profit_pct'] = exit_cond.get('min_profit_pct', 1.0)
 
-            # Risk management
-            st.session_state.settings['stop_loss'] = risk.get('stop_loss', 0.02)
-            st.session_state.settings['take_profit'] = risk.get('take_profit', 0.03)
-            st.session_state.settings['min_hold_minutes'] = risk.get('min_hold_minutes', 5)
+        # Risk management from alpaca.json
+        st.session_state.settings['use_stop_loss'] = risk.get('use_stop_loss', True)
+        st.session_state.settings['stop_loss_pct'] = risk.get('stop_loss', 0.02) * 100  # Convert to percentage
+        st.session_state.settings['use_take_profit'] = risk.get('use_take_profit', False)
+        st.session_state.settings['take_profit_pct'] = risk.get('take_profit', 0.03) * 100  # Convert to percentage
 
-            # Interval and period
-            st.session_state.settings['interval'] = alpaca_strategy.get('interval', '5m')
-            st.session_state.settings['period'] = alpaca_strategy.get('period', '1d')
+        # Interval and period
+        st.session_state.settings['interval'] = alpaca_strategy.get('interval', '5m')
+        st.session_state.settings['period'] = alpaca_strategy.get('period', '1d')
 
-            # Save a snapshot of loaded settings to track changes
-            st.session_state.loaded_settings = st.session_state.settings.copy()
+        # Save a snapshot of loaded settings to track changes
+        st.session_state.loaded_settings = st.session_state.settings.copy()
 
-            # Update previous ticker
+        # Only trigger rerun if ticker actually changed to avoid infinite loops
+        if ticker != st.session_state.previous_ticker:
             st.session_state.previous_ticker = ticker
             st.rerun()
 

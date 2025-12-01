@@ -211,7 +211,7 @@
             "use_macd_cross_up": false,
             "use_price_vs_ema9": false,
             "use_price_vs_ema21": false,
-            "use_macd_threshold": true,
+            "use_macd_threshold": false,
             "macd_threshold": 0.1,
             "use_macd_valley": true,
             "use_ema": false,
