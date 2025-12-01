@@ -1478,9 +1478,15 @@ with st.sidebar:
     if 'previous_ticker' not in st.session_state:
         st.session_state.previous_ticker = ticker
 
-    # Always reload strategy from alpaca.json to ensure UI shows current config file values
-    # This ensures settings are fresh even if user switches to another ticker and back
-    alpaca_strategy = load_strategy_from_alpaca(ticker)
+    # Only reload strategy from alpaca.json when ticker changes
+    # This prevents overwriting user's UI changes
+    should_reload = ticker != st.session_state.previous_ticker
+
+    if should_reload:
+        alpaca_strategy = load_strategy_from_alpaca(ticker)
+    else:
+        alpaca_strategy = None
+
     if alpaca_strategy:
         # Update settings from alpaca.json
         entry = alpaca_strategy.get('entry_conditions', {})
@@ -1781,7 +1787,7 @@ with st.sidebar:
     interval = st.selectbox("Data interval", interval_options, index=interval_index)
     st.session_state.settings['interval'] = interval
 
-    run_backtest_btn = st.button("Run backtest", use_container_width=True)
+    save_to_alpaca_btn = st.button("💾 Save Strategy to alpaca.json", use_container_width=True)
 
     st.divider()
 
@@ -2071,7 +2077,8 @@ with st.sidebar:
     # Save settings to file
     save_settings(st.session_state.settings)
 
-if run_backtest_btn:
+# Handle save button
+if save_to_alpaca_btn:
     # Only save if settings have changed
     if settings_have_changed(st.session_state.settings, st.session_state.get('loaded_settings', {})):
         with st.spinner(f"Saving strategy for {ticker} to alpaca.json..."):
@@ -2084,60 +2091,60 @@ if run_backtest_btn:
     else:
         st.info(f"ℹ️ No changes detected - skipping save", icon="ℹ️")
 
-    # ---- Main ticker ----
-    with st.spinner(f"Downloading {ticker} data..."):
-        # Map period to yfinance compatible values and adjust for better data display
-        # yfinance supports: {"1d","5d","1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
+# ---- Auto-run backtest and display chart ----
+with st.spinner(f"Downloading {ticker} data..."):
+    # Map period to yfinance compatible values and adjust for better data display
+    # yfinance supports: {"1d","5d","1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
 
-        # When interval is 1d (daily), adjust period to get more historical data
-        if interval == "1d":
-            # For daily interval, map period differently to get sufficient data
-            period_map = {
-                "1d": "5d",     # Get 5 days for 1d period
-                "5d": "5d",     # Get 5 days for 5d period
-                "2wk": "1mo",   # Get 1 month for 2wk period
-                "1mo": "3mo",   # Get 3 months for 1mo period (need more data for daily indicators)
-                "2mo": "6mo",   # Get 6 months for 2mo period
-                "3mo": "1y",    # Get 1 year for 3mo period
-                "6mo": "2y",    # Get 2 years for 6mo period
-                "1y": "5y"      # Get 5 years for 1y period
-            }
-        else:
-            # For intraday intervals, use existing mapping
-            period_map = {
-                "1d": "5d",    # Download 5 days for 1d period to get enough data for indicators
-                "5d": "5d",
-                "2wk": "1mo",  # yfinance doesn't support 2wk, use 1mo instead
-                "1mo": "1mo",
-                "2mo": "3mo",  # yfinance doesn't support 2mo, use 3mo instead
-                "3mo": "3mo",
-                "6mo": "6mo",
-                "1y": "1y"
-            }
+    # When interval is 1d (daily), adjust period to get more historical data
+    if interval == "1d":
+        # For daily interval, map period differently to get sufficient data
+        period_map = {
+            "1d": "5d",     # Get 5 days for 1d period
+            "5d": "5d",     # Get 5 days for 5d period
+            "2wk": "1mo",   # Get 1 month for 2wk period
+            "1mo": "3mo",   # Get 3 months for 1mo period (need more data for daily indicators)
+            "2mo": "6mo",   # Get 6 months for 2mo period
+            "3mo": "1y",    # Get 1 year for 3mo period
+            "6mo": "2y",    # Get 2 years for 6mo period
+            "1y": "5y"      # Get 5 years for 1y period
+        }
+    else:
+        # For intraday intervals, use existing mapping
+        period_map = {
+            "1d": "5d",    # Download 5 days for 1d period to get enough data for indicators
+            "5d": "5d",
+            "2wk": "1mo",  # yfinance doesn't support 2wk, use 1mo instead
+            "1mo": "1mo",
+            "2mo": "3mo",  # yfinance doesn't support 2mo, use 3mo instead
+            "3mo": "3mo",
+            "6mo": "6mo",
+            "1y": "1y"
+        }
 
-        main_period = period_map.get(period, period)
+    main_period = period_map.get(period, period)
 
-        # Validate interval/period combination based on yfinance limits
-        # 1m, 2m, 5m, 15m, 30m: max 60 days
-        # 1h, 90m: max 730 days
-        intraday_short = ["1m", "2m", "5m", "15m", "30m"]
-        intraday_hourly = ["1h", "90m"]
+    # Validate interval/period combination based on yfinance limits
+    # 1m, 2m, 5m, 15m, 30m: max 60 days
+    # 1h, 90m: max 730 days
+    intraday_short = ["1m", "2m", "5m", "15m", "30m"]
+    intraday_hourly = ["1h", "90m"]
 
-        if interval in intraday_short:
-            # For short intervals, limit to 60 days
-            if main_period in ["3mo", "6mo", "1y"]:
-                st.warning(f"⚠️ {interval} interval only supports up to 60 days of data. Adjusting period from {main_period} to 60d.")
-                main_period = "60d"
-        elif interval in intraday_hourly:
-            # For hourly intervals, limit to 730 days
-            if main_period == "1y" and period == "1y":
-                # 1y is ok, it's ~365 days
-                pass
+    if interval in intraday_short:
+        # For short intervals, limit to 60 days
+        if main_period in ["3mo", "6mo", "1y"]:
+            st.warning(f"⚠️ {interval} interval only supports up to 60 days of data. Adjusting period from {main_period} to 60d.")
+            main_period = "60d"
+    elif interval in intraday_hourly:
+        # For hourly intervals, limit to 730 days
+        if main_period == "1y" and period == "1y":
+            # 1y is ok, it's ~365 days
+            pass
 
-        # Use extended hours for intraday intervals only
-        use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
-        raw = yf.download(ticker, period=main_period,
-                          interval=interval, progress=False, prepost=use_extended_hours)
+    # Use extended hours for intraday intervals only
+    use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
+    raw = yf.download(ticker, period=main_period,
+                      interval=interval, progress=False, prepost=use_extended_hours)
 
     if raw.empty:
         st.error(f"No data returned for main ticker. This may happen if the period ({period}) exceeds yfinance limits for the {interval} interval. Try a shorter period.")

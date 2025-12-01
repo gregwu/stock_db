@@ -109,7 +109,7 @@
           "entry_conditions": {
             "use_rsi": false,
             "rsi_threshold": 30,
-            "use_ema_cross_up": true,
+            "use_ema_cross_up": false,
             "use_bb_cross_up": false,
             "use_bb_width": false,
             "bb_width_threshold": 0.4,
@@ -117,8 +117,8 @@
             "use_price_vs_ema9": false,
             "use_price_vs_ema21": false,
             "use_macd_threshold": false,
-            "macd_threshold": 0.1,
-            "use_macd_valley": false,
+            "macd_threshold": 0.0,
+            "use_macd_valley": true,
             "use_ema": false,
             "use_volume": false,
             "use_price_drop_from_exit": false,
@@ -128,14 +128,14 @@
           "exit_conditions": {
             "use_rsi_exit": false,
             "rsi_exit_threshold": 66,
-            "use_ema_cross_down": true,
+            "use_ema_cross_down": false,
             "use_bb_cross_down": false,
             "use_bb_width_exit": false,
             "bb_width_exit_threshold": 0.4,
             "use_macd_cross_down": false,
             "use_price_vs_ema9_exit": false,
             "use_price_vs_ema21_exit": false,
-            "use_macd_peak": false,
+            "use_macd_peak": true,
             "use_min_profit_exit": false,
             "min_profit_pct": 0.25
           },
@@ -200,7 +200,7 @@
         },
         "strategy": {
           "interval": "5m",
-          "period": "1d",
+          "period": "5d",
           "entry_conditions": {
             "use_rsi": false,
             "rsi_threshold": 30,
