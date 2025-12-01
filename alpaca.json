@@ -104,7 +104,7 @@
         },
         "strategy": {
           "interval": "5m",
-          "period": "1d",
+          "period": "5d",
           "entry_conditions": {
             "use_rsi": false,
             "rsi_threshold": 30,
@@ -147,7 +147,7 @@
         }
       },
       "SQQQ": {
-        "enabled": false,
+        "enabled": true,
         "default_quantity": 100,
         "entry": {
           "enabled": true,
@@ -197,6 +197,49 @@
           "enabled": false,
           "actions": [],
           "description": "Overbought alert - Informational only"
+        },
+        "strategy": {
+          "interval": "5m",
+          "period": "5d",
+          "entry_conditions": {
+            "use_rsi": false,
+            "rsi_threshold": 30,
+            "use_ema_cross_up": false,
+            "use_bb_cross_up": false,
+            "use_bb_width": false,
+            "bb_width_threshold": 5.0,
+            "use_macd_cross_up": false,
+            "use_price_vs_ema9": false,
+            "use_price_vs_ema21": false,
+            "use_macd_threshold": true,
+            "macd_threshold": 0.1,
+            "use_macd_valley": true,
+            "use_ema": false,
+            "use_volume": false,
+            "use_price_drop_from_exit": true,
+            "price_drop_from_exit_pct": 0.37000000000000005,
+            "price_drop_reset_minutes": 60
+          },
+          "exit_conditions": {
+            "use_rsi_exit": false,
+            "rsi_exit_threshold": 66,
+            "use_ema_cross_down": false,
+            "use_bb_cross_down": false,
+            "use_bb_width_exit": false,
+            "bb_width_exit_threshold": 10.0,
+            "use_macd_cross_down": false,
+            "use_price_vs_ema9_exit": false,
+            "use_price_vs_ema21_exit": false,
+            "use_macd_peak": true,
+            "use_min_profit_exit": true,
+            "min_profit_pct": 0.25
+          },
+          "risk_management": {
+            "stop_loss": 0.02,
+            "take_profit": 0.03,
+            "use_stop_loss": true,
+            "use_take_profit": false
+          }
         }
       },
       "SPXS": {
