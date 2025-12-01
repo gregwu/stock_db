@@ -93,7 +93,7 @@ class AlpacaAPI:
             print(f"[!] Failed to get quote for {ticker}: {e}")
             return None
 
-    def place_order(self, ticker, qty, action, order_type="MKT", price=None):
+    def place_order(self, ticker, qty, action, order_type="LMT", price=None, extended_hours=True):
         """
         Place an order
 
@@ -101,8 +101,9 @@ class AlpacaAPI:
             ticker: Stock symbol
             qty: Number of shares
             action: "BUY" or "SELL"
-            order_type: "MKT" for market order, "LMT" for limit order
-            price: Limit price (only for limit orders)
+            order_type: "LMT" for limit order (default), "MKT" for market order
+            price: Limit price (required for limit orders)
+            extended_hours: Enable extended hours trading (default: True)
         """
         try:
             print(f"[+] Placing {action} order for {qty} {ticker}")
@@ -116,7 +117,8 @@ class AlpacaAPI:
                     symbol=ticker,
                     qty=qty,
                     side=side,
-                    time_in_force=TimeInForce.DAY
+                    time_in_force=TimeInForce.DAY,
+                    extended_hours=extended_hours
                 )
             else:  # Limit order
                 if price is None:
@@ -126,7 +128,8 @@ class AlpacaAPI:
                     qty=qty,
                     side=side,
                     time_in_force=TimeInForce.DAY,
-                    limit_price=price
+                    limit_price=price,
+                    extended_hours=extended_hours
                 )
 
             # Submit order
