@@ -1,6 +1,6 @@
 {
   "strategy": {
-    "interval": "5m",
+    "interval": "2m",
     "period": "1d",
     "entry_conditions": {
       "use_rsi": true,
@@ -103,7 +103,7 @@
           "description": "Overbought alert - Informational only"
         },
         "strategy": {
-          "interval": "1m",
+          "interval": "2m",
           "period": "1d",
           "entry_conditions": {
             "use_rsi": false,
@@ -199,7 +199,7 @@
           "description": "Overbought alert - Informational only"
         },
         "strategy": {
-          "interval": "5m",
+          "interval": "2m",
           "period": "1d",
           "entry_conditions": {
             "use_rsi": false,
