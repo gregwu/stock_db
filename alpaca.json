@@ -33,11 +33,11 @@
       "use_take_profit": false
     },
     "trading": {
-      "position_size": 100,
-      "check_interval_seconds": 120,
+      "position_size": 200,
+      "check_interval_seconds": 60,
       "use_paper": true,
-      "max_buy_slippage_pct": 0.5,
-      "max_sell_slippage_pct": 0.5,
+      "max_buy_slippage_pct": 0.7,
+      "max_sell_slippage_pct": 0.7,
       "email_notifications": {
         "enabled": true,
         "on_bot_start": true,
@@ -52,7 +52,7 @@
     "tickers": {
       "TQQQ": {
         "enabled": true,
-        "default_quantity": 100,
+        "default_quantity": 200,
         "entry": {
           "enabled": true,
           "actions": [
@@ -103,8 +103,8 @@
           "description": "Overbought alert - Informational only"
         },
         "strategy": {
-          "interval": "5m",
-          "period": "5d",
+          "interval": "1m",
+          "period": "1d",
           "entry_conditions": {
             "use_rsi": false,
             "rsi_threshold": 30,
@@ -200,7 +200,7 @@
         },
         "strategy": {
           "interval": "5m",
-          "period": "5d",
+          "period": "1d",
           "entry_conditions": {
             "use_rsi": false,
             "rsi_threshold": 30,
