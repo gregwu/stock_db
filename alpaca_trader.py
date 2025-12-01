@@ -713,13 +713,14 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None):
         for pos in positions:
             position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
 
-        # Use limit order with current price for better execution and extended hours support
+        # Use limit order with 0.3% above current price for better fill rate and extended hours support
+        limit_price = round(price * 1.003, 2)  # 0.3% above signal price
         order = alpaca_api.place_order(
             ticker=ticker,
             qty=qty,
             action="BUY",
             order_type="LMT",
-            price=round(price, 2),  # Use signal price as limit price
+            price=limit_price,
             extended_hours=True
         )
 
@@ -804,13 +805,14 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None):
         for pos in positions:
             position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
 
-        # Use limit order with current price for better execution and extended hours support
+        # Use limit order with 0.3% below current price for better fill rate and extended hours support
+        limit_price = round(price * 0.997, 2)  # 0.3% below signal price
         order = alpaca_api.place_order(
             ticker=ticker,
             qty=qty,
             action="SELL",
             order_type="LMT",
-            price=round(price, 2),  # Use signal price as limit price
+            price=limit_price,
             extended_hours=True
         )
 
