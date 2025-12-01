@@ -396,8 +396,13 @@ def save_portfolio_state():
         return None
 
 
-def sell_all_positions():
-    """Sell all current positions in portfolio"""
+def sell_all_positions(order_type="LMT"):
+    """
+    Sell all current positions in portfolio
+
+    Args:
+        order_type: "LMT" for limit order (default), "MKT" for market order
+    """
     try:
         # First check for any pending orders
         logging.info("Checking for pending orders...")
@@ -442,7 +447,7 @@ def sell_all_positions():
                 logging.info(f"Selling existing position: {quantity} shares of {ticker}")
                 current_price = pos['current_price']
 
-                order = place_sell_order(ticker, quantity, current_price, "Clear existing position")
+                order = place_sell_order(ticker, quantity, current_price, "Clear existing position", order_type=order_type)
 
                 if order:
                     logging.info(f"Successfully placed sell order for {ticker}")
@@ -792,10 +797,20 @@ Account: {'PAPER' if USE_PAPER else 'LIVE'}
         return None
 
 
-def place_sell_order(ticker, qty, price, reason, entry_conditions=None):
-    """Place a sell order"""
+def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_type="LMT"):
+    """
+    Place a sell order
+
+    Args:
+        ticker: Stock symbol
+        qty: Number of shares
+        price: Signal price
+        reason: Reason for selling
+        entry_conditions: Previous entry conditions (optional)
+        order_type: "LMT" for limit order (default), "MKT" for market order
+    """
     try:
-        logging.info(f"Placing SELL order: {qty} {ticker} @ ${price:.2f}")
+        logging.info(f"Placing SELL order: {qty} {ticker} @ ${price:.2f} ({order_type})")
 
         # Get account info
         account = alpaca_api.get_account()
@@ -809,16 +824,26 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None):
         for pos in positions:
             position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
 
-        # Use limit order with 0.3% below current price for better fill rate and extended hours support
-        limit_price = round(price * 0.997, 2)  # 0.3% below signal price
-        order = alpaca_api.place_order(
-            ticker=ticker,
-            qty=qty,
-            action="SELL",
-            order_type="LMT",
-            price=limit_price,
-            extended_hours=True
-        )
+        # For limit orders, use 0.3% below signal price for better fill rate
+        # For market orders (e.g., stop loss), execute immediately at market price
+        if order_type == "LMT":
+            limit_price = round(price * 0.997, 2)  # 0.3% below signal price
+            order = alpaca_api.place_order(
+                ticker=ticker,
+                qty=qty,
+                action="SELL",
+                order_type="LMT",
+                price=limit_price,
+                extended_hours=True
+            )
+        else:  # Market order
+            order = alpaca_api.place_order(
+                ticker=ticker,
+                qty=qty,
+                action="SELL",
+                order_type="MKT",
+                extended_hours=True
+            )
 
         message = f"""✅ SELL ORDER PLACED
 
@@ -1026,8 +1051,8 @@ def check_stop_loss_take_profit(state):
         if pnl_pct <= -STOP_LOSS_PCT:
             logging.warning(f"⚠️  STOP LOSS triggered! P&L: {pnl_pct*100:.2f}%")
 
-            # Sell all existing positions
-            if not sell_all_positions():
+            # Sell all existing positions using MARKET order for immediate execution
+            if not sell_all_positions(order_type="MKT"):
                 logging.error("Failed to sell positions for stop loss")
                 return False
 
