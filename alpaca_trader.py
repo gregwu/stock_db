@@ -779,7 +779,8 @@ Account: {'PAPER' if USE_PAPER else 'LIVE'}
 ═══════════════════════════════════════
 """
 
-        send_email_alert("🟢 BUY ORDER - Alpaca Trading Bot", message)
+        # Disabled - order emails replaced by entry/exit signal emails
+        # send_email_alert("🟢 BUY ORDER - Alpaca Trading Bot", message)
         return order
 
     except Exception as e:
@@ -871,7 +872,8 @@ Account: {'PAPER' if USE_PAPER else 'LIVE'}
 ═══════════════════════════════════════
 """
 
-        send_email_alert("🔴 SELL ORDER - Alpaca Trading Bot", message)
+        # Disabled - order emails replaced by entry/exit signal emails
+        # send_email_alert("🔴 SELL ORDER - Alpaca Trading Bot", message)
         return order
 
     except Exception as e:
@@ -1446,6 +1448,20 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 if 'order_id' in order:
                     check_order_status(order['order_id'], ticker, 'SELL')
 
+                # Calculate P&L if we have entry price
+                pnl_info = ""
+                pnl_dollars = 0
+                pnl_pct = 0
+                has_pnl = False
+
+                if 'positions' in state and ticker in state['positions']:
+                    entry_price = state['positions'][ticker].get('entry_price', 0)
+                    if entry_price > 0:
+                        pnl_dollars = (price - entry_price) * available_qty
+                        pnl_pct = ((price - entry_price) / entry_price) * 100
+                        pnl_info = f"\n\nP&L:\nEntry Price: ${entry_price:.2f}\nExit Price: ${price:.2f}\nProfit/Loss: ${pnl_dollars:.2f} ({pnl_pct:+.2f}%)"
+                        has_pnl = True
+
                 # Track last exit price before removing position
                 if 'last_exit_prices' not in state:
                     state['last_exit_prices'] = {}
@@ -1462,6 +1478,44 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     state['current_position'] = None
                     state['entry_price'] = None
                     state['position_size'] = 0
+
+                # Send email notification for exit
+                if EMAIL_ON_EXIT:
+                    eastern = pytz.timezone('America/New_York')
+                    current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                    # Choose emoji based on P&L
+                    if has_pnl:
+                        if pnl_dollars >= 0:
+                            exit_emoji = "💰"  # Green/Profit
+                            result_text = "PROFIT"
+                        else:
+                            exit_emoji = "⬛"  # Black/Loss
+                            result_text = "LOSS"
+                        email_subject = f"{exit_emoji} EXIT SIGNAL - {ticker} ({result_text})"
+                    else:
+                        exit_emoji = "🔴"  # Red (unknown P&L)
+                        email_subject = f"{exit_emoji} EXIT SIGNAL - {ticker}"
+
+                    email_body = f"""Exit Signal Executed
+
+Ticker: {ticker}
+Action: SELL ALL ({available_qty} shares)
+Price: ${price:.2f}
+Signal Time: {timestamp}
+Current Time: {current_time}
+
+Details: {note}
+
+Reason: {description if description else 'Exit signal detected'}{pnl_info}
+
+Order ID: {order.get('order_id', 'N/A')}
+Status: {order.get('status', 'N/A')}
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                    send_email_alert(email_subject, email_body)
 
                 return True
             else:
