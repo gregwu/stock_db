@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import signal
+import time
 from scipy.signal import argrelextrema
 
 # ---------- Settings persistence ----------
@@ -359,6 +360,220 @@ def delete_ticker(ticker):
         st.error(f"Error deleting ticker: {e}")
         return False
 
+# ---------- Manual trading functions ----------
+
+def get_alpaca_api():
+    """Initialize and return Alpaca API instance"""
+    try:
+        from alpaca_wrapper import AlpacaAPI
+        from dotenv import load_dotenv
+
+        load_dotenv()
+
+        # Get trading mode from config
+        config = load_alpaca_config()
+        use_paper = True  # Default to paper
+        if config and 'strategy' in config and 'trading' in config['strategy']:
+            use_paper = config['strategy']['trading'].get('use_paper', True)
+
+        api = AlpacaAPI(paper=use_paper)
+        if api.login():
+            return api
+        return None
+    except Exception as e:
+        st.error(f"Failed to initialize Alpaca API: {e}")
+        return None
+
+def get_current_price(ticker):
+    """Get current market price for a ticker"""
+    try:
+        api = get_alpaca_api()
+        if not api:
+            return None
+
+        quote = api.quote(ticker)
+        if quote and 'last' in quote:
+            return quote['last']
+        return None
+    except Exception as e:
+        st.error(f"Failed to get price for {ticker}: {e}")
+        return None
+
+def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
+    """
+    Place a manual buy order
+
+    Args:
+        ticker: Stock symbol
+        quantity: Number of shares
+        order_type: "MKT" for market, "LMT" for limit, "AUTO" for automatic selection
+        limit_price: Limit price (required if order_type is "LMT")
+    """
+    try:
+        api = get_alpaca_api()
+        if not api:
+            return False, "Failed to connect to Alpaca API"
+
+        # Get current price
+        price = get_current_price(ticker)
+        if not price:
+            return False, f"Failed to get current price for {ticker}"
+
+        # Determine order type
+        from alpaca_trader import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
+
+        if order_type == "AUTO":
+            # Auto-select based on market hours
+            in_market_hours = is_market_hours()
+            if in_market_hours:
+                order_type = "MKT"
+            else:
+                order_type = "LMT"
+                limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+
+        # Place order
+        if order_type == "MKT":
+            order = api.place_order(
+                ticker=ticker,
+                qty=quantity,
+                action="BUY",
+                order_type="MKT",
+                extended_hours=True
+            )
+            order_type_desc = "MARKET"
+        else:  # LMT
+            if limit_price is None:
+                # Default limit price with slippage
+                from alpaca_trader import LIMIT_ORDER_SLIPPAGE_PCT
+                limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+
+            order = api.place_order(
+                ticker=ticker,
+                qty=quantity,
+                action="BUY",
+                order_type="LMT",
+                price=limit_price,
+                extended_hours=True
+            )
+            order_type_desc = f"LIMIT @ ${limit_price:.2f}"
+
+        if order and 'order_id' in order:
+            return True, f"✅ BUY order placed: {quantity} shares of {ticker} ({order_type_desc})\nOrder ID: {order['order_id']}"
+        else:
+            return False, "Order placement failed - no order ID returned"
+
+    except Exception as e:
+        return False, f"Failed to place buy order: {e}"
+
+def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
+    """
+    Place a manual sell order
+
+    Args:
+        ticker: Stock symbol
+        quantity: Number of shares
+        order_type: "MKT" for market, "LMT" for limit, "AUTO" for automatic selection
+        limit_price: Limit price (required if order_type is "LMT")
+    """
+    try:
+        api = get_alpaca_api()
+        if not api:
+            return False, "Failed to connect to Alpaca API"
+
+        # Check if we have this position
+        positions = api.get_positions()
+        position = next((p for p in positions if p['symbol'] == ticker), None)
+
+        if not position:
+            return False, f"No position in {ticker} to sell"
+
+        available_qty = int(position['qty'])
+        if quantity > available_qty:
+            return False, f"Insufficient shares. You have {available_qty} shares of {ticker}"
+
+        # Get current price
+        price = get_current_price(ticker)
+        if not price:
+            return False, f"Failed to get current price for {ticker}"
+
+        # Determine order type
+        from alpaca_trader import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
+
+        if order_type == "AUTO":
+            # Auto-select based on market hours
+            in_market_hours = is_market_hours()
+            if in_market_hours:
+                order_type = "MKT"
+            else:
+                order_type = "LMT"
+                limit_price = round(price * (1 - LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+
+        # Place order
+        if order_type == "MKT":
+            order = api.place_order(
+                ticker=ticker,
+                qty=quantity,
+                action="SELL",
+                order_type="MKT",
+                extended_hours=True
+            )
+            order_type_desc = "MARKET"
+        else:  # LMT
+            if limit_price is None:
+                # Default limit price with slippage
+                from alpaca_trader import LIMIT_ORDER_SLIPPAGE_PCT
+                limit_price = round(price * (1 - LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+
+            order = api.place_order(
+                ticker=ticker,
+                qty=quantity,
+                action="SELL",
+                order_type="LMT",
+                price=limit_price,
+                extended_hours=True
+            )
+            order_type_desc = f"LIMIT @ ${limit_price:.2f}"
+
+        if order and 'order_id' in order:
+            return True, f"✅ SELL order placed: {quantity} shares of {ticker} ({order_type_desc})\nOrder ID: {order['order_id']}"
+        else:
+            return False, "Order placement failed - no order ID returned"
+
+    except Exception as e:
+        return False, f"Failed to place sell order: {e}"
+
+def get_account_info():
+    """Get Alpaca account information"""
+    try:
+        api = get_alpaca_api()
+        if not api:
+            return None
+
+        account = api.get_account()
+        if account:
+            return {
+                'portfolio_value': float(account.portfolio_value),
+                'cash': float(account.cash),
+                'buying_power': float(account.buying_power),
+                'equity': float(account.equity)
+            }
+        return None
+    except Exception as e:
+        st.error(f"Failed to get account info: {e}")
+        return None
+
+def get_positions():
+    """Get current positions"""
+    try:
+        api = get_alpaca_api()
+        if not api:
+            return []
+
+        return api.get_positions()
+    except Exception as e:
+        st.error(f"Failed to get positions: {e}")
+        return []
+
 # ---------- Bot control functions ----------
 
 def get_bot_status():
@@ -564,7 +779,8 @@ def backtest_symbol(df1,
                     price_drop_from_exit_pct=2.0,
                     price_drop_reset_minutes=30,
                     use_min_profit_exit=False,
-                    min_profit_pct=1.0):
+                    min_profit_pct=1.0,
+                    avoid_extended_hours=False):
     """
     Apply Greg's rules to a single symbol.
     Returns:
@@ -574,6 +790,7 @@ def backtest_symbol(df1,
         logs_df
     """
     logs = []
+    extended_hours_skipped_count = 0  # Track entries skipped due to extended hours
 
     # Calculate RSI on the selected interval data
     df1 = df1.copy()
@@ -638,6 +855,20 @@ def backtest_symbol(df1,
     last_exit_time = None  # Track last exit time for timeout reset
 
     for t, row in df5.iterrows():
+        # Check if we should avoid extended hours trading
+        if avoid_extended_hours:
+            # Regular market hours: 9:30 AM - 4:00 PM ET
+            hour = t.hour
+            minute = t.minute
+            time_minutes = hour * 60 + minute
+            market_open_minutes = 9 * 60 + 30  # 9:30 AM
+            market_close_minutes = 16 * 60  # 4:00 PM
+
+            # Skip if outside regular hours (only for entries, exits can still happen)
+            is_regular_hours = market_open_minutes <= time_minutes < market_close_minutes
+        else:
+            is_regular_hours = True  # Allow all hours if not avoiding extended
+
         close = row["Close"]
         close_prev = row["close_prev"]
         ema9 = row["ema9"]
@@ -851,7 +1082,21 @@ def backtest_symbol(df1,
                 else:
                     base_ok = all(conditions)
 
+                # Check if entry would have happened
                 if base_ok:
+                    # Check extended hours FIRST before doing anything else
+                    if avoid_extended_hours and not is_regular_hours:
+                        # Entry conditions met but blocked by extended hours filter
+                        extended_hours_skipped_count += 1
+                        logs.append({
+                            "time": t,
+                            "event": "entry_skipped_extended_hours",
+                            "price": close,
+                            "note": f"Entry blocked: Extended hours ({t.strftime('%H:%M')} ET)"
+                        })
+                        # CRITICAL: Do not create position, skip to next iteration
+                        continue
+
                     # Build note based on which conditions were checked
                     note_parts = []
                     if use_rsi:
@@ -1136,7 +1381,7 @@ with st.sidebar:
     avoid_extended_hours = st.checkbox(
         "🕐 Avoid trading in extended hours",
         value=trading_settings.get('avoid_extended_hours', False),
-        help="Only trade during regular market hours (9:30 AM - 4:00 PM ET). When disabled, uses limit orders with larger slippage for extended hours."
+        help="Only trade during regular market hours (9:30 AM - 4:00 PM ET). Applies to both backtesting and live trading. When disabled, uses limit orders with larger slippage for extended hours in live trading."
     )
 
     # Save button for trading settings
@@ -1384,6 +1629,135 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error(f"Failed to update default_quantity for {ticker}")
+
+    st.divider()
+
+    # Manual Trading Section (collapsible)
+    with st.expander("📈 Manual Trading", expanded=False):
+        # Get account info and current price
+        account_info = get_account_info()
+
+        if account_info:
+            # Display account summary in compact format
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Portfolio", f"${account_info['portfolio_value']:,.0f}")
+                st.metric("Cash", f"${account_info['cash']:,.0f}")
+            with col2:
+                st.metric("Equity", f"${account_info['equity']:,.0f}")
+                st.metric("Buying Power", f"${account_info['buying_power']:,.0f}")
+
+            # Get positions
+            positions = get_positions()
+            if positions:
+                st.caption(f"**Current Positions ({len(positions)}):**")
+                for pos in positions:
+                    pnl_pct = float(pos['unrealized_plpc']) * 100
+                    pnl_color = "🟢" if pnl_pct >= 0 else "🔴"
+                    st.caption(f"{pnl_color} {pos['symbol']}: {pos['qty']} shares @ ${float(pos['current_price']):.2f} ({pnl_pct:+.2f}%)")
+            else:
+                st.caption("No open positions")
+        else:
+            st.warning("⚠️ Unable to connect to Alpaca API")
+
+        st.divider()
+
+        # Manual Buy/Sell Controls
+        st.caption("**Quick Trade:**")
+
+        # Get current price
+        current_price = get_current_price(ticker)
+        if current_price:
+            st.caption(f"💲 Current Price: **${current_price:.2f}**")
+
+        # Trade quantity input
+        trade_quantity = st.number_input(
+            "Quantity",
+            min_value=1,
+            max_value=10000,
+            value=current_quantity,
+            step=1,
+            key=f"trade_qty_{ticker}",
+            help="Number of shares to buy or sell"
+        )
+
+        # Order type selection
+        order_type_option = st.radio(
+            "Order Type",
+            options=["Auto (Market/Limit based on hours)", "Market Order", "Limit Order"],
+            index=0,
+            key=f"order_type_{ticker}",
+            help="Auto: Market during regular hours (9:30 AM-4 PM ET), Limit during extended hours"
+        )
+
+        # Map selection to order type
+        if order_type_option == "Market Order":
+            selected_order_type = "MKT"
+            limit_price_value = None
+        elif order_type_option == "Limit Order":
+            selected_order_type = "LMT"
+            # Show limit price input for limit orders
+            # Get slippage from config to avoid circular import
+            trading_settings_for_limit = get_trading_settings()
+            limit_slippage_pct = trading_settings_for_limit.get('limit_order_slippage_pct', 2.0)
+            default_buy_limit = round(current_price * (1 + limit_slippage_pct / 100), 2) if current_price else 0
+            default_sell_limit = round(current_price * (1 - limit_slippage_pct / 100), 2) if current_price else 0
+
+            col_b, col_s = st.columns(2)
+            with col_b:
+                buy_limit_price = st.number_input(
+                    "Buy Limit Price",
+                    min_value=0.01,
+                    value=default_buy_limit,
+                    step=0.01,
+                    key=f"buy_limit_{ticker}",
+                    help="Price for buy limit order"
+                )
+            with col_s:
+                sell_limit_price = st.number_input(
+                    "Sell Limit Price",
+                    min_value=0.01,
+                    value=default_sell_limit,
+                    step=0.01,
+                    key=f"sell_limit_{ticker}",
+                    help="Price for sell limit order"
+                )
+        else:  # Auto
+            selected_order_type = "AUTO"
+            limit_price_value = None
+            buy_limit_price = None
+            sell_limit_price = None
+
+        # Buy and Sell buttons
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("🟢 BUY", use_container_width=True, type="primary", key=f"buy_{ticker}"):
+                with st.spinner(f"Placing BUY order for {trade_quantity} shares of {ticker}..."):
+                    # Use appropriate limit price if limit order
+                    limit_price = buy_limit_price if selected_order_type == "LMT" else None
+                    success, message = place_manual_buy(ticker, trade_quantity, order_type=selected_order_type, limit_price=limit_price)
+                    if success:
+                        st.success(message)
+                        # Refresh account info after order
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(message)
+
+        with col2:
+            if st.button("🔴 SELL", use_container_width=True, type="secondary", key=f"sell_{ticker}"):
+                with st.spinner(f"Placing SELL order for {trade_quantity} shares of {ticker}..."):
+                    # Use appropriate limit price if limit order
+                    limit_price = sell_limit_price if selected_order_type == "LMT" else None
+                    success, message = place_manual_sell(ticker, trade_quantity, order_type=selected_order_type, limit_price=limit_price)
+                    if success:
+                        st.success(message)
+                        # Refresh account info after order
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(message)
 
     st.divider()
 
@@ -1779,6 +2153,13 @@ if run_backtest_btn:
             else:
                 raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
 
+        # Get avoid_extended_hours setting from trading settings
+        avoid_extended_hours_setting = get_trading_settings().get('avoid_extended_hours', False)
+
+        # Show if extended hours avoidance is enabled
+        if avoid_extended_hours_setting:
+            st.info(f"ℹ️ Extended hours avoidance enabled - only entries during 9:30 AM - 4:00 PM ET will be allowed")
+
         df1, df5, trades_df, logs_df = backtest_symbol(
             raw,
             stop_loss=stop_loss_pct,
@@ -1814,7 +2195,8 @@ if run_backtest_btn:
             price_drop_from_exit_pct=price_drop_from_exit_pct,
             price_drop_reset_minutes=price_drop_reset_minutes,
             use_min_profit_exit=use_min_profit_exit,
-            min_profit_pct=min_profit_pct
+            min_profit_pct=min_profit_pct,
+            avoid_extended_hours=avoid_extended_hours_setting
         )
 
         # Filter chart data based on selected period
@@ -2002,10 +2384,10 @@ if run_backtest_btn:
 
         # MACD chart (yaxis4)
         fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["macd"],
-                                 name="MACD", line=dict(width=2, color='navy'),
+                                 name="MACD", line=dict(width=2, color='orange'),
                                  yaxis='y4'))
         fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["macd_signal"],
-                                 name="Signal", line=dict(width=2, color='orange'),
+                                 name="Signal", line=dict(width=2, color='purple'),
                                  yaxis='y4'))
 
         # MACD histogram
@@ -2240,6 +2622,13 @@ if run_backtest_btn:
 
             # Logs + download
             st.subheader("Rule / event log")
+
+            # Show count of skipped extended hours entries if any
+            if avoid_extended_hours_setting and not logs_df.empty:
+                skipped_count = len(logs_df[logs_df['event'] == 'entry_skipped_extended_hours'])
+                if skipped_count > 0:
+                    st.warning(f"⏰ {skipped_count} entry signal(s) were blocked due to extended hours filter")
+
             st.dataframe(logs_df)
             if not logs_df.empty:
                 csv = logs_df.to_csv(index=False).encode("utf-8")
