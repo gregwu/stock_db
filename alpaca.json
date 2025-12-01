@@ -1,16 +1,16 @@
 {
   "strategy": {
-    "interval": "2m",
+    "interval": "5m",
     "period": "1d",
     "entry_conditions": {
-      "use_rsi": true,
+      "use_rsi": false,
       "rsi_threshold": 30,
       "use_ema_cross_up": false,
       "use_bb_cross_up": false,
       "use_macd_cross_up": false,
       "use_price_vs_ema9": false,
       "use_price_vs_ema21": false,
-      "use_macd_threshold": true,
+      "use_macd_threshold": false,
       "macd_threshold": 0.1,
       "use_macd_valley": true,
       "use_ema": false,
@@ -59,7 +59,6 @@
             {
               "type": "BUY",
               "ticker": "TQQQ",
-              "quantity": 100,
               "description": "Buy TQQQ on TQQQ entry signal"
             }
           ],
@@ -103,7 +102,7 @@
           "description": "Overbought alert - Informational only"
         },
         "strategy": {
-          "interval": "2m",
+          "interval": "5m",
           "period": "1d",
           "entry_conditions": {
             "use_rsi": false,
@@ -120,8 +119,8 @@
             "use_macd_valley": true,
             "use_ema": false,
             "use_volume": false,
-            "use_price_drop_from_exit": true,
-            "price_drop_from_exit_pct": 0.37000000000000005,
+            "use_price_drop_from_exit": false,
+            "price_drop_from_exit_pct": 0.1999999999999999,
             "price_drop_reset_minutes": 5
           },
           "exit_conditions": {
@@ -135,7 +134,7 @@
             "use_price_vs_ema9_exit": false,
             "use_price_vs_ema21_exit": false,
             "use_macd_peak": true,
-            "use_min_profit_exit": true,
+            "use_min_profit_exit": false,
             "min_profit_pct": 0.25
           },
           "risk_management": {
@@ -148,14 +147,13 @@
       },
       "SQQQ": {
         "enabled": true,
-        "default_quantity": 100,
+        "default_quantity": 200,
         "entry": {
           "enabled": true,
           "actions": [
             {
               "type": "BUY",
               "ticker": "SQQQ",
-              "quantity": 100,
               "description": "Buy SQQQ on entry signal (short QQQ)"
             }
           ],
@@ -199,7 +197,7 @@
           "description": "Overbought alert - Informational only"
         },
         "strategy": {
-          "interval": "2m",
+          "interval": "5m",
           "period": "1d",
           "entry_conditions": {
             "use_rsi": false,
@@ -216,8 +214,8 @@
             "use_macd_valley": true,
             "use_ema": false,
             "use_volume": false,
-            "use_price_drop_from_exit": true,
-            "price_drop_from_exit_pct": 0.37000000000000005,
+            "use_price_drop_from_exit": false,
+            "price_drop_from_exit_pct": 0.24999999999999994,
             "price_drop_reset_minutes": 5
           },
           "exit_conditions": {
@@ -231,7 +229,7 @@
             "use_price_vs_ema9_exit": false,
             "use_price_vs_ema21_exit": false,
             "use_macd_peak": true,
-            "use_min_profit_exit": true,
+            "use_min_profit_exit": false,
             "min_profit_pct": 0.25
           },
           "risk_management": {
