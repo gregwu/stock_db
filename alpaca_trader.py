@@ -562,7 +562,8 @@ Period: {settings.get('period', '1d')}"""
                     entry_conditions_list.append("Volume Rising")
                 if entry_cond.get('use_price_drop_from_exit'):
                     drop_pct = entry_cond.get('price_drop_from_exit_pct', 2.0)
-                    entry_conditions_list.append(f"Price must drop {drop_pct}% from last exit")
+                    reset_minutes = entry_cond.get('price_drop_reset_minutes', 30)
+                    entry_conditions_list.append(f"Price must drop {drop_pct}% from last exit (resets after {reset_minutes} min)")
 
                 if entry_conditions_list:
                     for cond in entry_conditions_list:
@@ -597,6 +598,8 @@ Period: {settings.get('period', '1d')}"""
                     exit_conditions_list.append("Price < EMA21")
                 if exit_cond.get('use_macd_peak'):
                     exit_conditions_list.append("MACD Peak (turning down)")
+                if exit_cond.get('use_min_profit_exit'):
+                    exit_conditions_list.append(f"Only exit when profit > {exit_cond.get('min_profit_pct', 1.0)}%")
 
                 if exit_conditions_list:
                     for cond in exit_conditions_list:
@@ -1838,6 +1841,10 @@ def run_strategy():
                 use_price_below_ema9=ticker_settings.get('use_price_vs_ema9_exit', False),
                 use_bb_cross_up=ticker_settings.get('use_bb_cross_up', False),
                 use_bb_cross_down=ticker_settings.get('use_bb_cross_down', False),
+                use_bb_width=ticker_settings.get('use_bb_width', False),
+                bb_width_threshold=ticker_settings.get('bb_width_threshold', 0.4),
+                use_bb_width_exit=ticker_settings.get('use_bb_width_exit', False),
+                bb_width_exit_threshold=ticker_settings.get('bb_width_exit_threshold', 0.4),
                 use_macd_cross_up=ticker_settings.get('use_macd_cross_up', False),
                 use_macd_cross_down=ticker_settings.get('use_macd_cross_down', False),
                 use_price_above_ema21=ticker_settings.get('use_price_vs_ema21', False),
@@ -1847,7 +1854,12 @@ def run_strategy():
                 use_macd_above_threshold=ticker_settings.get('use_macd_threshold', False),
                 macd_above_threshold=ticker_settings.get('macd_threshold', 0),
                 use_macd_peak=ticker_settings.get('use_macd_peak', False),
-                use_macd_valley=ticker_settings.get('use_macd_valley', False)
+                use_macd_valley=ticker_settings.get('use_macd_valley', False),
+                use_price_drop_from_exit=ticker_settings.get('use_price_drop_from_exit', False),
+                price_drop_from_exit_pct=ticker_settings.get('price_drop_from_exit_pct', 2.0),
+                price_drop_reset_minutes=ticker_settings.get('price_drop_reset_minutes', 30),
+                use_min_profit_exit=ticker_settings.get('use_min_profit_exit', False),
+                min_profit_pct=ticker_settings.get('min_profit_pct', 1.0)
             )
 
             # Get current price from DataFrame
