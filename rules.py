@@ -1384,13 +1384,8 @@ with st.sidebar:
         help="Only trade during regular market hours (9:30 AM - 4:00 PM ET). Applies to both backtesting and live trading. When disabled, uses limit orders with larger slippage for extended hours in live trading."
     )
 
-    # Save button for trading settings
-    if st.button("💾 Save Trading Settings", use_container_width=True):
-        if update_trading_settings(max_buy_slippage, max_sell_slippage, limit_order_slippage, avoid_extended_hours):
-            st.success("✅ Trading settings saved to alpaca.json")
-            st.rerun()
-        else:
-            st.error("❌ Failed to save trading settings")
+    # Auto-save trading settings
+    update_trading_settings(max_buy_slippage, max_sell_slippage, limit_order_slippage, avoid_extended_hours)
 
     st.divider()
 
@@ -1628,13 +1623,9 @@ with st.sidebar:
         help="Number of shares to trade for this ticker"
     )
 
+    # Auto-save quantity when changed
     if new_quantity != current_quantity:
-        if st.button("💾 Update Quantity", use_container_width=True):
-            if update_ticker_default_quantity(ticker, new_quantity):
-                st.success(f"✅ Updated {ticker} default_quantity to {new_quantity}")
-                st.rerun()
-            else:
-                st.error(f"Failed to update default_quantity for {ticker}")
+        update_ticker_default_quantity(ticker, new_quantity)
 
     st.divider()
 
@@ -1786,8 +1777,6 @@ with st.sidebar:
         interval_index = 0
     interval = st.selectbox("Data interval", interval_options, index=interval_index)
     st.session_state.settings['interval'] = interval
-
-    save_to_alpaca_btn = st.button("💾 Save Strategy to alpaca.json", use_container_width=True)
 
     st.divider()
 
@@ -2077,19 +2066,11 @@ with st.sidebar:
     # Save settings to file
     save_settings(st.session_state.settings)
 
-# Handle save button
-if save_to_alpaca_btn:
-    # Only save if settings have changed
-    if settings_have_changed(st.session_state.settings, st.session_state.get('loaded_settings', {})):
-        with st.spinner(f"Saving strategy for {ticker} to alpaca.json..."):
-            if save_settings_to_alpaca(st.session_state.settings, ticker):
-                st.success(f"💾 Saved strategy for {ticker} to alpaca.json", icon="✅")
-                # Update loaded_settings snapshot after successful save
-                st.session_state.loaded_settings = st.session_state.settings.copy()
-            else:
-                st.warning(f"⚠️ Could not save strategy for {ticker}")
-    else:
-        st.info(f"ℹ️ No changes detected - skipping save", icon="ℹ️")
+# Auto-save to alpaca.json if settings have changed
+if settings_have_changed(st.session_state.settings, st.session_state.get('loaded_settings', {})):
+    if save_settings_to_alpaca(st.session_state.settings, ticker):
+        # Update loaded_settings snapshot after successful save
+        st.session_state.loaded_settings = st.session_state.settings.copy()
 
 # ---- Auto-run backtest and display chart ----
 with st.spinner(f"Downloading {ticker} data..."):
