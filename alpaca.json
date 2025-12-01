@@ -36,8 +36,8 @@
       "position_size": 200,
       "check_interval_seconds": 60,
       "use_paper": true,
-      "max_buy_slippage_pct": 0.7,
-      "max_sell_slippage_pct": 0.7,
+      "max_buy_slippage_pct": 0.9,
+      "max_sell_slippage_pct": 0.9,
       "email_notifications": {
         "enabled": true,
         "on_bot_start": true,
@@ -122,7 +122,7 @@
             "use_volume": false,
             "use_price_drop_from_exit": true,
             "price_drop_from_exit_pct": 0.37000000000000005,
-            "price_drop_reset_minutes": 60
+            "price_drop_reset_minutes": 5
           },
           "exit_conditions": {
             "use_rsi_exit": false,
@@ -218,7 +218,7 @@
             "use_volume": false,
             "use_price_drop_from_exit": true,
             "price_drop_from_exit_pct": 0.37000000000000005,
-            "price_drop_reset_minutes": 60
+            "price_drop_reset_minutes": 5
           },
           "exit_conditions": {
             "use_rsi_exit": false,
