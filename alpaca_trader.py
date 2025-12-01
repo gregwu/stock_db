@@ -49,6 +49,8 @@ STOP_LOSS_PCT = 0.02
 TAKE_PROFIT_PCT = 0.03
 MAX_BUY_SLIPPAGE_PCT = 0.5  # Skip buy if price rose > 0.5%
 MAX_SELL_SLIPPAGE_PCT = 1.0  # Skip sell if price dropped > 1.0%
+LIMIT_ORDER_SLIPPAGE_PCT = 2.0  # Slippage for limit orders in extended hours
+AVOID_EXTENDED_HOURS = False  # Whether to avoid trading in extended hours
 EMAIL_NOTIFICATIONS_ENABLED = True
 EMAIL_ON_BOT_START = True
 EMAIL_ON_BOT_STOP = True
@@ -66,6 +68,29 @@ alpaca_api = None
 
 # Signal actions configuration (loaded at startup)
 signal_actions_config = None
+
+
+def is_market_hours():
+    """
+    Check if current time is during regular market hours (9:30 AM - 4:00 PM ET)
+    Returns True if in regular hours, False if in extended hours
+    """
+    try:
+        eastern = pytz.timezone('America/New_York')
+        now = datetime.now(eastern)
+
+        # Check if it's a weekday
+        if now.weekday() >= 5:  # Saturday=5, Sunday=6
+            return False
+
+        # Regular market hours: 9:30 AM - 4:00 PM ET
+        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+
+        return market_open <= now < market_close
+    except Exception as e:
+        logging.warning(f"Could not determine market hours: {e}. Defaulting to extended hours behavior.")
+        return False
 
 
 def load_config():
@@ -217,11 +242,6 @@ def flatten_strategy(strategy):
     settings['position_size'] = trading.get('position_size', 10)
     settings['check_interval_seconds'] = trading.get('check_interval_seconds', 300)
 
-    # Time filter settings
-    time_filter = strategy.get('time_filter', {})
-    settings['use_time_filter'] = time_filter.get('use_time_filter', False)
-    settings['avoid_after_time'] = time_filter.get('avoid_after_time', '15:00')
-
     return settings
 
 
@@ -254,6 +274,7 @@ def load_trading_config():
     """
     global USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT
     global MAX_BUY_SLIPPAGE_PCT, MAX_SELL_SLIPPAGE_PCT
+    global LIMIT_ORDER_SLIPPAGE_PCT, AVOID_EXTENDED_HOURS
     global EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP
     global EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
 
@@ -269,6 +290,8 @@ def load_trading_config():
         POSITION_SIZE = trading.get('position_size', 100)
         MAX_BUY_SLIPPAGE_PCT = trading.get('max_buy_slippage_pct', 0.5)
         MAX_SELL_SLIPPAGE_PCT = trading.get('max_sell_slippage_pct', 1.0)
+        LIMIT_ORDER_SLIPPAGE_PCT = trading.get('limit_order_slippage_pct', 2.0)
+        AVOID_EXTENDED_HOURS = trading.get('avoid_extended_hours', False)
 
         # Risk management (from strategy.risk_management)
         risk_mgmt = strategy.get('risk_management', {})
@@ -287,6 +310,8 @@ def load_trading_config():
         logging.info("✅ Trading configuration loaded from alpaca.json")
         logging.info(f"   Max buy slippage: {MAX_BUY_SLIPPAGE_PCT}%")
         logging.info(f"   Max sell slippage: {MAX_SELL_SLIPPAGE_PCT}%")
+        logging.info(f"   Limit order slippage: {LIMIT_ORDER_SLIPPAGE_PCT}%")
+        logging.info(f"   Avoid extended hours: {AVOID_EXTENDED_HOURS}")
 
     except Exception as e:
         logging.warning(f"⚠️  Failed to load trading config from alpaca.json: {e}")
@@ -704,10 +729,21 @@ You will receive email alerts for all trades.
         return False
 
 
-def place_buy_order(ticker, qty, price, reason, entry_conditions=None):
-    """Place a buy order"""
+def place_buy_order(ticker, qty, price, reason, entry_conditions=None, order_type="LMT", limit_slippage_pct=0.3):
+    """
+    Place a buy order
+
+    Args:
+        ticker: Stock symbol
+        qty: Number of shares
+        price: Signal price
+        reason: Reason for buying
+        entry_conditions: Previous entry conditions (optional)
+        order_type: "LMT" for limit order (default), "MKT" for market order
+        limit_slippage_pct: Slippage percentage for limit orders (default 0.3%)
+    """
     try:
-        logging.info(f"Placing BUY order: {qty} {ticker} @ ${price:.2f}")
+        logging.info(f"Placing BUY order: {qty} {ticker} @ ${price:.2f} ({order_type})")
 
         # Get account info
         account = alpaca_api.get_account()
@@ -721,16 +757,26 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None):
         for pos in positions:
             position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
 
-        # Use limit order with 0.3% above current price for better fill rate and extended hours support
-        limit_price = round(price * 1.003, 2)  # 0.3% above signal price
-        order = alpaca_api.place_order(
-            ticker=ticker,
-            qty=qty,
-            action="BUY",
-            order_type="LMT",
-            price=limit_price,
-            extended_hours=True
-        )
+        # For limit orders, use slippage above signal price for better fill rate
+        # For market orders, execute immediately at market price
+        if order_type == "LMT":
+            limit_price = round(price * (1 + limit_slippage_pct / 100), 2)
+            order = alpaca_api.place_order(
+                ticker=ticker,
+                qty=qty,
+                action="BUY",
+                order_type="LMT",
+                price=limit_price,
+                extended_hours=True
+            )
+        else:  # Market order
+            order = alpaca_api.place_order(
+                ticker=ticker,
+                qty=qty,
+                action="BUY",
+                order_type="MKT",
+                extended_hours=True
+            )
 
         message = f"""✅ BUY ORDER PLACED
 
@@ -1227,7 +1273,48 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         except Exception as e:
             logging.warning(f"      Could not check price drop from exit: {e}. Proceeding with order.")
 
-        order = place_buy_order(ticker, quantity, price, note)
+        # Determine order type based on market hours
+        # Use market orders during regular hours for faster execution
+        # Use limit orders during extended hours with larger slippage
+        in_market_hours = is_market_hours()
+
+        # Check if we should avoid trading in extended hours
+        if AVOID_EXTENDED_HOURS and not in_market_hours:
+            logging.warning(f"      ⚠️  SKIPPING BUY - Trading in extended hours is disabled")
+            if EMAIL_ON_ENTRY:
+                eastern = pytz.timezone('America/New_York')
+                current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                email_subject = f"⚠️ BUY SKIPPED - {ticker} (Extended Hours)"
+                email_body = f"""Buy Order Skipped - Extended Hours Trading Disabled
+
+Ticker: {ticker}
+Action: BUY {quantity} shares (SKIPPED)
+Price: ${price:.2f}
+Time: {current_time}
+
+Details: {note}
+
+Reason: Trading in extended hours is disabled in configuration.
+Only trades during regular market hours (9:30 AM - 4:00 PM ET) are allowed.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                send_email_alert(email_subject, email_body)
+            return False
+
+        if in_market_hours:
+            order_type = "MKT"
+            logging.info(f"      Using MARKET order (regular trading hours)")
+            limit_slippage = 0.3  # Default for market orders (not used)
+        else:
+            order_type = "LMT"
+            limit_slippage = LIMIT_ORDER_SLIPPAGE_PCT  # Use configured slippage for extended hours
+            logging.info(f"      Using LIMIT order with {limit_slippage}% slippage (extended hours)")
+
+        order = place_buy_order(ticker, quantity, price, note, order_type=order_type,
+                               limit_slippage_pct=limit_slippage)
         if order:
             logging.info(f"      ✅ BUY order placed: {quantity} shares of {ticker} @ ${price:.2f}")
 
@@ -1864,7 +1951,6 @@ def run_strategy():
                 use_volume=ticker_settings.get('use_volume', True),
                 stop_loss=ticker_settings.get('stop_loss', 0.02),
                 tp_pct=ticker_settings.get('take_profit', 0.03),
-                avoid_after=None,  # Time filter disabled
                 use_stop_loss=ticker_settings.get('use_stop_loss', True),
                 use_take_profit=ticker_settings.get('use_take_profit', True),
                 use_rsi_overbought=ticker_settings.get('use_rsi_exit', False),

@@ -38,6 +38,8 @@
       "use_paper": true,
       "max_buy_slippage_pct": 0.9,
       "max_sell_slippage_pct": 0.9,
+      "limit_order_slippage_pct": 2.0,
+      "avoid_extended_hours": false,
       "email_notifications": {
         "enabled": true,
         "on_bot_start": true,

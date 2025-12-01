@@ -254,6 +254,45 @@ def update_ticker_enabled_status(ticker, enabled):
         st.error(f"Error updating ticker status: {e}")
         return False
 
+def update_trading_settings(max_buy_slippage, max_sell_slippage, limit_order_slippage, avoid_extended_hours):
+    """Update trading settings in alpaca.json"""
+    try:
+        config = load_alpaca_config()
+        if not config:
+            return False
+
+        if 'strategy' not in config:
+            config['strategy'] = {}
+        if 'trading' not in config['strategy']:
+            config['strategy']['trading'] = {}
+
+        # Update trading settings
+        config['strategy']['trading']['max_buy_slippage_pct'] = max_buy_slippage
+        config['strategy']['trading']['max_sell_slippage_pct'] = max_sell_slippage
+        config['strategy']['trading']['limit_order_slippage_pct'] = limit_order_slippage
+        config['strategy']['trading']['avoid_extended_hours'] = avoid_extended_hours
+
+        # Save back to file
+        with open(ALPACA_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+
+        return True
+    except Exception as e:
+        st.error(f"Error updating trading settings: {e}")
+        return False
+
+def get_trading_settings():
+    """Get trading settings from alpaca.json"""
+    config = load_alpaca_config()
+    if not config or 'strategy' not in config or 'trading' not in config['strategy']:
+        return {
+            'max_buy_slippage_pct': 0.9,
+            'max_sell_slippage_pct': 0.9,
+            'limit_order_slippage_pct': 2.0,
+            'avoid_extended_hours': False
+        }
+    return config['strategy']['trading']
+
 def get_ticker_enabled_status(ticker):
     """Get ticker enabled status from alpaca.json"""
     config = load_alpaca_config()
@@ -494,7 +533,6 @@ def extract_full_day(df: pd.DataFrame) -> pd.DataFrame:
 def backtest_symbol(df1,
                     stop_loss=0.02,
                     tp_pct=0.04,
-                    avoid_after="15:00",
                     use_rsi=True,
                     rsi_threshold=30,
                     use_bb_cross_up=False,
@@ -600,12 +638,6 @@ def backtest_symbol(df1,
     last_exit_time = None  # Track last exit time for timeout reset
 
     for t, row in df5.iterrows():
-        time_str = t.strftime("%H:%M")
-
-        # Optional: avoid last hour of session
-        if avoid_after is not None and time_str >= avoid_after:
-            continue
-
         close = row["Close"]
         close_prev = row["close_prev"]
         ema9 = row["ema9"]
@@ -957,8 +989,6 @@ if 'settings' not in st.session_state:
             'macd_below_threshold': 0.0,
             'use_macd_above_threshold': False,
             'macd_above_threshold': 0.0,
-            'use_time_filter': False,
-            'avoid_after_time': '15:00',
             'show_signals': True,
             'show_reports': True
         }
@@ -996,8 +1026,6 @@ if 'settings' not in st.session_state:
             'use_macd_peak': False,
             'use_min_profit_exit': False,
             'min_profit_pct': 1.0,
-            'use_time_filter': False,
-            'avoid_after_time': '15:00',
             'show_signals': True,
             'show_reports': True,
             'use_price_drop_from_exit': False,
@@ -1062,6 +1090,62 @@ with st.sidebar:
                     st.rerun()
                 else:
                     st.error(msg)
+
+    st.divider()
+
+    # Trading Configuration Section
+    st.subheader("⚙️ Alpaca Trading Settings")
+
+    # Load current trading settings
+    trading_settings = get_trading_settings()
+
+    # Slippage configuration with expander
+    with st.expander("📊 Slippage Configuration", expanded=False):
+        st.caption("Configure slippage limits for buy/sell orders")
+
+        max_buy_slippage = st.number_input(
+            "Max buy slippage (%)",
+            min_value=0.1,
+            max_value=10.0,
+            value=trading_settings.get('max_buy_slippage_pct', 0.9),
+            step=0.1,
+            help="Skip buy order if current price is higher than signal price by this percentage"
+        )
+
+        max_sell_slippage = st.number_input(
+            "Max sell slippage (%)",
+            min_value=0.1,
+            max_value=10.0,
+            value=trading_settings.get('max_sell_slippage_pct', 0.9),
+            step=0.1,
+            help="Skip sell order if current price is lower than signal price by this percentage"
+        )
+
+        limit_order_slippage = st.number_input(
+            "Limit order slippage (%)",
+            min_value=0.1,
+            max_value=10.0,
+            value=trading_settings.get('limit_order_slippage_pct', 2.0),
+            step=0.1,
+            help="Slippage percentage for limit orders during extended hours"
+        )
+
+        st.caption("ℹ️ Market orders are used during regular hours (9:30 AM - 4:00 PM ET), limit orders with slippage during extended hours")
+
+    # Extended hours configuration
+    avoid_extended_hours = st.checkbox(
+        "🕐 Avoid trading in extended hours",
+        value=trading_settings.get('avoid_extended_hours', False),
+        help="Only trade during regular market hours (9:30 AM - 4:00 PM ET). When disabled, uses limit orders with larger slippage for extended hours."
+    )
+
+    # Save button for trading settings
+    if st.button("💾 Save Trading Settings", use_container_width=True):
+        if update_trading_settings(max_buy_slippage, max_sell_slippage, limit_order_slippage, avoid_extended_hours):
+            st.success("✅ Trading settings saved to alpaca.json")
+            st.rerun()
+        else:
+            st.error("❌ Failed to save trading settings")
 
     st.divider()
 
@@ -1586,17 +1670,6 @@ with st.sidebar:
                                       help="Only exit if current profit is at least this % (does not apply to stop loss/take profit)")
     st.session_state.settings['min_profit_pct'] = min_profit_pct
 
-    # Time Filter
-    use_time_filter = st.checkbox("Avoid trading after specific time",
-                                   value=st.session_state.settings['use_time_filter'])
-    st.session_state.settings['use_time_filter'] = use_time_filter
-
-    avoid_after_time = st.text_input("Avoid entries after (HH:MM)",
-                                     value=st.session_state.settings['avoid_after_time'],
-                                     disabled=not use_time_filter,
-                                     help="No new entries after this time (24h format)")
-    st.session_state.settings['avoid_after_time'] = avoid_after_time
-
     st.divider()
 
     show_signals = st.checkbox("Show buy/sell signals on chart",
@@ -1710,7 +1783,6 @@ if run_backtest_btn:
             raw,
             stop_loss=stop_loss_pct,
             tp_pct=take_profit_pct,
-            avoid_after=avoid_after_time if use_time_filter else None,
             use_rsi=use_rsi,
             rsi_threshold=rsi_threshold,
             use_bb_cross_up=use_bb_cross_up,
