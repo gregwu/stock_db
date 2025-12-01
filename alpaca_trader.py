@@ -1125,12 +1125,16 @@ This indicates the signal is too old or market has moved significantly.
 
 Order was NOT placed to avoid buying at a worse price.
 
+Signal has been cleared and will not retry.
+
 ---
 Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
                         send_email_alert(email_subject, email_body)
 
-                    return False
+                    # Return True to mark signal as processed (prevents retry)
+                    # Retrying won't help since price has already moved too much
+                    return True
         except Exception as e:
             logging.warning(f"      Could not verify current price: {e}. Proceeding with order.")
 
@@ -1434,12 +1438,16 @@ This indicates the signal is too old or market has dropped significantly.
 
 Order was NOT placed to avoid selling at a worse price.
 
+Signal has been cleared and will not retry.
+
 ---
 Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
                             send_email_alert(email_subject, email_body)
 
-                        return False
+                        # Return True to mark signal as processed (prevents retry)
+                        # Retrying won't help since price has already moved too much
+                        return True
             except Exception as e:
                 logging.warning(f"      Could not verify current price: {e}. Proceeding with order.")
 
