@@ -153,7 +153,8 @@ class AlpacaAPI:
                 'type': order.type,
                 'status': order.status,
                 'filled_qty': order.filled_qty,
-                'filled_avg_price': order.filled_avg_price
+                'filled_avg_price': order.filled_avg_price,
+                'limit_price': order.limit_price if hasattr(order, 'limit_price') else None
             }
 
         except Exception as e:
