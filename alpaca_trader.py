@@ -1977,9 +1977,6 @@ def run_strategy():
         logging.error("No tickers defined in signal_actions config")
         return
 
-    interval = default_settings.get('interval', '5m')
-    period = default_settings.get('period', '1d')
-
     # Filter to only enabled tickers for display
     ticker_configs = signal_actions_config.get('tickers', {})
     enabled_tickers = [t for t in tickers if ticker_configs.get(t, {}).get('enabled', True)]
@@ -2003,10 +2000,18 @@ def run_strategy():
         logging.info("-" * 60)
         logging.info(f"Checking {ticker}...")
 
+        # Load ticker-specific strategy settings (interval and period)
+        ticker_config = ticker_configs.get(ticker, {})
+        ticker_strategy = ticker_config.get('strategy', {})
+
+        # Get interval and period from ticker-specific strategy, with fallback to defaults
+        interval = ticker_strategy.get('interval', default_settings.get('interval', '5m'))
+        period = ticker_strategy.get('period', default_settings.get('period', '1d'))
+
         # Download recent data
         try:
             logging.info(f"Downloading data for {ticker}...")
-            # Use configured period from strategy, with fallback to 5d
+            # Use configured period from strategy
             download_period = period if period else "5d"
             use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
             logging.info(f"Using interval: {interval}, period: {download_period}")
