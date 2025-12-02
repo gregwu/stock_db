@@ -1705,13 +1705,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     else:
                         signal_time_str = str(timestamp)
 
-                    # Get order price (limit price with 0.3% slippage for limit orders)
-                    order_price = order.get('limit_price', price) if order else price
+                    # Get order price and format price information
                     price_info = f"Signal Price: ${price:.2f}"
                     sell_order_type = "LMT"  # Default for SELL_ALL orders
-                    if order_price != price:
-                        slippage_pct = ((price - order_price) / price) * 100
-                        price_info += f"\nOrder Price: ${order_price:.2f} ({slippage_pct:.2f}% slippage)"
+
+                    # For limit orders, calculate the actual order price (0.3% below signal price)
+                    if order and order.get('limit_price'):
+                        order_price = float(order['limit_price'])
+                    else:
+                        # Calculate from the 0.3% slippage used in place_sell_order
+                        order_price = round(price * 0.997, 2)
+
+                    slippage_pct = ((price - order_price) / price) * 100
+                    price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
 
                     # Choose emoji based on P&L
                     if has_pnl:
