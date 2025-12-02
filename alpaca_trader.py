@@ -1408,12 +1408,20 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 else:
                     signal_time_str = str(timestamp)
 
-                # Get order price (limit price if limit order, or signal price if market order)
-                order_price = order.get('limit_price', price) if order else price
+                # Get order price and format price information
                 price_info = f"Signal Price: ${price:.2f}"
-                if order_type == "LMT" and order_price != price:
+                if order_type == "LMT":
+                    # For limit orders, calculate the actual order price with slippage
+                    if order and order.get('limit_price'):
+                        order_price = float(order['limit_price'])
+                    else:
+                        # Calculate from the limit_slippage used in place_buy_order
+                        order_price = round(price * (1 + limit_slippage / 100), 2)
                     slippage_pct = ((order_price - price) / price) * 100
-                    price_info += f"\nOrder Price: ${order_price:.2f} ({slippage_pct:.2f}% slippage)"
+                    price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+                else:
+                    # Market order
+                    price_info += f"\nOrder Price: Market Order (best available price)"
 
                 email_subject = f"🟢 ENTRY SIGNAL - {ticker}"
                 email_body = f"""Entry Signal Executed
@@ -1514,13 +1522,24 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 else:
                     signal_time_str = str(timestamp)
 
-                # Get order price (limit price with 0.3% slippage for limit orders)
-                order_price = order.get('limit_price', price) if order else price
+                # Get order price and format price information
                 price_info = f"Signal Price: ${price:.2f}"
-                sell_order_type = "LMT"  # Default for SELL orders
-                if order_price != price:
+
+                # Determine order type used (check what was passed to place_sell_order)
+                # Default is LMT unless it was a stop loss (MKT)
+                if note and 'stop loss' in note.lower():
+                    sell_order_type = "MKT"
+                    price_info += f"\nOrder Price: Market Order (best available price)"
+                else:
+                    sell_order_type = "LMT"
+                    # For limit orders, calculate the actual order price (0.3% below signal price)
+                    if order and order.get('limit_price'):
+                        order_price = float(order['limit_price'])
+                    else:
+                        # Calculate from the 0.3% slippage used in place_sell_order
+                        order_price = round(price * 0.997, 2)
                     slippage_pct = ((price - order_price) / price) * 100
-                    price_info += f"\nOrder Price: ${order_price:.2f} ({slippage_pct:.2f}% slippage)"
+                    price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
 
                 # Choose emoji based on P&L
                 if has_pnl:
