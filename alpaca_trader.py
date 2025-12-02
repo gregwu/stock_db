@@ -2006,8 +2006,10 @@ def run_strategy():
         # Download recent data
         try:
             logging.info(f"Downloading data for {ticker}...")
-            download_period = "5d"  # Always download 5 days for context
+            # Use configured period from strategy, with fallback to 5d
+            download_period = period if period else "5d"
             use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
+            logging.info(f"Using interval: {interval}, period: {download_period}")
             raw = yf.download(ticker, period=download_period, interval=interval,
                              progress=False, prepost=use_extended_hours)
 
