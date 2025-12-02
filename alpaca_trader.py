@@ -738,6 +738,9 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None, order_typ
         for pos in positions:
             position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
 
+        # Determine if we're in extended hours
+        in_market_hours = is_market_hours()
+
         # For limit orders, use slippage above signal price for better fill rate
         # For market orders, execute immediately at market price
         if order_type == "LMT":
@@ -748,7 +751,7 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None, order_typ
                 action="BUY",
                 order_type="LMT",
                 price=limit_price,
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
         else:  # Market order
             order = alpaca_api.place_order(
@@ -756,7 +759,7 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None, order_typ
                 qty=qty,
                 action="BUY",
                 order_type="MKT",
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
 
         # Check if order was successfully created
@@ -856,6 +859,9 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
         for pos in positions:
             position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
 
+        # Determine if we're in extended hours
+        in_market_hours = is_market_hours()
+
         # For limit orders, use 0.3% below signal price for better fill rate
         # For market orders (e.g., stop loss), execute immediately at market price
         if order_type == "LMT":
@@ -866,7 +872,7 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
                 action="SELL",
                 order_type="LMT",
                 price=limit_price,
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
         else:  # Market order
             order = alpaca_api.place_order(
@@ -874,7 +880,7 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
                 qty=qty,
                 action="SELL",
                 order_type="MKT",
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
 
         message = f"""✅ SELL ORDER PLACED
