@@ -1358,13 +1358,28 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 eastern = pytz.timezone('America/New_York')
                 current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+                # Format signal timestamp to EST if it has timezone info
+                if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                    signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                else:
+                    signal_time_str = str(timestamp)
+
+                # Get order price (limit price if limit order, or signal price if market order)
+                order_price = order.get('limit_price', price) if order else price
+                slippage_info = ""
+                if order_type == "LMT" and order_price != price:
+                    slippage_pct = ((order_price - price) / price) * 100
+                    slippage_info = f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+                elif order_type == "MKT":
+                    slippage_info = f"\nOrder Type: Market Order (executed at best available price)"
+
                 email_subject = f"🟢 ENTRY SIGNAL - {ticker}"
                 email_body = f"""Entry Signal Executed
 
 Ticker: {ticker}
 Action: BUY {quantity} shares
-Price: ${price:.2f}
-Signal Time: {timestamp}
+Signal Price: ${price:.2f}{slippage_info}
+Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
@@ -1450,6 +1465,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 eastern = pytz.timezone('America/New_York')
                 current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+                # Format signal timestamp to EST if it has timezone info
+                if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                    signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                else:
+                    signal_time_str = str(timestamp)
+
+                # Get order price (limit price with 0.3% slippage for limit orders)
+                order_price = order.get('limit_price', price) if order else price
+                slippage_info = ""
+                if order_price != price:
+                    slippage_pct = ((price - order_price) / price) * 100
+                    slippage_info = f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+
                 # Choose emoji based on P&L
                 if has_pnl:
                     if pnl_dollars >= 0:
@@ -1467,8 +1495,8 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
 Ticker: {ticker}
 Action: SELL {sell_qty} shares
-Price: ${price:.2f}
-Signal Time: {timestamp}
+Signal Price: ${price:.2f}{slippage_info}
+Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
@@ -1607,6 +1635,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     eastern = pytz.timezone('America/New_York')
                     current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+                    # Format signal timestamp to EST if it has timezone info
+                    if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                        signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                    else:
+                        signal_time_str = str(timestamp)
+
+                    # Get order price (limit price with 0.3% slippage for limit orders)
+                    order_price = order.get('limit_price', price) if order else price
+                    slippage_info = ""
+                    if order_price != price:
+                        slippage_pct = ((price - order_price) / price) * 100
+                        slippage_info = f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+
                     # Choose emoji based on P&L
                     if has_pnl:
                         if pnl_dollars >= 0:
@@ -1624,8 +1665,8 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
 Ticker: {ticker}
 Action: SELL ALL ({available_qty} shares)
-Price: ${price:.2f}
-Signal Time: {timestamp}
+Signal Price: ${price:.2f}{slippage_info}
+Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
