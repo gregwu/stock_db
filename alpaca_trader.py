@@ -778,6 +778,11 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None, order_typ
                 extended_hours=True
             )
 
+        # Check if order was successfully created
+        if not order:
+            logging.error(f"Order placement returned None - likely API error or invalid parameters")
+            return None
+
         message = f"""✅ BUY ORDER PLACED
 
 ═══════════════════════════════════════
