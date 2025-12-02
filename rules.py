@@ -1309,7 +1309,7 @@ with st.sidebar:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("▶️ Start", use_container_width=True, disabled=is_running):
+        if st.button("▶️ Start", use_container_width=True, disabled=is_running, key="bot_start"):
             success, msg = start_bot()
             if success:
                 st.success(msg)
@@ -1318,7 +1318,7 @@ with st.sidebar:
                 st.error(msg)
 
     with col2:
-        if st.button("⏹️ Stop", use_container_width=True, disabled=not is_running):
+        if st.button("⏹️ Stop", use_container_width=True, disabled=not is_running, key="bot_stop"):
             success, msg = stop_bot()
             if success:
                 st.success(msg)
@@ -1327,7 +1327,7 @@ with st.sidebar:
                 st.error(msg)
 
     with col3:
-        if st.button("🔄 Restart", use_container_width=True):
+        if st.button("🔄 Restart", use_container_width=True, key="bot_restart"):
             with st.spinner("Restarting bot..."):
                 success, msg = restart_bot()
                 if success:
@@ -1424,7 +1424,7 @@ with st.sidebar:
                 st.warning(f"⚠️ {new_ticker} already exists in configuration")
                 ticker = new_ticker
             else:
-                if st.button("✅ Create Ticker", use_container_width=True):
+                if st.button("✅ Create Ticker", use_container_width=True, key=f"create_ticker_{new_ticker}"):
                     # Create new ticker in alpaca.json with default configuration
                     config = load_alpaca_config()
                     if config and 'signal_actions' in config and 'tickers' in config['signal_actions']:
