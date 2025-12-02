@@ -10,6 +10,7 @@ import subprocess
 import signal
 import time
 from scipy.signal import argrelextrema
+from trading_config import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
 
 # ---------- Settings persistence ----------
 
@@ -419,12 +420,11 @@ def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
         if not price:
             return False, f"Failed to get current price for {ticker}"
 
-        # Determine order type
-        from alpaca_trader import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
+        # Determine order type and whether we're in extended hours
+        in_market_hours = is_market_hours()
 
         if order_type == "AUTO":
             # Auto-select based on market hours
-            in_market_hours = is_market_hours()
             if in_market_hours:
                 order_type = "MKT"
             else:
@@ -438,13 +438,12 @@ def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
                 qty=quantity,
                 action="BUY",
                 order_type="MKT",
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
             order_type_desc = "MARKET"
         else:  # LMT
             if limit_price is None:
                 # Default limit price with slippage
-                from alpaca_trader import LIMIT_ORDER_SLIPPAGE_PCT
                 limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
 
             order = api.place_order(
@@ -453,14 +452,18 @@ def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
                 action="BUY",
                 order_type="LMT",
                 price=limit_price,
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
             order_type_desc = f"LIMIT @ ${limit_price:.2f}"
 
         if order and 'order_id' in order:
             return True, f"✅ BUY order placed: {quantity} shares of {ticker} ({order_type_desc})\nOrder ID: {order['order_id']}"
+        elif order and 'error' in order:
+            # API returned an error
+            return False, f"❌ API Error: {order['error_type']}: {order['error']}\nAttempted: {order_type} order for {quantity} shares of {ticker}"
         else:
-            return False, "Order placement failed - no order ID returned"
+            # Unexpected response
+            return False, f"Order placement failed - unexpected response. Check logs for details.\nAttempted: {order_type} order for {quantity} shares of {ticker}"
 
     except Exception as e:
         return False, f"Failed to place buy order: {e}"
@@ -496,12 +499,11 @@ def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
         if not price:
             return False, f"Failed to get current price for {ticker}"
 
-        # Determine order type
-        from alpaca_trader import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
+        # Determine order type and whether we're in extended hours
+        in_market_hours = is_market_hours()
 
         if order_type == "AUTO":
             # Auto-select based on market hours
-            in_market_hours = is_market_hours()
             if in_market_hours:
                 order_type = "MKT"
             else:
@@ -515,13 +517,12 @@ def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
                 qty=quantity,
                 action="SELL",
                 order_type="MKT",
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
             order_type_desc = "MARKET"
         else:  # LMT
             if limit_price is None:
                 # Default limit price with slippage
-                from alpaca_trader import LIMIT_ORDER_SLIPPAGE_PCT
                 limit_price = round(price * (1 - LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
 
             order = api.place_order(
@@ -530,14 +531,18 @@ def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
                 action="SELL",
                 order_type="LMT",
                 price=limit_price,
-                extended_hours=True
+                extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
             order_type_desc = f"LIMIT @ ${limit_price:.2f}"
 
         if order and 'order_id' in order:
             return True, f"✅ SELL order placed: {quantity} shares of {ticker} ({order_type_desc})\nOrder ID: {order['order_id']}"
+        elif order and 'error' in order:
+            # API returned an error
+            return False, f"❌ API Error: {order['error_type']}: {order['error']}\nAttempted: {order_type} order for {quantity} shares of {ticker}"
         else:
-            return False, "Order placement failed - no order ID returned"
+            # Unexpected response
+            return False, f"Order placement failed - unexpected response. Check logs for details.\nAttempted: {order_type} order for {quantity} shares of {ticker}"
 
     except Exception as e:
         return False, f"Failed to place sell order: {e}"
@@ -1309,7 +1314,7 @@ with st.sidebar:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("▶️ Start", use_container_width=True, disabled=is_running, key="bot_start"):
+        if st.button("▶️ Start", use_container_width=True, disabled=is_running, key=f"bot_start_{is_running}"):
             success, msg = start_bot()
             if success:
                 st.success(msg)
@@ -1318,7 +1323,7 @@ with st.sidebar:
                 st.error(msg)
 
     with col2:
-        if st.button("⏹️ Stop", use_container_width=True, disabled=not is_running, key="bot_stop"):
+        if st.button("⏹️ Stop", use_container_width=True, disabled=not is_running, key=f"bot_stop_{is_running}"):
             success, msg = stop_bot()
             if success:
                 st.success(msg)
@@ -1327,7 +1332,7 @@ with st.sidebar:
                 st.error(msg)
 
     with col3:
-        if st.button("🔄 Restart", use_container_width=True, key="bot_restart"):
+        if st.button("🔄 Restart", use_container_width=True, key=f"bot_restart_{pid}"):
             with st.spinner("Restarting bot..."):
                 success, msg = restart_bot()
                 if success:

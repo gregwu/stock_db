@@ -20,6 +20,9 @@ import pytz
 # Import Alpaca
 from alpaca_wrapper import AlpacaAPI
 
+# Import shared trading configuration
+from trading_config import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
+
 # Import functions from rules.py
 from rules import (
     rsi, ema, bollinger_bands, macd, backtest_symbol, load_strategy_from_alpaca
@@ -49,7 +52,7 @@ STOP_LOSS_PCT = 0.02
 TAKE_PROFIT_PCT = 0.03
 MAX_BUY_SLIPPAGE_PCT = 0.5  # Skip buy if price rose > 0.5%
 MAX_SELL_SLIPPAGE_PCT = 1.0  # Skip sell if price dropped > 1.0%
-LIMIT_ORDER_SLIPPAGE_PCT = 2.0  # Slippage for limit orders in extended hours
+# LIMIT_ORDER_SLIPPAGE_PCT is now imported from trading_config
 AVOID_EXTENDED_HOURS = False  # Whether to avoid trading in extended hours
 EMAIL_NOTIFICATIONS_ENABLED = True
 EMAIL_ON_BOT_START = True
@@ -68,29 +71,7 @@ alpaca_api = None
 
 # Signal actions configuration (loaded at startup)
 signal_actions_config = None
-
-
-def is_market_hours():
-    """
-    Check if current time is during regular market hours (9:30 AM - 4:00 PM ET)
-    Returns True if in regular hours, False if in extended hours
-    """
-    try:
-        eastern = pytz.timezone('America/New_York')
-        now = datetime.now(eastern)
-
-        # Check if it's a weekday
-        if now.weekday() >= 5:  # Saturday=5, Sunday=6
-            return False
-
-        # Regular market hours: 9:30 AM - 4:00 PM ET
-        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
-
-        return market_open <= now < market_close
-    except Exception as e:
-        logging.warning(f"Could not determine market hours: {e}. Defaulting to extended hours behavior.")
-        return False
+# is_market_hours() is now imported from trading_config
 
 
 def load_config():

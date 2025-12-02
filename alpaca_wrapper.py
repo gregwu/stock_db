@@ -105,8 +105,10 @@ class AlpacaAPI:
             price: Limit price (required for limit orders)
             extended_hours: Enable extended hours trading (default: True)
         """
+        import logging
         try:
             print(f"[+] Placing {action} order for {qty} {ticker}")
+            logging.info(f"[AlpacaWrapper] Placing {action} order for {qty} {ticker}, order_type={order_type}, extended_hours={extended_hours}")
 
             # Determine order side
             side = OrderSide.BUY if action.upper() == "BUY" else OrderSide.SELL
@@ -120,6 +122,7 @@ class AlpacaAPI:
                     time_in_force=TimeInForce.DAY,
                     extended_hours=extended_hours
                 )
+                logging.info(f"[AlpacaWrapper] Created MarketOrderRequest: symbol={ticker}, qty={qty}, side={side}")
             else:  # Limit order
                 if price is None:
                     raise ValueError("Price must be specified for limit orders")
@@ -131,9 +134,12 @@ class AlpacaAPI:
                     limit_price=price,
                     extended_hours=extended_hours
                 )
+                logging.info(f"[AlpacaWrapper] Created LimitOrderRequest: symbol={ticker}, qty={qty}, side={side}, price={price}")
 
             # Submit order
+            logging.info(f"[AlpacaWrapper] Submitting order to Alpaca API...")
             order = self.trading_client.submit_order(order_data)
+            logging.info(f"[AlpacaWrapper] Order submitted successfully")
 
             print(f"[+] Order placed successfully")
             print(f"[+] Order ID: {order.id}")
@@ -151,8 +157,16 @@ class AlpacaAPI:
             }
 
         except Exception as e:
-            print(f"[!] Failed to place order: {e}")
-            return None
+            import logging
+            import traceback
+            error_msg = f"Failed to place order for {ticker}: {type(e).__name__}: {e}"
+            error_details = traceback.format_exc()
+            print(f"[!] {error_msg}")
+            print(f"[!] Full error details:\n{error_details}")
+            logging.error(error_msg)
+            logging.error(f"[AlpacaWrapper] Full traceback:\n{error_details}")
+            # Return error info instead of None so it can be displayed in UI
+            return {'error': str(e), 'error_type': type(e).__name__}
 
     def cancel(self, order_id):
         """Cancel an order"""
