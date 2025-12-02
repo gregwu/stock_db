@@ -1179,15 +1179,34 @@ def execute_action(action_config, price, note, timestamp, state):
                         eastern = pytz.timezone('America/New_York')
                         current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+                        # Format signal timestamp to EST if it has timezone info
+                        if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                            signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                        else:
+                            signal_time_str = str(timestamp)
+
+                        # Calculate what the order price would have been
+                        if in_market_hours:
+                            order_type = "MKT"
+                            order_price_info = "Market Order (best available price)"
+                        else:
+                            order_type = "LMT"
+                            limit_price = round(signal_price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                            slippage_pct = ((limit_price - signal_price) / signal_price) * 100
+                            order_price_info = f"${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+
                         email_subject = f"⚠️ BUY SKIPPED - {ticker} (Price Too High)"
                         email_body = f"""Buy Order Skipped - Price Moved Too Much
 
 Ticker: {ticker}
 Action: BUY {quantity} shares (SKIPPED)
+Order Type: {order_type}
 Signal Price: ${signal_price:.2f}
+Order Price: {order_price_info}
 Current Price: ${current_price:.2f}
 Price Difference: {price_diff_pct:+.2f}%
-Time: {current_time}
+Signal Time: {signal_time_str}
+Current Time: {current_time}
 
 Details: {note}
 
@@ -1240,16 +1259,35 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                                 eastern = pytz.timezone('America/New_York')
                                 current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+                                # Format signal timestamp to EST if it has timezone info
+                                if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                                    signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                                else:
+                                    signal_time_str = str(timestamp)
+
+                                # Calculate what the order price would have been
+                                if in_market_hours:
+                                    order_type = "MKT"
+                                    order_price_info = "Market Order (best available price)"
+                                else:
+                                    order_type = "LMT"
+                                    limit_price = round(current_price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                                    slippage_pct = ((limit_price - current_price) / current_price) * 100
+                                    order_price_info = f"${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+
                                 email_subject = f"⚠️ BUY SKIPPED - {ticker} (Price Not Low Enough)"
                                 email_body = f"""Buy Order Skipped - Price Has Not Dropped Enough From Last Exit
 
 Ticker: {ticker}
 Action: BUY {quantity} shares (SKIPPED)
+Order Type: {order_type}
+Signal Price: ${current_price:.2f}
+Order Price: {order_price_info}
 Last Exit Price: ${last_exit_price:.2f}
-Current Price: ${current_price:.2f}
 Price Drop: {price_drop_pct:.2f}%
 Required Drop: {price_drop_threshold}%
-Time: {current_time}
+Signal Time: {signal_time_str}
+Current Time: {current_time}
 
 Details: {note}
 
@@ -1285,13 +1323,27 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 eastern = pytz.timezone('America/New_York')
                 current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+                # Format signal timestamp to EST if it has timezone info
+                if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                    signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                else:
+                    signal_time_str = str(timestamp)
+
+                # Would have used limit order during extended hours
+                order_type = "LMT"
+                limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                slippage_pct = ((limit_price - price) / price) * 100
+
                 email_subject = f"⚠️ BUY SKIPPED - {ticker} (Extended Hours)"
                 email_body = f"""Buy Order Skipped - Extended Hours Trading Disabled
 
 Ticker: {ticker}
 Action: BUY {quantity} shares (SKIPPED)
-Price: ${price:.2f}
-Time: {current_time}
+Order Type: {order_type}
+Signal Price: ${price:.2f}
+Order Price: ${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)
+Signal Time: {signal_time_str}
+Current Time: {current_time}
 
 Details: {note}
 
