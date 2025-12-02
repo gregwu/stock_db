@@ -191,6 +191,8 @@ def save_settings_to_alpaca(settings, ticker):
             'use_price_vs_ema9_exit': settings.get('use_price_below_ema9', False),  # Map UI field to alpaca.json field
             'use_price_vs_ema21_exit': settings.get('use_price_below_ema21', False),  # Map UI field to alpaca.json field
             'use_macd_peak': settings.get('use_macd_peak', False),
+            'use_macd_above_threshold': settings.get('use_macd_above_threshold', False),
+            'macd_above_threshold': settings.get('macd_above_threshold', 0.0),
             'use_min_profit_exit': settings.get('use_min_profit_exit', False),
             'min_profit_pct': settings.get('min_profit_pct', 1.0)
         }
@@ -1227,6 +1229,8 @@ if 'settings' not in st.session_state:
             'use_price_vs_ema9_exit': exit_cond.get('use_price_vs_ema9_exit', False),
             'use_price_vs_ema21_exit': exit_cond.get('use_price_vs_ema21_exit', False),
             'use_macd_peak': exit_cond.get('use_macd_peak', False),
+            'use_macd_above_threshold': exit_cond.get('use_macd_above_threshold', False),
+            'macd_above_threshold': exit_cond.get('macd_above_threshold', 0.0),
             'use_min_profit_exit': exit_cond.get('use_min_profit_exit', False),
             'min_profit_pct': exit_cond.get('min_profit_pct', 1.0),
             # Risk management from alpaca.json
@@ -1235,10 +1239,6 @@ if 'settings' not in st.session_state:
             'use_take_profit': risk.get('use_take_profit', False),
             'take_profit_pct': risk.get('take_profit', 0.03) * 100,  # Convert to percentage
             # UI settings
-            'use_macd_below_threshold': False,
-            'macd_below_threshold': 0.0,
-            'use_macd_above_threshold': False,
-            'macd_above_threshold': 0.0,
             'show_signals': True,
             'show_reports': True
         }
@@ -1531,6 +1531,8 @@ with st.sidebar:
         st.session_state.settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
         st.session_state.settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
         st.session_state.settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+        st.session_state.settings['use_macd_above_threshold'] = exit_cond.get('use_macd_above_threshold', False)
+        st.session_state.settings['macd_above_threshold'] = exit_cond.get('macd_above_threshold', 0.0)
         st.session_state.settings['use_min_profit_exit'] = exit_cond.get('use_min_profit_exit', False)
         st.session_state.settings['min_profit_pct'] = exit_cond.get('min_profit_pct', 1.0)
 
@@ -2076,6 +2078,7 @@ if settings_have_changed(st.session_state.settings, st.session_state.get('loaded
     if save_settings_to_alpaca(st.session_state.settings, ticker):
         # Update loaded_settings snapshot after successful save
         st.session_state.loaded_settings = st.session_state.settings.copy()
+        st.success(f"✅ Settings saved to alpaca.json for {ticker}", icon="💾")
 
 # ---- Auto-run backtest and display chart ----
 with st.spinner(f"Downloading {ticker} data..."):
