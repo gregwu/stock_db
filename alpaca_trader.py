@@ -1397,14 +1397,18 @@ Time Difference: {time_diff:.1f} minutes
 
 Details: {note}
 
-Reason: Signal is {time_diff:.1f} minutes old (maximum allowed: 3 minutes).
+Reason: Signal is {time_diff:.1f} minutes old (maximum allowed: {MAX_SIGNAL_AGE_MINUTES} minutes).
 Stale signals are skipped to avoid executing on outdated market conditions.
+
+Signal has been cleared and will not retry.
 
 ---
 Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
                         send_email_alert(email_subject, email_body)
-                    return False
+                    # Return True to mark signal as processed (prevents retry)
+                    # Retrying won't help since signal is already too old
+                    return True
                 else:
                     logging.info(f"      ✅ Signal freshness check passed: {time_diff:.1f} minutes old (max 3 minutes)")
             except Exception as e:
