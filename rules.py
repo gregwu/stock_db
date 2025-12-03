@@ -9,8 +9,15 @@ import os
 import subprocess
 import signal
 import time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
 from scipy.signal import argrelextrema
 from trading_config import is_market_hours
+
+# Load environment variables
+load_dotenv()
 
 # ---------- Settings persistence ----------
 
@@ -404,6 +411,33 @@ def get_current_price(ticker):
         st.error(f"Failed to get price for {ticker}: {e}")
         return None
 
+def send_manual_order_email(subject, message):
+    """
+    Send email notification for manual orders
+    """
+    try:
+        gmail_address = os.getenv('GMAIL_ADDRESS')
+        gmail_app_password = os.getenv('GMAIL_APP_PASSWORD')
+
+        if not gmail_address or not gmail_app_password:
+            return False
+
+        msg = MIMEMultipart()
+        msg['From'] = gmail_address
+        msg['To'] = gmail_address
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(message, 'plain'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(gmail_address, gmail_app_password)
+            server.send_message(msg)
+
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
+
 def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
     """
     Place a manual buy order
@@ -462,6 +496,23 @@ def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
             order_type_desc = f"LIMIT @ ${limit_price:.2f}"
 
         if order and 'order_id' in order:
+            # Send email notification
+            subject = f"📊 MANUAL BUY ORDER - {ticker}"
+            email_message = f"""Manual Buy Order Placed
+
+Ticker: {ticker}
+Quantity: {quantity} shares
+Current Market Price: ${price:.2f}
+Order Type: {order_type_desc}
+Order ID: {order['order_id']}
+Status: {order.get('status', 'Submitted')}
+
+Timestamp: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+This order was placed manually through the Streamlit UI.
+"""
+            send_manual_order_email(subject, email_message)
+
             return True, f"✅ BUY order placed: {quantity} shares of {ticker} ({order_type_desc})\nOrder ID: {order['order_id']}"
         elif order and 'error' in order:
             # API returned an error
@@ -542,6 +593,31 @@ def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
             order_type_desc = f"LIMIT @ ${limit_price:.2f}"
 
         if order and 'order_id' in order:
+            # Calculate P&L if position exists
+            pnl_info = ""
+            if position:
+                avg_entry = float(position['avg_entry_price'])
+                pnl = (price - avg_entry) * quantity
+                pnl_pct = ((price - avg_entry) / avg_entry) * 100
+                pnl_info = f"\nEntry Price: ${avg_entry:.2f}\nP&L: ${pnl:.2f} ({pnl_pct:+.2f}%)"
+
+            # Send email notification
+            subject = f"📊 MANUAL SELL ORDER - {ticker}"
+            email_message = f"""Manual Sell Order Placed
+
+Ticker: {ticker}
+Quantity: {quantity} shares
+Current Market Price: ${price:.2f}{pnl_info}
+Order Type: {order_type_desc}
+Order ID: {order['order_id']}
+Status: {order.get('status', 'Submitted')}
+
+Timestamp: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+This order was placed manually through the Streamlit UI.
+"""
+            send_manual_order_email(subject, email_message)
+
             return True, f"✅ SELL order placed: {quantity} shares of {ticker} ({order_type_desc})\nOrder ID: {order['order_id']}"
         elif order and 'error' in order:
             # API returned an error

@@ -283,6 +283,42 @@ class AlpacaAPI:
             print(f"[!] Failed to get order {order_id}: {e}")
             return None
 
+    def get_recent_filled_orders(self, limit=100):
+        """Get recent filled orders"""
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+
+            request = GetOrdersRequest(
+                status=QueryOrderStatus.CLOSED,
+                limit=limit
+            )
+            orders = self.trading_client.get_orders(filter=request)
+
+            result = []
+            for order in orders:
+                if str(order.status) == 'OrderStatus.FILLED':
+                    result.append({
+                        'order_id': order.id,
+                        'symbol': order.symbol,
+                        'qty': float(order.qty),
+                        'filled_qty': float(order.filled_qty) if order.filled_qty else 0,
+                        'filled_avg_price': float(order.filled_avg_price) if order.filled_avg_price else None,
+                        'side': str(order.side).replace('OrderSide.', ''),
+                        'type': str(order.type),
+                        'status': str(order.status),
+                        'created_at': order.created_at,
+                        'updated_at': order.updated_at,
+                        'filled_at': order.filled_at,
+                        'limit_price': float(order.limit_price) if order.limit_price else None
+                    })
+
+            return result
+
+        except Exception as e:
+            print(f"[!] Failed to get recent filled orders: {e}")
+            return []
+
 
 if __name__ == "__main__":
     # Test the API
