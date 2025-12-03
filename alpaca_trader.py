@@ -579,10 +579,6 @@ Period: {settings.get('period', '1d')}"""
                     entry_conditions_list.append("MACD Valley (turning up)")
                 if entry_cond.get('use_volume'):
                     entry_conditions_list.append("Volume Rising")
-                if entry_cond.get('use_price_drop_from_exit'):
-                    drop_pct = entry_cond.get('price_drop_from_exit_pct', 2.0)
-                    reset_minutes = entry_cond.get('price_drop_reset_minutes', 30)
-                    entry_conditions_list.append(f"Price must drop {drop_pct}% from last exit (resets after {reset_minutes} min)")
 
                 if entry_conditions_list:
                     for cond in entry_conditions_list:
@@ -617,8 +613,6 @@ Period: {settings.get('period', '1d')}"""
                     exit_conditions_list.append("Price < EMA21")
                 if exit_cond.get('use_macd_peak'):
                     exit_conditions_list.append("MACD Peak (turning down)")
-                if exit_cond.get('use_min_profit_exit'):
-                    exit_conditions_list.append(f"Only exit when profit > {exit_cond.get('min_profit_pct', 1.0)}%")
 
                 if exit_conditions_list:
                     for cond in exit_conditions_list:
@@ -1235,89 +1229,6 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     return True
         except Exception as e:
             logging.warning(f"      Could not verify current price: {e}. Proceeding with order.")
-
-        # Check if current price is at least X% below last exit price
-        # Load strategy config to get the threshold
-        try:
-            strategy = load_strategy_from_alpaca(ticker)
-            if strategy:
-                entry_cond = strategy.get('entry_conditions', {})
-                use_price_drop = entry_cond.get('use_price_drop_from_exit', False)
-                price_drop_threshold = entry_cond.get('price_drop_from_exit_pct', 2.0)
-
-                if use_price_drop:
-                    # Check if we have a last exit price for this ticker
-                    if 'last_exit_prices' in state and ticker in state['last_exit_prices']:
-                        last_exit_price = state['last_exit_prices'][ticker]
-                        current_price = price  # Use signal price as current
-
-                        # Calculate how much price has dropped from last exit
-                        price_drop_pct = ((last_exit_price - current_price) / last_exit_price) * 100
-
-                        logging.info(f"      Last exit price: ${last_exit_price:.2f}")
-                        logging.info(f"      Current price: ${current_price:.2f}")
-                        logging.info(f"      Price drop from exit: {price_drop_pct:.2f}%")
-
-                        # Skip buy if price hasn't dropped enough from last exit
-                        if price_drop_pct < price_drop_threshold:
-                            logging.warning(f"      ⚠️  SKIPPING BUY - Price only dropped {price_drop_pct:.2f}% from last exit (need {price_drop_threshold}%)")
-
-                            # Send email notification
-                            if EMAIL_ON_ENTRY:
-                                eastern = pytz.timezone('America/New_York')
-                                current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
-
-                                # Format signal timestamp to EST if it has timezone info
-                                if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
-                                    signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
-                                else:
-                                    signal_time_str = str(timestamp)
-
-                                # Calculate what the order price would have been
-                                if in_market_hours:
-                                    order_type = "MKT"
-                                    order_price_info = "Market Order (best available price)"
-                                else:
-                                    order_type = "LMT"
-                                    limit_price = round(current_price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
-                                    slippage_pct = ((limit_price - current_price) / current_price) * 100
-                                    order_price_info = f"${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
-
-                                email_subject = f"⚠️ BUY SKIPPED - {ticker} (Price Not Low Enough)"
-                                email_body = f"""Buy Order Skipped - Price Has Not Dropped Enough From Last Exit
-
-Ticker: {ticker}
-Action: BUY {quantity} shares (SKIPPED)
-Order Type: {order_type}
-Signal Price: ${current_price:.2f}
-Order Price: {order_price_info}
-Last Exit Price: ${last_exit_price:.2f}
-Price Drop: {price_drop_pct:.2f}%
-Required Drop: {price_drop_threshold}%
-Signal Time: {signal_time_str}
-Current Time: {current_time}
-
-Details: {note}
-
-Reason: Current price is only {price_drop_pct:.2f}% below the last exit price.
-Strategy requires at least {price_drop_threshold}% drop before re-entering.
-
-This prevents buying back at a similar or higher price after exiting.
-
-Order was NOT placed.
-
----
-Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
-"""
-                                send_email_alert(email_subject, email_body)
-
-                            return False
-                        else:
-                            logging.info(f"      ✅ Price drop check passed: {price_drop_pct:.2f}% >= {price_drop_threshold}%")
-                    else:
-                        logging.info(f"      No previous exit price found for {ticker}, skipping price drop check")
-        except Exception as e:
-            logging.warning(f"      Could not check price drop from exit: {e}. Proceeding with order.")
 
         # Determine order type based on market hours
         # Use market orders during regular hours for faster execution
@@ -2294,12 +2205,7 @@ def run_strategy():
                 use_macd_above_threshold=ticker_settings.get('use_macd_threshold', False),
                 macd_above_threshold=ticker_settings.get('macd_threshold', 0),
                 use_macd_peak=ticker_settings.get('use_macd_peak', False),
-                use_macd_valley=ticker_settings.get('use_macd_valley', False),
-                use_price_drop_from_exit=ticker_settings.get('use_price_drop_from_exit', False),
-                price_drop_from_exit_pct=ticker_settings.get('price_drop_from_exit_pct', 2.0),
-                price_drop_reset_minutes=ticker_settings.get('price_drop_reset_minutes', 30),
-                use_min_profit_exit=ticker_settings.get('use_min_profit_exit', False),
-                min_profit_pct=ticker_settings.get('min_profit_pct', 1.0)
+                use_macd_valley=ticker_settings.get('use_macd_valley', False)
             )
 
             # Get current price from DataFrame

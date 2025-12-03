@@ -148,8 +148,7 @@ def settings_have_changed(current_settings, loaded_settings):
         'use_macd_cross_down', 'use_price_below_ema9',
         'use_price_below_ema21', 'use_macd_peak',
         'stop_loss_pct', 'take_profit_pct', 'use_stop_loss', 'use_take_profit',
-        'use_volume', 'use_price_drop_from_exit', 'price_drop_from_exit_pct', 'price_drop_reset_minutes',
-        'use_min_profit_exit', 'min_profit_pct',
+        'use_volume',
         'use_macd_below_threshold', 'macd_below_threshold',
         'use_macd_above_threshold', 'macd_above_threshold'
     ]
@@ -182,10 +181,7 @@ def save_settings_to_alpaca(settings, ticker):
             'macd_threshold': settings.get('macd_below_threshold', 0.1),
             'use_macd_valley': settings.get('use_macd_valley', False),
             'use_ema': settings.get('use_ema', False),  # Also keep this for backward compatibility
-            'use_volume': settings.get('use_volume', False),
-            'use_price_drop_from_exit': settings.get('use_price_drop_from_exit', False),
-            'price_drop_from_exit_pct': settings.get('price_drop_from_exit_pct', 2.0),
-            'price_drop_reset_minutes': settings.get('price_drop_reset_minutes', 30)
+            'use_volume': settings.get('use_volume', False)
         }
 
         exit_conditions = {
@@ -200,9 +196,7 @@ def save_settings_to_alpaca(settings, ticker):
             'use_price_vs_ema21_exit': settings.get('use_price_below_ema21', False),  # Map UI field to alpaca.json field
             'use_macd_peak': settings.get('use_macd_peak', False),
             'use_macd_above_threshold': settings.get('use_macd_above_threshold', False),
-            'macd_above_threshold': settings.get('macd_above_threshold', 0.0),
-            'use_min_profit_exit': settings.get('use_min_profit_exit', False),
-            'min_profit_pct': settings.get('min_profit_pct', 1.0)
+            'macd_above_threshold': settings.get('macd_above_threshold', 0.0)
         }
 
         risk_management = {
@@ -792,11 +786,6 @@ def backtest_symbol(df1,
                     macd_above_threshold=0.0,
                     use_macd_peak=False,
                     use_macd_valley=False,
-                    use_price_drop_from_exit=False,
-                    price_drop_from_exit_pct=2.0,
-                    price_drop_reset_minutes=30,
-                    use_min_profit_exit=False,
-                    min_profit_pct=1.0,
                     avoid_extended_hours=False):
     """
     Apply Greg's rules to a single symbol.
@@ -994,13 +983,6 @@ def backtest_symbol(df1,
 
             # Check if all enabled exit conditions are met
             if exit_conditions and all(exit_conditions):
-                # Check if minimum profit requirement is met (if enabled)
-                if use_min_profit_exit:
-                    current_profit_pct = ((close - position["entry_price"]) / position["entry_price"]) * 100
-                    if current_profit_pct < min_profit_pct:
-                        # Skip exit - profit threshold not met
-                        continue
-
                 exit_price = close
 
                 # Build exit note based on which conditions were checked
@@ -1041,20 +1023,6 @@ def backtest_symbol(df1,
 
         # ---- If no position, look for setup / entry ----
         if position is None:
-            # Check if price has dropped enough from last exit (prevent rapid re-entry at same/higher price)
-            if use_price_drop_from_exit and last_exit_price is not None:
-                # Check if timeout has elapsed - if so, reset the price drop requirement
-                time_since_exit = None
-                if last_exit_time is not None:
-                    time_since_exit = (t - last_exit_time).total_seconds() / 60  # Convert to minutes
-
-                # Only enforce price drop if timeout hasn't elapsed
-                if time_since_exit is None or time_since_exit < price_drop_reset_minutes:
-                    price_drop_pct = ((last_exit_price - close) / last_exit_price) * 100
-                    if price_drop_pct < price_drop_from_exit_pct:
-                        # Skip entry - price hasn't dropped enough from last exit
-                        continue
-
             # 1) Oversold alert: 1m RSI < threshold (if enabled)
             if use_rsi and rsi_last < rsi_threshold:
                 if not setup_active:
@@ -1221,9 +1189,6 @@ if 'settings' not in st.session_state:
             'use_macd_below_threshold': entry.get('use_macd_threshold', False),
             'macd_below_threshold': entry.get('macd_threshold', 0.1),
             'use_macd_valley': entry.get('use_macd_valley', False),
-            'use_price_drop_from_exit': entry.get('use_price_drop_from_exit', False),
-            'price_drop_from_exit_pct': entry.get('price_drop_from_exit_pct', 2.0),
-            'price_drop_reset_minutes': entry.get('price_drop_reset_minutes', 30),
             # Exit conditions from alpaca.json
             'use_rsi_exit': exit_cond.get('use_rsi_exit', False),
             'rsi_exit_threshold': exit_cond.get('rsi_exit_threshold', 70),
@@ -1241,8 +1206,6 @@ if 'settings' not in st.session_state:
             'use_macd_peak': exit_cond.get('use_macd_peak', False),
             'use_macd_above_threshold': exit_cond.get('use_macd_above_threshold', False),
             'macd_above_threshold': exit_cond.get('macd_above_threshold', 0.0),
-            'use_min_profit_exit': exit_cond.get('use_min_profit_exit', False),
-            'min_profit_pct': exit_cond.get('min_profit_pct', 1.0),
             # Risk management from alpaca.json
             'use_stop_loss': risk.get('use_stop_loss', True),
             'stop_loss_pct': risk.get('stop_loss', 0.02) * 100,  # Convert to percentage
@@ -1284,13 +1247,8 @@ if 'settings' not in st.session_state:
             'macd_above_threshold': 0.0,
             'use_macd_valley': False,
             'use_macd_peak': False,
-            'use_min_profit_exit': False,
-            'min_profit_pct': 1.0,
             'show_signals': True,
-            'show_reports': True,
-            'use_price_drop_from_exit': False,
-            'price_drop_from_exit_pct': 2.0,
-            'price_drop_reset_minutes': 30
+            'show_reports': True
         }
 
 with st.sidebar:
@@ -1522,9 +1480,6 @@ with st.sidebar:
         st.session_state.settings['use_macd_below_threshold'] = entry.get('use_macd_threshold', False)
         st.session_state.settings['macd_below_threshold'] = entry.get('macd_threshold', 0.1)
         st.session_state.settings['use_macd_valley'] = entry.get('use_macd_valley', False)
-        st.session_state.settings['use_price_drop_from_exit'] = entry.get('use_price_drop_from_exit', False)
-        st.session_state.settings['price_drop_from_exit_pct'] = entry.get('price_drop_from_exit_pct', 2.0)
-        st.session_state.settings['price_drop_reset_minutes'] = entry.get('price_drop_reset_minutes', 30)
 
         # Exit conditions from alpaca.json
         st.session_state.settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
@@ -1543,8 +1498,6 @@ with st.sidebar:
         st.session_state.settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
         st.session_state.settings['use_macd_above_threshold'] = exit_cond.get('use_macd_above_threshold', False)
         st.session_state.settings['macd_above_threshold'] = exit_cond.get('macd_above_threshold', 0.0)
-        st.session_state.settings['use_min_profit_exit'] = exit_cond.get('use_min_profit_exit', False)
-        st.session_state.settings['min_profit_pct'] = exit_cond.get('min_profit_pct', 1.0)
 
         # Risk management from alpaca.json
         st.session_state.settings['use_stop_loss'] = risk.get('use_stop_loss', True)
@@ -1893,35 +1846,6 @@ with st.sidebar:
     st.session_state.settings['use_volume'] = use_volume
 
     # Price drop from exit requirement
-    if 'use_price_drop_from_exit' not in st.session_state.settings:
-        st.session_state.settings['use_price_drop_from_exit'] = False
-    if 'price_drop_from_exit_pct' not in st.session_state.settings:
-        st.session_state.settings['price_drop_from_exit_pct'] = 2.0
-
-    use_price_drop_from_exit = st.checkbox("Require price drop from last exit",
-                                            value=st.session_state.settings['use_price_drop_from_exit'],
-                                            help="Only re-enter if price has dropped by specified % from last exit price")
-    st.session_state.settings['use_price_drop_from_exit'] = use_price_drop_from_exit
-
-    price_drop_from_exit_pct = st.number_input("Required price drop from exit (%)",
-                                                min_value=0.0, max_value=20.0,
-                                                value=st.session_state.settings['price_drop_from_exit_pct'],
-                                                step=0.01,
-                                                disabled=not use_price_drop_from_exit,
-                                                help="Minimum % price must drop from last exit before re-entering (prevents buying back at similar price)")
-    st.session_state.settings['price_drop_from_exit_pct'] = price_drop_from_exit_pct
-
-    if 'price_drop_reset_minutes' not in st.session_state.settings:
-        st.session_state.settings['price_drop_reset_minutes'] = 30
-
-    price_drop_reset_minutes = st.number_input("Reset price drop requirement after (minutes)",
-                                                min_value=1, max_value=240,
-                                                value=st.session_state.settings['price_drop_reset_minutes'],
-                                                step=1,
-                                                disabled=not use_price_drop_from_exit,
-                                                help="After this many minutes from exit, ignore price drop requirement and allow re-entry (0 = never reset)")
-    st.session_state.settings['price_drop_reset_minutes'] = price_drop_reset_minutes
-
     # Exit Rules
     st.markdown("**Exit Rules (all must be met):**")
     use_stop_loss = st.checkbox("Exit on Stop Loss", value=st.session_state.settings['use_stop_loss'],
@@ -2036,25 +1960,6 @@ with st.sidebar:
                                  value=st.session_state.settings['use_macd_peak'],
                                  help="Exit when MACD peak is detected (MACD turning down)")
     st.session_state.settings['use_macd_peak'] = use_macd_peak
-
-    # Handle backwards compatibility for use_min_profit_exit
-    if 'use_min_profit_exit' not in st.session_state.settings:
-        st.session_state.settings['use_min_profit_exit'] = False
-    if 'min_profit_pct' not in st.session_state.settings:
-        st.session_state.settings['min_profit_pct'] = 1.0
-
-    use_min_profit_exit = st.checkbox("Only exit when profit > threshold",
-                                       value=st.session_state.settings['use_min_profit_exit'],
-                                       help="Require minimum profit before allowing exit (prevents exiting at small gains)")
-    st.session_state.settings['use_min_profit_exit'] = use_min_profit_exit
-
-    min_profit_pct = st.number_input("Minimum profit for exit (%)",
-                                      min_value=0.1, max_value=10.0,
-                                      value=st.session_state.settings['min_profit_pct'],
-                                      step=0.1,
-                                      disabled=not use_min_profit_exit,
-                                      help="Only exit if current profit is at least this % (does not apply to stop loss/take profit)")
-    st.session_state.settings['min_profit_pct'] = min_profit_pct
 
     st.divider()
 
@@ -2197,11 +2102,6 @@ with st.spinner(f"Downloading {ticker} data..."):
             macd_above_threshold=macd_above_threshold,
             use_macd_peak=use_macd_peak,
             use_macd_valley=use_macd_valley,
-            use_price_drop_from_exit=use_price_drop_from_exit,
-            price_drop_from_exit_pct=price_drop_from_exit_pct,
-            price_drop_reset_minutes=price_drop_reset_minutes,
-            use_min_profit_exit=use_min_profit_exit,
-            min_profit_pct=min_profit_pct,
             avoid_extended_hours=avoid_extended_hours_setting
         )
 
@@ -2306,24 +2206,6 @@ with st.spinner(f"Downloading {ticker} data..."):
                 for idx, row in completed_trades.iterrows():
                     # Start with entry reason and buy price only
                     tooltip = f"{row['entry_reason']}<br>Buy: ${row['entry_price']:.2f}"
-
-                    # Find the most recent exit that occurred BEFORE this entry
-                    if use_price_drop_from_exit:
-                        # Get all trades with exit times before this entry time
-                        prev_trades = completed_trades[completed_trades['exit_time'] < row['entry_time']]
-                        if not prev_trades.empty:
-                            # Get the most recent one (max exit_time)
-                            most_recent_prev = prev_trades.loc[prev_trades['exit_time'].idxmax()]
-                            prev_exit_price = most_recent_prev['exit_price']
-                            prev_exit_time = most_recent_prev['exit_time']
-
-                            price_diff_pct = ((prev_exit_price - row['entry_price']) / prev_exit_price) * 100
-                            # Ensure timezone is properly displayed (convert to ET if needed)
-                            prev_exit_display = prev_exit_time
-                            if hasattr(prev_exit_display, 'tz_convert'):
-                                prev_exit_display = prev_exit_display.tz_convert('America/New_York')
-                            prev_exit_time_str = prev_exit_display.strftime('%Y-%m-%d %H:%M %Z')
-                            tooltip += f"<br>Prev exit: {prev_exit_time_str}<br>Drop from prev exit: {price_diff_pct:.2f}%"
 
                     entry_tooltips.append(tooltip)
 
@@ -2585,35 +2467,6 @@ with st.spinner(f"Downloading {ticker} data..."):
             else:
                 # Filter for rows that have exit_reason (completed trades) for display
                 display_trades = trades_df[trades_df["exit_reason"].notna()].copy()
-
-                # Enhance entry_reason with previous exit information if price drop feature is enabled
-                if use_price_drop_from_exit:
-                    enhanced_entry_reasons = []
-                    for idx, row in display_trades.iterrows():
-                        entry_reason = row['entry_reason']
-
-                        # Find the most recent exit that occurred BEFORE this entry
-                        prev_trades = display_trades[display_trades['exit_time'] < row['entry_time']]
-                        if not prev_trades.empty:
-                            # Get the most recent one (max exit_time)
-                            most_recent_prev = prev_trades.loc[prev_trades['exit_time'].idxmax()]
-                            prev_exit_price = most_recent_prev['exit_price']
-                            prev_exit_time = most_recent_prev['exit_time']
-
-                            price_diff_pct = ((prev_exit_price - row['entry_price']) / prev_exit_price) * 100
-
-                            # Format the previous exit time
-                            prev_exit_display = prev_exit_time
-                            if hasattr(prev_exit_display, 'tz_convert'):
-                                prev_exit_display = prev_exit_display.tz_convert('America/New_York')
-                            prev_exit_time_str = prev_exit_display.strftime('%Y-%m-%d %H:%M')
-
-                            # Append previous exit info to entry reason
-                            entry_reason = f"{entry_reason} | Prev exit: {prev_exit_time_str} | Drop: {price_diff_pct:.2f}%"
-
-                        enhanced_entry_reasons.append(entry_reason)
-
-                    display_trades['entry_reason'] = enhanced_entry_reasons
 
                 st.dataframe(display_trades)
                 total = len(display_trades)
