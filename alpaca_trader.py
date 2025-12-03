@@ -835,7 +835,7 @@ Account: {'PAPER' if USE_PAPER else 'LIVE'}
         return None
 
 
-def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_type="LMT"):
+def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_type="AUTO"):
     """
     Place a sell order
 
@@ -845,9 +845,20 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
         price: Signal price
         reason: Reason for selling
         entry_conditions: Previous entry conditions (optional)
-        order_type: "LMT" for limit order (default), "MKT" for market order
+        order_type: "AUTO" (default - MKT during market hours, LMT during extended hours),
+                    "LMT" for limit order, "MKT" for market order
     """
     try:
+        # Determine if we're in extended hours
+        in_market_hours = is_market_hours()
+
+        # Auto-select order type based on market hours
+        if order_type == "AUTO":
+            if in_market_hours:
+                order_type = "MKT"  # Market order during regular hours
+            else:
+                order_type = "LMT"  # Limit order during extended hours
+
         logging.info(f"Placing SELL order: {qty} {ticker} @ ${price:.2f} ({order_type})")
 
         # Get account info
@@ -861,9 +872,6 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
         position_summary = []
         for pos in positions:
             position_summary.append(f"  {pos['symbol']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (P&L: ${pos['unrealized_pl']:.2f})")
-
-        # Determine if we're in extended hours
-        in_market_hours = is_market_hours()
 
         # For limit orders, use 0.3% below signal price for better fill rate
         # For market orders (e.g., stop loss), execute immediately at market price
