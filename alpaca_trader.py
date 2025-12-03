@@ -1381,11 +1381,27 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
                 time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
 
-                if time_diff > 3:
-                    logging.warning(f"      ⚠️  SKIPPING BUY - Signal is too old ({time_diff:.1f} minutes old, max 3 minutes)")
-                    if EMAIL_ON_ENTRY:
-                        current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
-                        signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+                if time_diff > MAX_SIGNAL_AGE_MINUTES:
+                    # Check current price - if it's lower than signal price, proceed anyway (good deal!)
+                    skip_stale_signal = True
+                    try:
+                        quote = alpaca_api.quote(ticker)
+                        if quote and 'last' in quote:
+                            current_price = quote['last']
+                            if current_price < price:
+                                # Price dropped - this is good for buying!
+                                price_drop_pct = ((price - current_price) / price) * 100
+                                logging.info(f"      ✅ Signal is stale BUT current price ${current_price:.2f} is {price_drop_pct:.2f}% lower than signal price ${price:.2f}")
+                                logging.info(f"      ✅ Proceeding with BUY - price moved in our favor!")
+                                skip_stale_signal = False
+                    except Exception as e:
+                        logging.warning(f"      Could not check current price for stale signal: {e}")
+
+                    if skip_stale_signal:
+                        logging.warning(f"      ⚠️  SKIPPING BUY - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
+                        if EMAIL_ON_ENTRY:
+                            current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
+                            signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
 
                         # Determine what order type would have been used
                         if in_market_hours:
@@ -1493,6 +1509,16 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
                 # Get order price and format price information
                 price_info = f"Signal Price: ${price:.2f}"
+
+                # Get current price to show in email
+                try:
+                    quote = alpaca_api.quote(ticker)
+                    if quote and 'last' in quote:
+                        current_market_price = quote['last']
+                        price_info += f"\nCurrent Price: ${current_market_price:.2f}"
+                except:
+                    pass
+
                 if order_type == "LMT":
                     # For limit orders, calculate the actual order price with slippage
                     if order and order.get('limit_price'):
@@ -1504,7 +1530,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
                 else:
                     # Market order
-                    price_info += f"\nOrder Price: Market Order (best available price)"
+                    price_info += f"\nOrder Price: Market Order (executed at best available price)"
 
                 email_subject = f"🟢 ENTRY SIGNAL - {ticker}"
                 email_body = f"""Entry Signal Executed
@@ -1541,6 +1567,72 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         logging.info(f"      Executing: SELL {quantity} shares of {ticker}")
         if description:
             logging.info(f"      Reason: {description}")
+
+        # Check if signal is too old (more than configured minutes)
+        if timestamp:
+            try:
+                eastern = pytz.timezone('America/New_York')
+                now_et = datetime.now(eastern)
+
+                # Convert timestamp to datetime if needed
+                if hasattr(timestamp, 'tz_localize'):
+                    signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
+                elif hasattr(timestamp, 'tz_convert'):
+                    signal_time = timestamp.tz_convert('America/New_York')
+                else:
+                    signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
+
+                time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
+
+                if time_diff > MAX_SIGNAL_AGE_MINUTES:
+                    # Check current price - if it's higher than signal price, proceed anyway (better price!)
+                    skip_stale_signal = True
+                    try:
+                        quote = alpaca_api.quote(ticker)
+                        if quote and 'last' in quote:
+                            current_price = quote['last']
+                            if current_price > price:
+                                # Price increased - this is good for selling!
+                                price_increase_pct = ((current_price - price) / price) * 100
+                                logging.info(f"      ✅ Signal is stale BUT current price ${current_price:.2f} is {price_increase_pct:.2f}% higher than signal price ${price:.2f}")
+                                logging.info(f"      ✅ Proceeding with SELL - price moved in our favor!")
+                                skip_stale_signal = False
+                    except Exception as e:
+                        logging.warning(f"      Could not check current price for stale signal: {e}")
+
+                    if skip_stale_signal:
+                        logging.warning(f"      ⚠️  SKIPPING SELL - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
+                        if EMAIL_ON_EXIT:
+                            current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
+                            signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                            email_subject = f"⚠️ SELL SKIPPED - {ticker} (Stale Signal)"
+                            email_body = f"""Sell Order Skipped - Signal Too Old
+
+Ticker: {ticker}
+Action: SELL {quantity} shares (SKIPPED)
+Signal Price: ${price:.2f}
+Signal Time: {signal_time_str}
+Current Time: {current_time}
+Time Difference: {time_diff:.1f} minutes
+
+Details: {note}
+
+Reason: Signal is {time_diff:.1f} minutes old (maximum allowed: {MAX_SIGNAL_AGE_MINUTES} minutes).
+Stale signals are skipped to avoid executing on outdated market conditions.
+
+Signal has been cleared and will not retry.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                            send_email_alert(email_subject, email_body)
+                        # Return True to mark signal as processed (prevents retry)
+                        return True
+                else:
+                    logging.info(f"      ✅ Signal freshness check passed: {time_diff:.1f} minutes old (max {MAX_SIGNAL_AGE_MINUTES} minutes)")
+            except Exception as e:
+                logging.warning(f"      Could not check signal age: {e}. Proceeding with order.")
 
         # Check if we have this position
         positions = alpaca_api.get_positions() if alpaca_api else []
@@ -1608,11 +1700,20 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 # Get order price and format price information
                 price_info = f"Signal Price: ${price:.2f}"
 
+                # Get current price to show in email
+                try:
+                    quote = alpaca_api.quote(ticker)
+                    if quote and 'last' in quote:
+                        current_market_price = quote['last']
+                        price_info += f"\nCurrent Price: ${current_market_price:.2f}"
+                except:
+                    pass
+
                 # Determine order type used (check what was passed to place_sell_order)
                 # Default is LMT unless it was a stop loss (MKT)
                 if note and 'stop loss' in note.lower():
                     sell_order_type = "MKT"
-                    price_info += f"\nOrder Price: Market Order (best available price)"
+                    price_info += f"\nOrder Price: Market Order (executed at best available price)"
                 else:
                     sell_order_type = "LMT"
                     # For limit orders, calculate the actual order price (0.3% below signal price)
@@ -1790,17 +1891,34 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
                     # Get order price and format price information
                     price_info = f"Signal Price: ${price:.2f}"
-                    sell_order_type = "LMT"  # Default for SELL_ALL orders
 
-                    # For limit orders, calculate the actual order price (0.3% below signal price)
-                    if order and order.get('limit_price'):
-                        order_price = float(order['limit_price'])
+                    # Get current price to show in email
+                    try:
+                        quote = alpaca_api.quote(ticker)
+                        if quote and 'last' in quote:
+                            current_market_price = quote['last']
+                            price_info += f"\nCurrent Price: ${current_market_price:.2f}"
+                    except:
+                        pass
+
+                    # Determine actual order type used (check if it's AUTO/MKT/LMT)
+                    if order and order.get('type'):
+                        sell_order_type = order['type']
                     else:
-                        # Calculate from the 0.3% slippage used in place_sell_order
-                        order_price = round(price * 0.997, 2)
+                        sell_order_type = "AUTO"  # Default for SELL_ALL orders
 
-                    slippage_pct = ((price - order_price) / price) * 100
-                    price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+                    if sell_order_type == "MKT":
+                        price_info += f"\nOrder Price: Market Order (executed at best available price)"
+                    else:
+                        # For limit orders, calculate the actual order price (0.3% below signal price)
+                        if order and order.get('limit_price'):
+                            order_price = float(order['limit_price'])
+                        else:
+                            # Calculate from the 0.3% slippage used in place_sell_order
+                            order_price = round(price * 0.997, 2)
+
+                        slippage_pct = ((price - order_price) / price) * 100
+                        price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
 
                     # Choose emoji based on P&L
                     if has_pnl:
