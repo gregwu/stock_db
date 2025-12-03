@@ -21,7 +21,7 @@ import pytz
 from alpaca_wrapper import AlpacaAPI
 
 # Import shared trading configuration
-from trading_config import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
+from trading_config import is_market_hours
 
 # Import functions from rules.py
 from rules import (
@@ -52,7 +52,7 @@ STOP_LOSS_PCT = 0.02
 TAKE_PROFIT_PCT = 0.03
 MAX_BUY_SLIPPAGE_PCT = 0.5  # Skip buy if price rose > 0.5%
 MAX_SELL_SLIPPAGE_PCT = 1.0  # Skip sell if price dropped > 1.0%
-# LIMIT_ORDER_SLIPPAGE_PCT is now imported from trading_config
+LIMIT_ORDER_SLIPPAGE_PCT = 2.0  # Loaded from alpaca.json, default 2.0%
 AVOID_EXTENDED_HOURS = False  # Whether to avoid trading in extended hours
 EMAIL_NOTIFICATIONS_ENABLED = True
 EMAIL_ON_BOT_START = True
