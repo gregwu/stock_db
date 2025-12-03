@@ -409,12 +409,13 @@ def save_portfolio_state():
         return None
 
 
-def sell_all_positions(order_type="LMT"):
+def sell_all_positions(order_type="AUTO"):
     """
     Sell all current positions in portfolio
 
     Args:
-        order_type: "LMT" for limit order (default), "MKT" for market order
+        order_type: "AUTO" (default - MKT during market hours, LMT during extended hours),
+                    "LMT" for limit order, "MKT" for market order
     """
     try:
         # First check for any pending orders
