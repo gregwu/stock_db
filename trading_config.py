@@ -6,9 +6,6 @@ Used by both rules.py and alpaca_trader.py to avoid circular imports
 from datetime import datetime, time
 import pytz
 
-# Trading configuration constants
-LIMIT_ORDER_SLIPPAGE_PCT = 2.0  # Default slippage percentage for limit orders
-
 def is_market_hours():
     """
     Check if current time is within regular market hours (9:30 AM - 4:00 PM ET)

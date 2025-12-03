@@ -10,7 +10,7 @@ import subprocess
 import signal
 import time
 from scipy.signal import argrelextrema
-from trading_config import is_market_hours, LIMIT_ORDER_SLIPPAGE_PCT
+from trading_config import is_market_hours
 
 # ---------- Settings persistence ----------
 
@@ -27,6 +27,14 @@ def load_alpaca_config():
             st.error(f"Error loading {ALPACA_CONFIG_FILE}: {e}")
             return None
     return None
+
+def get_limit_order_slippage_pct():
+    """Get limit order slippage percentage from alpaca.json"""
+    config = load_alpaca_config()
+    if config:
+        trading = config.get('strategy', {}).get('trading', {})
+        return trading.get('limit_order_slippage_pct', 2.0)
+    return 2.0  # Default fallback
 
 def get_available_tickers():
     """Get list of tickers from alpaca.json"""
@@ -424,6 +432,7 @@ def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
 
         # Determine order type and whether we're in extended hours
         in_market_hours = is_market_hours()
+        limit_slippage_pct = get_limit_order_slippage_pct()
 
         if order_type == "AUTO":
             # Auto-select based on market hours
@@ -431,7 +440,7 @@ def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
                 order_type = "MKT"
             else:
                 order_type = "LMT"
-                limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                limit_price = round(price * (1 + limit_slippage_pct / 100), 2)
 
         # Place order
         if order_type == "MKT":
@@ -446,7 +455,7 @@ def place_manual_buy(ticker, quantity, order_type="AUTO", limit_price=None):
         else:  # LMT
             if limit_price is None:
                 # Default limit price with slippage
-                limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                limit_price = round(price * (1 + limit_slippage_pct / 100), 2)
 
             order = api.place_order(
                 ticker=ticker,
@@ -503,6 +512,7 @@ def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
 
         # Determine order type and whether we're in extended hours
         in_market_hours = is_market_hours()
+        limit_slippage_pct = get_limit_order_slippage_pct()
 
         if order_type == "AUTO":
             # Auto-select based on market hours
@@ -510,7 +520,7 @@ def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
                 order_type = "MKT"
             else:
                 order_type = "LMT"
-                limit_price = round(price * (1 - LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                limit_price = round(price * (1 - limit_slippage_pct / 100), 2)
 
         # Place order
         if order_type == "MKT":
@@ -525,7 +535,7 @@ def place_manual_sell(ticker, quantity, order_type="AUTO", limit_price=None):
         else:  # LMT
             if limit_price is None:
                 # Default limit price with slippage
-                limit_price = round(price * (1 - LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                limit_price = round(price * (1 - limit_slippage_pct / 100), 2)
 
             order = api.place_order(
                 ticker=ticker,
