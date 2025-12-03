@@ -54,6 +54,7 @@ MAX_BUY_SLIPPAGE_PCT = 0.5  # Skip buy if price rose > 0.5%
 MAX_SELL_SLIPPAGE_PCT = 1.0  # Skip sell if price dropped > 1.0%
 LIMIT_ORDER_SLIPPAGE_PCT = 2.0  # Loaded from alpaca.json, default 2.0%
 AVOID_EXTENDED_HOURS = False  # Whether to avoid trading in extended hours
+MAX_SIGNAL_AGE_MINUTES = 3  # Skip orders if signal is older than this (minutes)
 EMAIL_NOTIFICATIONS_ENABLED = True
 EMAIL_ON_BOT_START = True
 EMAIL_ON_BOT_STOP = True
@@ -255,7 +256,7 @@ def load_trading_config():
     """
     global USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT
     global MAX_BUY_SLIPPAGE_PCT, MAX_SELL_SLIPPAGE_PCT
-    global LIMIT_ORDER_SLIPPAGE_PCT, AVOID_EXTENDED_HOURS
+    global LIMIT_ORDER_SLIPPAGE_PCT, AVOID_EXTENDED_HOURS, MAX_SIGNAL_AGE_MINUTES
     global EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP
     global EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
 
@@ -273,6 +274,7 @@ def load_trading_config():
         MAX_SELL_SLIPPAGE_PCT = trading.get('max_sell_slippage_pct', 1.0)
         LIMIT_ORDER_SLIPPAGE_PCT = trading.get('limit_order_slippage_pct', 2.0)
         AVOID_EXTENDED_HOURS = trading.get('avoid_extended_hours', False)
+        MAX_SIGNAL_AGE_MINUTES = trading.get('max_signal_age_minutes', 3)
 
         # Risk management (from strategy.risk_management)
         risk_mgmt = strategy.get('risk_management', {})
@@ -293,6 +295,7 @@ def load_trading_config():
         logging.info(f"   Max sell slippage: {MAX_SELL_SLIPPAGE_PCT}%")
         logging.info(f"   Limit order slippage: {LIMIT_ORDER_SLIPPAGE_PCT}%")
         logging.info(f"   Avoid extended hours: {AVOID_EXTENDED_HOURS}")
+        logging.info(f"   Max signal age: {MAX_SIGNAL_AGE_MINUTES} minutes")
 
     except Exception as e:
         logging.warning(f"⚠️  Failed to load trading config from alpaca.json: {e}")
@@ -1347,6 +1350,65 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
                 send_email_alert(email_subject, email_body)
             return False
+
+        # Check if signal is too old (more than 3 minutes)
+        if timestamp:
+            try:
+                eastern = pytz.timezone('America/New_York')
+                now_et = datetime.now(eastern)
+
+                # Convert timestamp to datetime if needed
+                if hasattr(timestamp, 'tz_localize'):
+                    signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
+                elif hasattr(timestamp, 'tz_convert'):
+                    signal_time = timestamp.tz_convert('America/New_York')
+                else:
+                    # Try to parse string timestamp
+                    signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
+
+                time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
+
+                if time_diff > 3:
+                    logging.warning(f"      ⚠️  SKIPPING BUY - Signal is too old ({time_diff:.1f} minutes old, max 3 minutes)")
+                    if EMAIL_ON_ENTRY:
+                        current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
+                        signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                        # Determine what order type would have been used
+                        if in_market_hours:
+                            order_type = "MKT"
+                            price_info = f"Signal Price: ${price:.2f}\nOrder Price: Market Order (best available price)"
+                        else:
+                            order_type = "LMT"
+                            limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
+                            slippage_pct = ((limit_price - price) / price) * 100
+                            price_info = f"Signal Price: ${price:.2f}\nOrder Price: ${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
+
+                        email_subject = f"⚠️ BUY SKIPPED - {ticker} (Stale Signal)"
+                        email_body = f"""Buy Order Skipped - Signal Too Old
+
+Ticker: {ticker}
+Action: BUY {quantity} shares (SKIPPED)
+Order Type: {order_type}
+{price_info}
+Signal Time: {signal_time_str}
+Current Time: {current_time}
+Time Difference: {time_diff:.1f} minutes
+
+Details: {note}
+
+Reason: Signal is {time_diff:.1f} minutes old (maximum allowed: 3 minutes).
+Stale signals are skipped to avoid executing on outdated market conditions.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                        send_email_alert(email_subject, email_body)
+                    return False
+                else:
+                    logging.info(f"      ✅ Signal freshness check passed: {time_diff:.1f} minutes old (max 3 minutes)")
+            except Exception as e:
+                logging.warning(f"      Could not check signal age: {e}. Proceeding with order.")
 
         if in_market_hours:
             order_type = "MKT"
