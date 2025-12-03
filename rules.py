@@ -2645,3 +2645,7 @@ with st.spinner(f"Downloading {ticker} data..."):
                     mime="text/csv"
                 )
 
+# Auto-refresh the page every 3 minutes (180 seconds)
+time.sleep(180)
+st.rerun()
+

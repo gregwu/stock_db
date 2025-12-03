@@ -2203,10 +2203,12 @@ def run_strategy():
                         note_with_ticker = f"[{ticker}] {note}"
 
                         # Process signal using configuration (pass ticker for ticker-specific actions)
-                        if process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker):
-                            # Update last check time for this ticker only if signal was processed
-                            state[ticker_check_key] = str(timestamp)
-                            save_state(state)
+                        process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker)
+
+                        # Always update last check time for this ticker to mark signal as seen
+                        # (even if it was skipped due to being stale or disabled)
+                        state[ticker_check_key] = str(timestamp)
+                        save_state(state)
                     else:
                         logging.info(f"Signal for {ticker} already processed")
                 else:
