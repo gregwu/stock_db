@@ -564,7 +564,7 @@ Period: {settings.get('period', '1d')}"""
                 if entry_cond.get('use_ema_cross_up'):
                     entry_conditions_list.append("EMA9 cross above EMA21")
                 if entry_cond.get('use_bb_cross_up'):
-                    entry_conditions_list.append("Price cross above BB Upper")
+                    entry_conditions_list.append("Price cross below BB Lower")
                 if entry_cond.get('use_bb_width'):
                     entry_conditions_list.append(f"BB Width > {entry_cond.get('bb_width_threshold', 0.4)}%")
                 if entry_cond.get('use_macd_cross_up'):
@@ -602,7 +602,7 @@ Period: {settings.get('period', '1d')}"""
                 if exit_cond.get('use_ema_cross_down'):
                     exit_conditions_list.append("EMA9 cross below EMA21")
                 if exit_cond.get('use_bb_cross_down'):
-                    exit_conditions_list.append("Price cross below BB Lower")
+                    exit_conditions_list.append("Price cross above BB Upper")
                 if exit_cond.get('use_bb_width_exit'):
                     exit_conditions_list.append(f"BB Width > {exit_cond.get('bb_width_exit_threshold', 0.4)}%")
                 if exit_cond.get('use_macd_cross_down'):
@@ -2291,7 +2291,7 @@ def display_settings(settings):
     if settings.get('use_ema_cross_up', False):
         logging.info(f"  - EMA9 cross above EMA21")
     if settings.get('use_bb_cross_up', False):
-        logging.info(f"  - Price cross above BB upper")
+        logging.info(f"  - Price cross below BB lower")
     if settings.get('use_macd_cross_up', False):
         logging.info(f"  - MACD cross above signal")
     if settings.get('use_price_vs_ema9', False):
@@ -2310,7 +2310,7 @@ def display_settings(settings):
     if settings.get('use_ema_cross_down', False):
         logging.info(f"  - EMA9 cross below EMA21")
     if settings.get('use_bb_cross_down', False):
-        logging.info(f"  - Price cross below BB lower")
+        logging.info(f"  - Price cross above BB upper")
     if settings.get('use_macd_cross_down', False):
         logging.info(f"  - MACD cross below signal")
     if settings.get('use_price_vs_ema9_exit', False):

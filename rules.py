@@ -901,12 +901,14 @@ def backtest_symbol(df1,
                           ema9_prev >= ema21_prev and ema9 < ema21)
 
         # Detect BB crossovers
-        bb_cross_up = (close_prev is not np.nan and bb_up_v is not np.nan and
+        # BB cross up: price crosses BELOW lower band (entry - oversold)
+        bb_cross_up = (close_prev is not np.nan and bb_low_v is not np.nan and
                        close is not np.nan and
-                       close_prev <= bb_up_v and close > bb_up_v)
-        bb_cross_down = (close_prev is not np.nan and bb_low_v is not np.nan and
+                       close_prev >= bb_low_v and close < bb_low_v)
+        # BB cross down: price crosses ABOVE upper band (exit - overbought)
+        bb_cross_down = (close_prev is not np.nan and bb_up_v is not np.nan and
                          close is not np.nan and
-                         close_prev >= bb_low_v and close < bb_low_v)
+                         close_prev <= bb_up_v and close > bb_up_v)
 
         # Detect MACD crossovers
         macd_cross_up = (macd_prev is not np.nan and macd_signal_prev is not np.nan and
@@ -994,7 +996,7 @@ def backtest_symbol(df1,
                 if use_price_below_ema9:
                     exit_note_parts.append(f"Price < EMA9 (Close={close:.2f}, EMA9={ema9:.2f})")
                 if use_bb_cross_down:
-                    exit_note_parts.append(f"Price crossed below BB lower (Close={close:.2f}, BB Low={bb_low_v:.2f})")
+                    exit_note_parts.append(f"Price crossed above BB upper (Close={close:.2f}, BB Upper={bb_up_v:.2f})")
                 if use_bb_width_exit:
                     exit_note_parts.append(f"BB width > {bb_width_exit_threshold}% (Width={bb_width_val:.2f}%)")
                 if use_macd_cross_down:
@@ -1089,7 +1091,7 @@ def backtest_symbol(df1,
                     if use_ema_cross_up:
                         note_parts.append(f"EMA9 crossed above EMA21 (EMA9={ema9:.2f}, EMA21={ema21:.2f})")
                     if use_bb_cross_up:
-                        note_parts.append(f"Price crossed above BB upper (Close={close:.2f}, BB Upper={bb_up_v:.2f})")
+                        note_parts.append(f"Price crossed below BB lower (Close={close:.2f}, BB Lower={bb_low_v:.2f})")
                     if use_bb_width:
                         note_parts.append(f"BB width > {bb_width_threshold}% (Width={bb_width_val:.2f}%)")
                     if use_macd_cross_up:
@@ -1769,9 +1771,9 @@ with st.sidebar:
                                     help="Entry when EMA9 crosses above EMA21 (bullish)")
     st.session_state.settings['use_ema_cross_up'] = use_ema_cross_up
 
-    use_bb_cross_up = st.checkbox("Price crosses above BB Upper",
+    use_bb_cross_up = st.checkbox("Price crosses below BB Lower",
                                    value=st.session_state.settings['use_bb_cross_up'],
-                                   help="Entry when price crosses above Bollinger Band upper line")
+                                   help="Entry when price crosses below Bollinger Band lower line (oversold)")
     st.session_state.settings['use_bb_cross_up'] = use_bb_cross_up
 
     # Handle backwards compatibility for use_bb_width
@@ -1901,9 +1903,9 @@ with st.sidebar:
                                          help="Exit when price falls below EMA21")
     st.session_state.settings['use_price_below_ema21'] = use_price_below_ema21
 
-    use_bb_cross_down = st.checkbox("Exit on Price crosses below BB Lower",
+    use_bb_cross_down = st.checkbox("Exit on Price crosses above BB Upper",
                                      value=st.session_state.settings['use_bb_cross_down'],
-                                     help="Exit when price crosses below Bollinger Band lower line")
+                                     help="Exit when price crosses above Bollinger Band upper line (overbought)")
     st.session_state.settings['use_bb_cross_down'] = use_bb_cross_down
 
     # Handle backwards compatibility for use_bb_width_exit
