@@ -21,11 +21,18 @@ class AlpacaAPI:
         Args:
             paper: If True, use paper trading account. If False, use live account.
         """
-        self.api_key = os.getenv('ALPACA_API_KEY')
-        self.secret_key = os.getenv('ALPACA_SECRET_KEY')
+        # Use different environment variables for paper vs live accounts
+        if paper:
+            self.api_key = os.getenv('ALPACA_API_KEY_PAPER')
+            self.secret_key = os.getenv('ALPACA_SECRET_KEY_PAPER')
+            key_type = "ALPACA_API_KEY_PAPER and ALPACA_SECRET_KEY_PAPER"
+        else:
+            self.api_key = os.getenv('ALPACA_API_KEY')
+            self.secret_key = os.getenv('ALPACA_SECRET_KEY')
+            key_type = "ALPACA_API_KEY and ALPACA_SECRET_KEY"
 
         if not self.api_key or not self.secret_key:
-            raise ValueError("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in .env file")
+            raise ValueError(f"{key_type} must be set in .env file")
 
         # Initialize trading client
         self.trading_client = TradingClient(
