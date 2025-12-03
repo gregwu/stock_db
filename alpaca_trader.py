@@ -251,6 +251,27 @@ def load_signal_actions():
     return signal_actions
 
 
+def reload_config():
+    """
+    Reload configuration from alpaca.json
+    Called every check cycle to ensure latest settings are used
+    """
+    global signal_actions_config
+
+    try:
+        # Reload all configuration
+        load_trading_config()
+        settings = load_alpaca_settings()
+        signal_actions_config = load_signal_actions()
+
+        logging.info("🔄 Configuration reloaded from alpaca.json")
+        return True
+
+    except Exception as e:
+        logging.error(f"❌ Failed to reload configuration: {e}")
+        return False
+
+
 def load_trading_config():
     """
     Load trading configuration from alpaca.json and update global variables
@@ -2561,7 +2582,6 @@ def main():
     logging.info(f"Check interval: {check_interval} seconds ({check_interval/60:.1f} minutes)")
     logging.info("")
 
-
     # Run immediately on start
     run_strategy()
 
@@ -2569,6 +2589,10 @@ def main():
     try:
         while True:
             time.sleep(check_interval)
+
+            # Reload configuration before each run to pick up any changes
+            reload_config()
+
             run_strategy()
     except KeyboardInterrupt:
         # Handle Ctrl+C (already handled by signal handler, but kept for fallback)
