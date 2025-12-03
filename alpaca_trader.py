@@ -769,6 +769,25 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None, order_typ
             logging.error(f"Order placement returned None - likely API error or invalid parameters")
             return None
 
+        # Get current market price
+        current_market_price = None
+        try:
+            quote = alpaca_api.quote(ticker)
+            if quote and 'last' in quote:
+                current_market_price = quote['last']
+        except:
+            pass
+
+        # Build price info
+        price_details = f"Signal Price: ${price:.2f}"
+        if current_market_price:
+            price_details += f"\nCurrent Market Price: ${current_market_price:.2f}"
+
+        if order_type == "LMT":
+            price_details += f"\nOrder Price: ${limit_price:.2f} (limit with {limit_slippage_pct:.2f}% slippage)"
+        else:
+            price_details += f"\nOrder Price: Market (best available)"
+
         message = f"""✅ BUY ORDER PLACED
 
 ═══════════════════════════════════════
@@ -776,9 +795,10 @@ ORDER DETAILS
 ═══════════════════════════════════════
 Ticker: {ticker}
 Quantity: {qty} shares
-Price: ${price:.2f}
+{price_details}
 Order Value: ${price * qty:.2f}
 Order ID: {order['order_id'] if order else 'FAILED'}
+Order Type: {order_type}
 
 ═══════════════════════════════════════
 CONDITIONS
@@ -893,6 +913,25 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
                 extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
 
+        # Get current market price
+        current_market_price = None
+        try:
+            quote = alpaca_api.quote(ticker)
+            if quote and 'last' in quote:
+                current_market_price = quote['last']
+        except:
+            pass
+
+        # Build price info
+        price_details = f"Signal Price: ${price:.2f}"
+        if current_market_price:
+            price_details += f"\nCurrent Market Price: ${current_market_price:.2f}"
+
+        if order_type == "LMT":
+            price_details += f"\nOrder Price: ${limit_price:.2f} (limit 0.3% below signal)"
+        else:
+            price_details += f"\nOrder Price: Market (best available)"
+
         message = f"""✅ SELL ORDER PLACED
 
 ═══════════════════════════════════════
@@ -900,9 +939,10 @@ ORDER DETAILS
 ═══════════════════════════════════════
 Ticker: {ticker}
 Quantity: {qty} shares
-Price: ${price:.2f}
+{price_details}
 Order Value: ${price * qty:.2f}
 Order ID: {order['order_id'] if order else 'FAILED'}
+Order Type: {order_type}
 
 ═══════════════════════════════════════
 CONDITIONS
