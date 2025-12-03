@@ -16,6 +16,16 @@ echo "🆕 New Features:"
 echo "  • ✏️  Stragegy Rules"
 echo
 
+# Wait 3 seconds before launching
+echo "⏳ Waiting 3 seconds before launch..."
+sleep 3
+echo
+
 # Launch Streamlit app
 nohup "$PYTHON_EXE" -m streamlit run "$STREAMLIT_APP" --server.port 8505 --server.address localhost --server.baseUrlPath qqq &
+
+# Capture the PID
+STREAMLIT_PID=$!
+echo "✅ Streamlit launched with PID: $STREAMLIT_PID"
+echo
 
