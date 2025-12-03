@@ -11,7 +11,6 @@ PID=$(ps ax | grep rules.py | grep -v grep | awk '{print $1}')
 if [ -n "$PID" ]; then
     echo "Killing rules.py process (PID: $PID)..."
     kill $PID
-    sleep 4
 
     # Check if process is still running
     if ps -p $PID > /dev/null 2>&1; then
@@ -34,4 +33,5 @@ fi
 
 # Start rules.py
 echo "Starting rules.py..."
+sleep 5
 ./run_rules.sh
