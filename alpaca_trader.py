@@ -55,6 +55,7 @@ MAX_SELL_SLIPPAGE_PCT = 1.0  # Skip sell if price dropped > 1.0%
 LIMIT_ORDER_SLIPPAGE_PCT = 2.0  # Loaded from alpaca.json, default 2.0%
 AVOID_EXTENDED_HOURS = False  # Whether to avoid trading in extended hours
 MAX_SIGNAL_AGE_MINUTES = 3  # Skip orders if signal is older than this (minutes)
+MARKET_HOURS_ORDER_TYPE = "MKT"  # Order type during market hours: "MKT" or "LMT"
 EMAIL_NOTIFICATIONS_ENABLED = True
 EMAIL_ON_BOT_START = True
 EMAIL_ON_BOT_STOP = True
@@ -257,6 +258,7 @@ def load_trading_config():
     global USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT
     global MAX_BUY_SLIPPAGE_PCT, MAX_SELL_SLIPPAGE_PCT
     global LIMIT_ORDER_SLIPPAGE_PCT, AVOID_EXTENDED_HOURS, MAX_SIGNAL_AGE_MINUTES
+    global MARKET_HOURS_ORDER_TYPE
     global EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP
     global EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
 
@@ -275,6 +277,7 @@ def load_trading_config():
         LIMIT_ORDER_SLIPPAGE_PCT = trading.get('limit_order_slippage_pct', 2.0)
         AVOID_EXTENDED_HOURS = trading.get('avoid_extended_hours', False)
         MAX_SIGNAL_AGE_MINUTES = trading.get('max_signal_age_minutes', 3)
+        MARKET_HOURS_ORDER_TYPE = trading.get('market_hours_order_type', 'MKT')
 
         # Risk management (from strategy.risk_management)
         risk_mgmt = strategy.get('risk_management', {})
@@ -294,6 +297,7 @@ def load_trading_config():
         logging.info(f"   Max buy slippage: {MAX_BUY_SLIPPAGE_PCT}%")
         logging.info(f"   Max sell slippage: {MAX_SELL_SLIPPAGE_PCT}%")
         logging.info(f"   Limit order slippage: {LIMIT_ORDER_SLIPPAGE_PCT}%")
+        logging.info(f"   Market hours order type: {MARKET_HOURS_ORDER_TYPE}")
         logging.info(f"   Avoid extended hours: {AVOID_EXTENDED_HOURS}")
         logging.info(f"   Max signal age: {MAX_SIGNAL_AGE_MINUTES} minutes")
 
@@ -855,7 +859,7 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
         # Auto-select order type based on market hours
         if order_type == "AUTO":
             if in_market_hours:
-                order_type = "MKT"  # Market order during regular hours
+                order_type = MARKET_HOURS_ORDER_TYPE  # Use configured order type during regular hours
             else:
                 order_type = "LMT"  # Limit order during extended hours
 
@@ -1423,9 +1427,13 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 logging.warning(f"      Could not check signal age: {e}. Proceeding with order.")
 
         if in_market_hours:
-            order_type = "MKT"
-            logging.info(f"      Using MARKET order (regular trading hours)")
-            limit_slippage = 0.3  # Default for market orders (not used)
+            order_type = MARKET_HOURS_ORDER_TYPE  # Use configured order type during regular hours
+            if order_type == "MKT":
+                logging.info(f"      Using MARKET order (regular trading hours)")
+                limit_slippage = 0.3  # Default for market orders (not used)
+            else:
+                logging.info(f"      Using LIMIT order with {LIMIT_ORDER_SLIPPAGE_PCT}% slippage (regular trading hours)")
+                limit_slippage = LIMIT_ORDER_SLIPPAGE_PCT
         else:
             order_type = "LMT"
             limit_slippage = LIMIT_ORDER_SLIPPAGE_PCT  # Use configured slippage for extended hours
