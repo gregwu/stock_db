@@ -2271,29 +2271,44 @@ with st.spinner(f"Downloading {ticker} data..."):
                                  yaxis='y'))
 
         if show_signals and not trades_df.empty:
-            # Filter for rows that have exit_reason (completed trades), excluding EOD
-            completed_trades = trades_df[
+            # Show all entries (including last entry even if it only has EOD exit)
+            all_entries = trades_df[trades_df["entry_time"].notna()].copy()
+
+            # Show only non-EOD exits
+            real_exits = trades_df[
                 (trades_df["exit_reason"].notna()) &
                 (trades_df["exit_reason"] != "EOD")
             ].copy()
 
-            if not completed_trades.empty:
+            if not all_entries.empty:
                 # Position signals on RSI chart at fixed positions
                 # Entry signals at RSI level 20 (bottom)
                 # Exit signals at RSI level 80 (top)
 
-                # Build enhanced entry tooltips with buy price and price difference from last exit
+                # Build enhanced entry tooltips with buy price
                 entry_tooltips = []
-                for idx, row in completed_trades.iterrows():
+                for idx, row in all_entries.iterrows():
                     # Start with entry reason and buy price only
                     tooltip = f"{row['entry_reason']}<br>Buy: ${row['entry_price']:.2f}"
-
                     entry_tooltips.append(tooltip)
 
+                # Add entry signals to chart
+                fig.add_trace(go.Scatter(
+                    x=all_entries["entry_time"],
+                    y=[20] * len(all_entries),
+                    mode="markers",
+                    marker=dict(size=12, symbol="triangle-up", color='green'),
+                    name="Entries",
+                    text=entry_tooltips,
+                    hoverinfo='text',
+                    yaxis='y3'
+                ))
+
+            if not real_exits.empty:
                 # Build enhanced exit tooltips with sell price and return
                 exit_tooltips = []
                 exit_colors = []
-                for _, row in completed_trades.iterrows():
+                for _, row in real_exits.iterrows():
                     # Format both entry and exit times for verification
                     # Ensure timezone is properly displayed (convert to ET if needed)
                     entry_display = row['entry_time']
@@ -2309,19 +2324,10 @@ with st.spinner(f"Downloading {ticker} data..."):
                     # Use red for profit, black for loss
                     exit_colors.append('red' if row['return_pct'] >= 0 else 'black')
 
+                # Add exit signals to chart
                 fig.add_trace(go.Scatter(
-                    x=completed_trades["entry_time"],
-                    y=[20] * len(completed_trades),
-                    mode="markers",
-                    marker=dict(size=12, symbol="triangle-up", color='green'),
-                    name="Entries",
-                    text=entry_tooltips,
-                    hoverinfo='text',
-                    yaxis='y3'
-                ))
-                fig.add_trace(go.Scatter(
-                    x=completed_trades["exit_time"],
-                    y=[80] * len(completed_trades),
+                    x=real_exits["exit_time"],
+                    y=[80] * len(real_exits),
                     mode="markers",
                     marker=dict(size=12, symbol="triangle-down", color=exit_colors),
                     name="Exits",
@@ -2546,11 +2552,9 @@ with st.spinner(f"Downloading {ticker} data..."):
             if trades_df.empty:
                 st.write("No trades with current rules.")
             else:
-                # Filter for rows that have exit_reason (completed trades) for display, excluding EOD
-                display_trades = trades_df[
-                    (trades_df["exit_reason"].notna()) &
-                    (trades_df["exit_reason"] != "EOD")
-                ].copy()
+                # Filter for rows that have exit_reason (completed trades)
+                # Include all trades for statistics, but mark EOD separately
+                display_trades = trades_df[trades_df["exit_reason"].notna()].copy()
 
                 st.dataframe(display_trades)
                 total = len(display_trades)

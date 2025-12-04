@@ -212,6 +212,8 @@ def flatten_strategy(strategy):
     settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
     settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
     settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+    settings['use_macd_above_threshold'] = exit_cond.get('use_macd_above_threshold', False)
+    settings['macd_above_threshold'] = exit_cond.get('macd_above_threshold', 0.0)
 
     # Risk management
     risk = strategy.get('risk_management', {})
@@ -632,6 +634,8 @@ Period: {settings.get('period', '1d')}"""
                     exit_conditions_list.append("Price < EMA9")
                 if exit_cond.get('use_price_vs_ema21_exit'):
                     exit_conditions_list.append("Price < EMA21")
+                if exit_cond.get('use_macd_above_threshold'):
+                    exit_conditions_list.append(f"MACD > {exit_cond.get('macd_above_threshold', 0.0)}")
                 if exit_cond.get('use_macd_peak'):
                     exit_conditions_list.append("MACD Peak (turning down)")
 
@@ -2263,8 +2267,8 @@ def run_strategy():
                 use_price_below_ema21=ticker_settings.get('use_price_vs_ema21_exit', False),
                 use_macd_below_threshold=ticker_settings.get('use_macd_threshold', False),
                 macd_below_threshold=ticker_settings.get('macd_threshold', 0),
-                use_macd_above_threshold=ticker_settings.get('use_macd_threshold', False),
-                macd_above_threshold=ticker_settings.get('macd_threshold', 0),
+                use_macd_above_threshold=ticker_settings.get('use_macd_above_threshold', False),
+                macd_above_threshold=ticker_settings.get('macd_above_threshold', 0),
                 use_macd_peak=ticker_settings.get('use_macd_peak', False),
                 use_macd_valley=ticker_settings.get('use_macd_valley', False)
             )
@@ -2378,6 +2382,8 @@ def display_settings(settings):
         logging.info(f"  - Price < EMA9")
     if settings.get('use_price_vs_ema21_exit', False):
         logging.info(f"  - Price < EMA21")
+    if settings.get('use_macd_above_threshold', False):
+        logging.info(f"  - MACD > {settings.get('macd_above_threshold', 0.0)}")
     if settings.get('use_macd_peak', False):
         logging.info(f"  - MACD Peak (turning down)")
 
