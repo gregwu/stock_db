@@ -2070,6 +2070,13 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
     # Get actions list (new format) or single action (old format for backward compatibility)
     actions = config.get('actions', [])
 
+    # Inject default_quantity from ticker config if not specified in action
+    if ticker and ticker in ticker_configs:
+        default_qty = ticker_configs[ticker].get('default_quantity', POSITION_SIZE)
+        for action in actions:
+            if 'quantity' not in action:
+                action['quantity'] = default_qty
+
     # Backward compatibility: if old format (single action/ticker), convert to new format
     if not actions and config.get('action'):
         old_action = config.get('action')

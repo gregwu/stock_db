@@ -1677,6 +1677,12 @@ with st.sidebar:
 
     st.divider()
 
+    # Add manual reload button
+    if st.button("🔄 Reload Chart Data", help="Refresh chart with latest market data", use_container_width=True):
+        st.rerun()
+
+    st.divider()
+
     # Manual Trading Section (collapsible)
     with st.expander("📈 Manual Trading", expanded=False):
         # Get account info and current price
@@ -2621,8 +2627,4 @@ with st.spinner(f"Downloading {ticker} data..."):
                     file_name=f"{ticker}_rule_log.csv",
                     mime="text/csv"
                 )
-
-# Auto-refresh the page every 3 minutes (180 seconds)
-time.sleep(180)
-st.rerun()
 
