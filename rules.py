@@ -2271,8 +2271,11 @@ with st.spinner(f"Downloading {ticker} data..."):
                                  yaxis='y'))
 
         if show_signals and not trades_df.empty:
-            # Filter for rows that have exit_reason (completed trades)
-            completed_trades = trades_df[trades_df["exit_reason"].notna()].copy()
+            # Filter for rows that have exit_reason (completed trades), excluding EOD
+            completed_trades = trades_df[
+                (trades_df["exit_reason"].notna()) &
+                (trades_df["exit_reason"] != "EOD")
+            ].copy()
 
             if not completed_trades.empty:
                 # Position signals on RSI chart at fixed positions
@@ -2543,8 +2546,11 @@ with st.spinner(f"Downloading {ticker} data..."):
             if trades_df.empty:
                 st.write("No trades with current rules.")
             else:
-                # Filter for rows that have exit_reason (completed trades) for display
-                display_trades = trades_df[trades_df["exit_reason"].notna()].copy()
+                # Filter for rows that have exit_reason (completed trades) for display, excluding EOD
+                display_trades = trades_df[
+                    (trades_df["exit_reason"].notna()) &
+                    (trades_df["exit_reason"] != "EOD")
+                ].copy()
 
                 st.dataframe(display_trades)
                 total = len(display_trades)
