@@ -2142,6 +2142,42 @@ with st.spinner(f"Downloading {ticker} data..."):
             else:
                 raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
 
+        # Filter data based on selected period BEFORE backtesting
+        # This ensures backtest runs only on the selected timeframe
+        backtest_data = raw.copy()
+        if not backtest_data.empty:
+            last_time = backtest_data.index[-1]
+
+            if period == "1d":
+                if interval == "1d":
+                    # For daily interval, show 1 day
+                    cutoff_time = last_time - pd.Timedelta(days=1)
+                else:
+                    # For intraday, show only the last trading day (6.5 hours market + pre/post)
+                    # Get the date of the last timestamp
+                    last_date = last_time.date()
+                    # Set cutoff to start of that trading day (4:00 AM ET for pre-market)
+                    cutoff_time = pd.Timestamp(last_date).tz_localize('America/New_York') + pd.Timedelta(hours=4)
+            elif period == "5d":
+                cutoff_time = last_time - pd.Timedelta(days=5)
+            elif period == "2wk":
+                cutoff_time = last_time - pd.Timedelta(weeks=2)
+            elif period == "1mo":
+                cutoff_time = last_time - pd.Timedelta(days=30)
+            elif period == "2mo":
+                cutoff_time = last_time - pd.Timedelta(days=60)
+            elif period == "3mo":
+                cutoff_time = last_time - pd.Timedelta(days=90)
+            elif period == "6mo":
+                cutoff_time = last_time - pd.Timedelta(days=180)
+            elif period == "1y":
+                cutoff_time = last_time - pd.Timedelta(days=365)
+            else:
+                cutoff_time = backtest_data.index[0]  # Use all data if period not recognized
+
+            # Filter to backtest only on the selected period
+            backtest_data = backtest_data[backtest_data.index >= cutoff_time].copy()
+
         # Get avoid_extended_hours setting from trading settings
         avoid_extended_hours_setting = get_trading_settings().get('avoid_extended_hours', False)
 
@@ -2150,7 +2186,7 @@ with st.spinner(f"Downloading {ticker} data..."):
             st.info(f"ℹ️ Extended hours avoidance enabled - only entries during 9:30 AM - 4:00 PM ET will be allowed")
 
         df1, df5, trades_df, logs_df = backtest_symbol(
-            raw,
+            backtest_data,
             stop_loss=stop_loss_pct,
             tp_pct=take_profit_pct,
             use_rsi=use_rsi,
