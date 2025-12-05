@@ -22,7 +22,7 @@ sleep 3
 echo
 
 # Launch Streamlit app
-nohup "$PYTHON_EXE" -m streamlit run "$STREAMLIT_APP" --server.port 8505 --server.address localhost --server.baseUrlPath qqq &
+nohup "$PYTHON_EXE" -m streamlit run "$STREAMLIT_APP" --server.port 8505 --server.address localhost --server.baseUrlPath qqq --global.developmentMode=False &
 
 # Capture the PID
 STREAMLIT_PID=$!

@@ -43,6 +43,23 @@ def get_limit_order_slippage_pct():
         return trading.get('limit_order_slippage_pct', 2.0)
     return 2.0  # Default fallback
 
+def get_account_status():
+    """Get trading account status from alpaca.json configuration"""
+    config = load_alpaca_config()
+    if config:
+        use_paper = config.get('strategy', {}).get('trading', {}).get('use_paper', True)
+        return "PAPER TRADING" if use_paper else "⚠️  LIVE TRADING ⚠️"
+    return "⚠️  CONFIG ERROR"
+
+def show_account_status():
+    """Display account status in Streamlit"""
+    account_type = get_account_status()
+    
+    if "PAPER" in account_type:
+        st.success(f"🟢 {account_type}")
+    else:
+        st.error(f"🔴 {account_type} - REAL MONEY!")
+
 def get_available_tickers():
     """Get list of tickers from alpaca.json"""
     config = load_alpaca_config()
@@ -1330,6 +1347,10 @@ if 'settings' not in st.session_state:
         }
 
 with st.sidebar:
+    # Show account status at top of sidebar
+    show_account_status()
+    st.divider()
+    
     st.header("Settings")
 
     # Add custom CSS for extremely small button text
@@ -1533,11 +1554,24 @@ with st.sidebar:
     else:
         alpaca_strategy = None
 
-    if alpaca_strategy:
+    # Only update from alpaca.json on first load or explicit ticker change
+    should_load_from_alpaca = (
+        alpaca_strategy and 
+        (
+            'settings_initialized' not in st.session_state or
+            ticker != st.session_state.get('last_loaded_ticker', '')
+        )
+    )
+    
+    if should_load_from_alpaca:
         # Update settings from alpaca.json
         entry = alpaca_strategy.get('entry_conditions', {})
         exit_cond = alpaca_strategy.get('exit_conditions', {})
         risk = alpaca_strategy.get('risk_management', {})
+        
+        # Mark this ticker as loaded and settings as initialized
+        st.session_state.last_loaded_ticker = ticker
+        st.session_state.settings_initialized = True
 
         # Entry conditions from alpaca.json
         st.session_state.settings['use_rsi'] = entry.get('use_rsi', False)
@@ -2078,6 +2112,42 @@ if settings_have_changed(st.session_state.settings, st.session_state.get('loaded
         # Update loaded_settings snapshot after successful save
         st.session_state.loaded_settings = st.session_state.settings.copy()
         st.success(f"✅ Settings saved to alpaca.json for {ticker}", icon="💾")
+        
+        # Reload from JSON to ensure UI reflects what was actually saved
+        alpaca_strategy = load_strategy_from_alpaca(ticker)
+        if alpaca_strategy:
+            entry = alpaca_strategy.get('entry_conditions', {})
+            exit_cond = alpaca_strategy.get('exit_conditions', {})
+            risk = alpaca_strategy.get('risk_management', {})
+            
+            # Update session state with the saved values
+            st.session_state.settings.update({
+                'interval': alpaca_strategy.get('interval', '5m'),
+                'period': alpaca_strategy.get('period', '1d'),
+                'use_rsi': entry.get('use_rsi', False),
+                'rsi_threshold': entry.get('rsi_threshold', 30),
+                'use_ema_cross_up': entry.get('use_ema_cross_up', False),
+                'use_bb_cross_up': entry.get('use_bb_cross_up', False),
+                'use_bb_width': entry.get('use_bb_width', False),
+                'bb_width_threshold': entry.get('bb_width_threshold', 5.0),
+                'use_macd_cross_up': entry.get('use_macd_cross_up', False),
+                'use_ema': entry.get('use_ema', False),
+                'use_macd_threshold': entry.get('use_macd_threshold', False),
+                'macd_threshold': entry.get('macd_threshold', 0.0),
+                'use_macd_valley': entry.get('use_macd_valley', False),
+                'use_rsi_overbought': exit_cond.get('use_rsi_exit', False),
+                'rsi_overbought_threshold': exit_cond.get('rsi_exit_threshold', 70),
+                'use_ema_cross_down': exit_cond.get('use_ema_cross_down', False),
+                'use_bb_cross_down': exit_cond.get('use_bb_cross_down', False),
+                'use_macd_cross_down': exit_cond.get('use_macd_cross_down', False),
+                'use_macd_peak': exit_cond.get('use_macd_peak', False),
+                'use_stop_loss': risk.get('use_stop_loss', True),
+                'stop_loss_pct': risk.get('stop_loss', 0.02) * 100,
+                'use_take_profit': risk.get('use_take_profit', False),
+                'take_profit_pct': risk.get('take_profit', 0.03) * 100
+            })
+            # Update the loaded_settings to match the reloaded values
+            st.session_state.loaded_settings = st.session_state.settings.copy()
 
 # ---- Auto-run backtest and display chart ----
 with st.spinner(f"Downloading {ticker} data..."):
