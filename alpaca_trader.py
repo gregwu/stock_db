@@ -1413,6 +1413,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                         send_email_alert(email_subject, email_body)
                     # Return True to mark signal as processed (prevents retry)
                     # Retrying won't help since signal is already too old
+                    logging.info(f"      ✅ Stale signal will be marked as processed to prevent re-notification")
                     return True
                 else:
                     logging.info(f"      ✅ Signal freshness check passed: {time_diff:.1f} minutes old (max 3 minutes)")
@@ -2326,6 +2327,7 @@ def run_strategy():
                         # (even if it was skipped due to being stale or disabled)
                         state[ticker_check_key] = str(timestamp)
                         save_state(state)
+                        logging.info(f"✅ State updated: {ticker_check_key} = {timestamp}")
                     else:
                         logging.info(f"Signal for {ticker} already processed")
                 else:
