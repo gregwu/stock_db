@@ -1328,6 +1328,17 @@ def auto_save_on_change(setting_key):
             # Clear cache to force reload of fresh data
             get_settings_from_file.clear()
 
+def create_setting_callback(setting_key, widget_key=None):
+    """Create a callback function for a specific setting"""
+    if widget_key is None:
+        widget_key = f"{setting_key}_widget"
+    
+    def callback():
+        st.session_state.settings[setting_key] = st.session_state[widget_key]
+        auto_save_on_change(setting_key)
+    
+    return callback
+
 # Initialize session state for settings persistence
 if 'settings' not in st.session_state:
     # Initialize with default ticker
@@ -1877,23 +1888,27 @@ with st.sidebar:
     # Entry Conditions
     st.markdown("**Entry Conditions (all must be met):**")
     use_rsi = st.checkbox("RSI Oversold", value=st.session_state.settings['use_rsi'],
-                         help="RSI must be below threshold before entry")
+                         help="RSI must be below threshold before entry",
+                         key='use_rsi_widget', on_change=create_setting_callback('use_rsi'))
     st.session_state.settings['use_rsi'] = use_rsi
 
     rsi_threshold = st.number_input("RSI oversold threshold", min_value=10, max_value=50,
                                     value=st.session_state.settings['rsi_threshold'],
                                     disabled=not use_rsi,
-                                    help="Alert when RSI falls below this level")
+                                    help="Alert when RSI falls below this level",
+                                    key='rsi_threshold_widget', on_change=create_setting_callback('rsi_threshold'))
     st.session_state.settings['rsi_threshold'] = rsi_threshold
 
     use_ema_cross_up = st.checkbox("EMA9 crosses above EMA21",
                                     value=st.session_state.settings['use_ema_cross_up'],
-                                    help="Entry when EMA9 crosses above EMA21 (bullish)")
+                                    help="Entry when EMA9 crosses above EMA21 (bullish)",
+                                    key='use_ema_cross_up_widget', on_change=create_setting_callback('use_ema_cross_up'))
     st.session_state.settings['use_ema_cross_up'] = use_ema_cross_up
 
     use_bb_cross_up = st.checkbox("Price crosses below BB Lower",
                                    value=st.session_state.settings['use_bb_cross_up'],
-                                   help="Entry when price crosses below Bollinger Band lower line (oversold)")
+                                   help="Entry when price crosses below Bollinger Band lower line (oversold)",
+                                   key='use_bb_cross_up_widget', on_change=create_setting_callback('use_bb_cross_up'))
     st.session_state.settings['use_bb_cross_up'] = use_bb_cross_up
 
     # Handle backwards compatibility for use_bb_width
@@ -1904,7 +1919,8 @@ with st.sidebar:
 
     use_bb_width = st.checkbox("BB Width > threshold (high volatility)",
                                value=st.session_state.settings['use_bb_width'],
-                               help="Entry when Bollinger Bands width is above threshold (high volatility - trending market)")
+                               help="Entry when Bollinger Bands width is above threshold (high volatility - trending market)",
+                               key='use_bb_width_widget', on_change=create_setting_callback('use_bb_width'))
     st.session_state.settings['use_bb_width'] = use_bb_width
 
     bb_width_threshold = st.number_input("BB Width threshold (%)",
@@ -1912,7 +1928,8 @@ with st.sidebar:
                                          value=st.session_state.settings['bb_width_threshold'],
                                          step=0.1,
                                          disabled=not use_bb_width,
-                                         help="Entry when BB width is above this percentage (typical: 5-10%)")
+                                         help="Entry when BB width is above this percentage (typical: 5-10%)",
+                                         key='bb_width_threshold_widget', on_change=create_setting_callback('bb_width_threshold'))
     st.session_state.settings['bb_width_threshold'] = bb_width_threshold
 
     # Handle backwards compatibility for use_macd_cross_up
@@ -1921,10 +1938,12 @@ with st.sidebar:
 
     use_macd_cross_up = st.checkbox("MACD crosses above Signal line",
                                      value=st.session_state.settings['use_macd_cross_up'],
-                                     help="Entry when MACD line crosses above signal line (bullish)")
+                                     help="Entry when MACD line crosses above signal line (bullish)",
+                                     key='use_macd_cross_up_widget', on_change=create_setting_callback('use_macd_cross_up'))
     st.session_state.settings['use_macd_cross_up'] = use_macd_cross_up
 
-    use_ema = st.checkbox("Price > EMA9", value=st.session_state.settings['use_ema'])
+    use_ema = st.checkbox("Price > EMA9", value=st.session_state.settings['use_ema'],
+                         key='use_ema_widget', on_change=create_setting_callback('use_ema'))
     st.session_state.settings['use_ema'] = use_ema
 
     # Handle backwards compatibility for use_price_above_ema21
@@ -1933,7 +1952,8 @@ with st.sidebar:
 
     use_price_above_ema21 = st.checkbox("Price > EMA21",
                                          value=st.session_state.settings['use_price_above_ema21'],
-                                         help="Entry when price is above EMA21")
+                                         help="Entry when price is above EMA21",
+                                         key='use_price_above_ema21_widget', on_change=create_setting_callback('use_price_above_ema21'))
     st.session_state.settings['use_price_above_ema21'] = use_price_above_ema21
 
     # Handle backwards compatibility for use_macd_below_threshold
@@ -1944,14 +1964,16 @@ with st.sidebar:
 
     use_macd_below_threshold = st.checkbox("MACD < Threshold",
                                             value=st.session_state.settings['use_macd_below_threshold'],
-                                            help="Entry when MACD is below threshold")
+                                            help="Entry when MACD is below threshold",
+                                            key='use_macd_below_threshold_widget', on_change=create_setting_callback('use_macd_below_threshold'))
     st.session_state.settings['use_macd_below_threshold'] = use_macd_below_threshold
 
     macd_below_threshold = st.number_input("MACD below threshold value",
                                             value=st.session_state.settings['macd_below_threshold'],
                                             step=0.1,
                                             disabled=not use_macd_below_threshold,
-                                            help="Enter when MACD is below this value")
+                                            help="Enter when MACD is below this value",
+                                            key='macd_below_threshold_widget', on_change=create_setting_callback('macd_below_threshold'))
     st.session_state.settings['macd_below_threshold'] = macd_below_threshold
 
     # Handle backwards compatibility for use_macd_valley
@@ -1960,58 +1982,68 @@ with st.sidebar:
 
     use_macd_valley = st.checkbox("MACD Valley (turning up)",
                                    value=st.session_state.settings['use_macd_valley'],
-                                   help="Entry when MACD valley is detected (MACD turning up)")
+                                   help="Entry when MACD valley is detected (MACD turning up)",
+                                   key='use_macd_valley_widget', on_change=create_setting_callback('use_macd_valley'))
     st.session_state.settings['use_macd_valley'] = use_macd_valley
 
     use_volume = st.checkbox("Volume Rising", value=st.session_state.settings['use_volume'],
-                            help="Current candle volume >= previous candle volume")
+                            help="Current candle volume >= previous candle volume",
+                            key='use_volume_widget', on_change=create_setting_callback('use_volume'))
     st.session_state.settings['use_volume'] = use_volume
 
     # Price drop from exit requirement
     # Exit Rules
     st.markdown("**Exit Rules (all must be met):**")
     use_stop_loss = st.checkbox("Exit on Stop Loss", value=st.session_state.settings['use_stop_loss'],
-                                help="Exit when price drops by specified %")
+                                help="Exit when price drops by specified %",
+                                key='use_stop_loss_widget', on_change=create_setting_callback('use_stop_loss'))
     st.session_state.settings['use_stop_loss'] = use_stop_loss
 
     stop_loss_pct = st.number_input("Stop Loss %", min_value=0.5, max_value=10.0,
                                      value=st.session_state.settings['stop_loss_pct'], step=0.5,
                                      disabled=not use_stop_loss,
-                                     help="Exit if price drops by this %")
+                                     help="Exit if price drops by this %",
+                                     key='stop_loss_pct_widget', on_change=create_setting_callback('stop_loss_pct'))
     st.session_state.settings['stop_loss_pct'] = stop_loss_pct
     stop_loss_pct = stop_loss_pct / 100
 
     use_take_profit = st.checkbox("Exit on Take Profit", value=st.session_state.settings['use_take_profit'],
-                                   help="Exit when price rises by specified %")
+                                   help="Exit when price rises by specified %",
+                                   key='use_take_profit_widget', on_change=create_setting_callback('use_take_profit'))
     st.session_state.settings['use_take_profit'] = use_take_profit
 
     take_profit_pct = st.number_input("Take Profit %", min_value=0.5, max_value=20.0,
                                        value=st.session_state.settings['take_profit_pct'], step=0.5,
                                        disabled=not use_take_profit,
-                                       help="Exit if price rises by this %")
+                                       help="Exit if price rises by this %",
+                                       key='take_profit_pct_widget', on_change=create_setting_callback('take_profit_pct'))
     st.session_state.settings['take_profit_pct'] = take_profit_pct
     take_profit_pct = take_profit_pct / 100
 
     use_rsi_overbought = st.checkbox("Exit on RSI Overbought",
                                       value=st.session_state.settings['use_rsi_overbought'],
-                                      help="Exit when RSI exceeds this level")
+                                      help="Exit when RSI exceeds this level",
+                                      key='use_rsi_overbought_widget', on_change=create_setting_callback('use_rsi_overbought'))
     st.session_state.settings['use_rsi_overbought'] = use_rsi_overbought
 
     rsi_overbought_threshold = st.number_input("RSI overbought threshold",
                                                 min_value=50, max_value=90,
                                                 value=st.session_state.settings['rsi_overbought_threshold'],
                                                 disabled=not use_rsi_overbought,
-                                                help="Exit when RSI rises above this level")
+                                                help="Exit when RSI rises above this level",
+                                                key='rsi_overbought_threshold_widget', on_change=create_setting_callback('rsi_overbought_threshold'))
     st.session_state.settings['rsi_overbought_threshold'] = rsi_overbought_threshold
 
     use_ema_cross_down = st.checkbox("Exit on EMA9 crosses below EMA21",
                                       value=st.session_state.settings['use_ema_cross_down'],
-                                      help="Exit when EMA9 crosses below EMA21 (bearish)")
+                                      help="Exit when EMA9 crosses below EMA21 (bearish)",
+                                      key='use_ema_cross_down_widget', on_change=create_setting_callback('use_ema_cross_down'))
     st.session_state.settings['use_ema_cross_down'] = use_ema_cross_down
 
     use_price_below_ema9 = st.checkbox("Exit on Price < EMA9",
                                         value=st.session_state.settings['use_price_below_ema9'],
-                                        help="Exit when price falls below EMA9")
+                                        help="Exit when price falls below EMA9",
+                                        key='use_price_below_ema9_widget', on_change=create_setting_callback('use_price_below_ema9'))
     st.session_state.settings['use_price_below_ema9'] = use_price_below_ema9
 
     # Handle backwards compatibility for use_price_below_ema21
@@ -2020,12 +2052,14 @@ with st.sidebar:
 
     use_price_below_ema21 = st.checkbox("Exit on Price < EMA21",
                                          value=st.session_state.settings['use_price_below_ema21'],
-                                         help="Exit when price falls below EMA21")
+                                         help="Exit when price falls below EMA21",
+                                         key='use_price_below_ema21_widget', on_change=create_setting_callback('use_price_below_ema21'))
     st.session_state.settings['use_price_below_ema21'] = use_price_below_ema21
 
     use_bb_cross_down = st.checkbox("Exit on Price crosses above BB Upper",
                                      value=st.session_state.settings['use_bb_cross_down'],
-                                     help="Exit when price crosses above Bollinger Band upper line (overbought)")
+                                     help="Exit when price crosses above Bollinger Band upper line (overbought)",
+                                     key='use_bb_cross_down_widget', on_change=create_setting_callback('use_bb_cross_down'))
     st.session_state.settings['use_bb_cross_down'] = use_bb_cross_down
 
     # Handle backwards compatibility for use_bb_width_exit
@@ -2036,7 +2070,8 @@ with st.sidebar:
 
     use_bb_width_exit = st.checkbox("Exit on BB Width > threshold (high volatility)",
                                     value=st.session_state.settings['use_bb_width_exit'],
-                                    help="Exit when Bollinger Bands width exceeds threshold (volatility expanding - potential reversal)")
+                                    help="Exit when Bollinger Bands width exceeds threshold (volatility expanding - potential reversal)",
+                                    key='use_bb_width_exit_widget', on_change=create_setting_callback('use_bb_width_exit'))
     st.session_state.settings['use_bb_width_exit'] = use_bb_width_exit
 
     bb_width_exit_threshold = st.number_input("BB Width exit threshold (%)",
@@ -2044,7 +2079,8 @@ with st.sidebar:
                                               value=st.session_state.settings['bb_width_exit_threshold'],
                                               step=0.1,
                                               disabled=not use_bb_width_exit,
-                                              help="Exit when BB width exceeds this percentage (typical: 8-15%)")
+                                              help="Exit when BB width exceeds this percentage (typical: 8-15%)",
+                                              key='bb_width_exit_threshold_widget', on_change=create_setting_callback('bb_width_exit_threshold'))
     st.session_state.settings['bb_width_exit_threshold'] = bb_width_exit_threshold
 
     # Handle backwards compatibility for use_macd_cross_down
@@ -2053,7 +2089,8 @@ with st.sidebar:
 
     use_macd_cross_down = st.checkbox("Exit on MACD crosses below Signal line",
                                        value=st.session_state.settings['use_macd_cross_down'],
-                                       help="Exit when MACD line crosses below signal line (bearish)")
+                                       help="Exit when MACD line crosses below signal line (bearish)",
+                                       key='use_macd_cross_down_widget', on_change=create_setting_callback('use_macd_cross_down'))
     st.session_state.settings['use_macd_cross_down'] = use_macd_cross_down
 
     # Handle backwards compatibility for use_macd_above_threshold
@@ -2064,14 +2101,16 @@ with st.sidebar:
 
     use_macd_above_threshold = st.checkbox("Exit on MACD > Threshold",
                                             value=st.session_state.settings['use_macd_above_threshold'],
-                                            help="Exit when MACD exceeds threshold")
+                                            help="Exit when MACD exceeds threshold",
+                                            key='use_macd_above_threshold_widget', on_change=create_setting_callback('use_macd_above_threshold'))
     st.session_state.settings['use_macd_above_threshold'] = use_macd_above_threshold
 
     macd_above_threshold = st.number_input("MACD above threshold value",
                                             value=st.session_state.settings['macd_above_threshold'],
                                             step=0.1,
                                             disabled=not use_macd_above_threshold,
-                                            help="Exit when MACD exceeds this value")
+                                            help="Exit when MACD exceeds this value",
+                                            key='macd_above_threshold_widget', on_change=create_setting_callback('macd_above_threshold'))
     st.session_state.settings['macd_above_threshold'] = macd_above_threshold
 
     # Handle backwards compatibility for use_macd_peak
@@ -2080,13 +2119,15 @@ with st.sidebar:
 
     use_macd_peak = st.checkbox("Exit on MACD Peak (turning down)",
                                  value=st.session_state.settings['use_macd_peak'],
-                                 help="Exit when MACD peak is detected (MACD turning down)")
+                                 help="Exit when MACD peak is detected (MACD turning down)",
+                                 key='use_macd_peak_widget', on_change=create_setting_callback('use_macd_peak'))
     st.session_state.settings['use_macd_peak'] = use_macd_peak
 
     st.divider()
 
     show_signals = st.checkbox("Show buy/sell signals on chart",
-                               value=st.session_state.settings['show_signals'])
+                               value=st.session_state.settings['show_signals'],
+                               key='show_signals_widget', on_change=create_setting_callback('show_signals'))
     st.session_state.settings['show_signals'] = show_signals
 
     # Handle backwards compatibility for show_reports
@@ -2095,7 +2136,8 @@ with st.sidebar:
 
     show_reports = st.checkbox("Show backtest reports",
                                value=st.session_state.settings['show_reports'],
-                               help="Show backtest summary table and event logs")
+                               help="Show backtest summary table and event logs",
+                               key='show_reports_widget', on_change=create_setting_callback('show_reports'))
     st.session_state.settings['show_reports'] = show_reports
 
     # Handle backwards compatibility for chart_height
@@ -2104,7 +2146,8 @@ with st.sidebar:
 
     chart_height = st.slider("Chart height (pixels)", min_value=600, max_value=2000,
                              value=st.session_state.settings['chart_height'], step=50,
-                             help="Adjust the height of the chart")
+                             help="Adjust the height of the chart",
+                             key='chart_height_widget', on_change=create_setting_callback('chart_height'))
     st.session_state.settings['chart_height'] = chart_height
 
     # Save settings to file
