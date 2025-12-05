@@ -1289,6 +1289,17 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
                         send_email_alert(email_subject, email_body)
 
+                    # IMMEDIATELY update state to prevent reprocessing this price-moved signal
+                    # Use ticker from action_config directly
+                    if ticker:  # ticker is available from action_config.get('ticker') in this function
+                        ticker_check_key = f'last_check_{ticker}'
+                        
+                        # Load current state, update it, and save immediately
+                        current_state = load_state()
+                        current_state[ticker_check_key] = str(timestamp)
+                        save_state(current_state)
+                        logging.info(f"      ✅ PRICE MOVED BUY SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
+
                     # Return True to mark signal as processed (prevents retry)
                     # Retrying won't help since price has already moved too much
                     return True
@@ -1375,6 +1386,18 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
                     if skip_stale_signal:
                         logging.warning(f"      ⚠️  SKIPPING BUY - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
+                        
+                        # IMMEDIATELY update state to prevent reprocessing this stale signal
+                        # Use ticker from action_config directly
+                        if ticker:  # ticker is available from action_config.get('ticker') in this function
+                            ticker_check_key = f'last_check_{ticker}'
+                            
+                            # Load current state, update it, and save immediately
+                            current_state = load_state()
+                            current_state[ticker_check_key] = str(timestamp)
+                            save_state(current_state)
+                            logging.info(f"      ✅ STALE SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
+                        
                         if EMAIL_ON_ENTRY:
                             current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
                             signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
@@ -1579,6 +1602,18 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
                     if skip_stale_signal:
                         logging.warning(f"      ⚠️  SKIPPING SELL - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
+                        
+                        # IMMEDIATELY update state to prevent reprocessing this stale signal
+                        # Use ticker from action_config directly
+                        if ticker:  # ticker is available from action_config.get('ticker') in this function
+                            ticker_check_key = f'last_check_{ticker}'
+                            
+                            # Load current state, update it, and save immediately
+                            current_state = load_state()
+                            current_state[ticker_check_key] = str(timestamp)
+                            save_state(current_state)
+                            logging.info(f"      ✅ STALE SELL SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
+                        
                         if EMAIL_ON_EXIT:
                             current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
                             signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
@@ -1809,6 +1844,17 @@ Signal has been cleared and will not retry.
 Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
                             send_email_alert(email_subject, email_body)
+
+                        # IMMEDIATELY update state to prevent reprocessing this price-moved signal
+                        # Use ticker from action_config directly
+                        if ticker:  # ticker is available from action_config.get('ticker') in this function
+                            ticker_check_key = f'last_check_{ticker}'
+                            
+                            # Load current state, update it, and save immediately
+                            current_state = load_state()
+                            current_state[ticker_check_key] = str(timestamp)
+                            save_state(current_state)
+                            logging.info(f"      ✅ PRICE MOVED SELL SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
 
                         # Return True to mark signal as processed (prevents retry)
                         # Retrying won't help since price has already moved too much
