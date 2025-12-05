@@ -1246,105 +1246,98 @@ st.set_page_config(page_title="Strategy Scalping", layout="wide")
 
 st.title("Strategy Scalping ")
 
+# ---------- Cached Settings Management ----------
+
+@st.cache_data(ttl=1)  # Cache for 1 second to prevent stale reads
+def get_settings_from_file(ticker):
+    """Get fresh settings from alpaca.json with caching to prevent timing issues"""
+    alpaca_strategy = load_strategy_from_alpaca(ticker)
+    if not alpaca_strategy:
+        return None
+        
+    entry = alpaca_strategy.get('entry_conditions', {})
+    exit_cond = alpaca_strategy.get('exit_conditions', {})
+    risk = alpaca_strategy.get('risk_management', {})
+    
+    return {
+        'ticker': ticker,
+        'period': alpaca_strategy.get('period', '1d'),
+        'interval': alpaca_strategy.get('interval', '5m'),
+        'chart_height': 1150,
+        # Entry conditions from alpaca.json
+        'use_rsi': entry.get('use_rsi', False),
+        'rsi_threshold': entry.get('rsi_threshold', 30),
+        'use_ema_cross_up': entry.get('use_ema_cross_up', False),
+        'use_bb_cross_up': entry.get('use_bb_cross_up', False),
+        'use_bb_width': entry.get('use_bb_width', False),
+        'bb_width_threshold': entry.get('bb_width_threshold', 5.0),
+        'use_macd_cross_up': entry.get('use_macd_cross_up', False),
+        'use_ema': entry.get('use_ema', False),
+        'use_price_above_ema21': entry.get('use_price_above_ema21', False),
+        'use_price_vs_ema9': entry.get('use_price_vs_ema9', False),
+        'use_price_vs_ema21': entry.get('use_price_vs_ema21', False),
+        'use_volume': entry.get('use_volume', False),
+        'use_macd_threshold': entry.get('use_macd_threshold', False),
+        'macd_threshold': entry.get('macd_threshold', 0.1),
+        'use_macd_below_threshold': entry.get('use_macd_threshold', False),
+        'macd_below_threshold': entry.get('macd_threshold', 0.1),
+        'use_macd_valley': entry.get('use_macd_valley', False),
+        # Exit conditions from alpaca.json
+        'use_rsi_exit': exit_cond.get('use_rsi_exit', False),
+        'rsi_exit_threshold': exit_cond.get('rsi_exit_threshold', 70),
+        'use_rsi_overbought': exit_cond.get('use_rsi_exit', False),
+        'rsi_overbought_threshold': exit_cond.get('rsi_exit_threshold', 70),
+        'use_ema_cross_down': exit_cond.get('use_ema_cross_down', False),
+        'use_bb_cross_down': exit_cond.get('use_bb_cross_down', False),
+        'use_bb_width_exit': exit_cond.get('use_bb_width_exit', False),
+        'bb_width_exit_threshold': exit_cond.get('bb_width_exit_threshold', 10.0),
+        'use_macd_cross_down': exit_cond.get('use_macd_cross_down', False),
+        'use_price_vs_ema9_exit': exit_cond.get('use_price_vs_ema9_exit', False),
+        'use_price_vs_ema21_exit': exit_cond.get('use_price_vs_ema21_exit', False),
+        'use_price_below_ema9': exit_cond.get('use_price_vs_ema9_exit', False),
+        'use_price_below_ema21': exit_cond.get('use_price_vs_ema21_exit', False),
+        'use_macd_peak': exit_cond.get('use_macd_peak', False),
+        'use_macd_above_threshold': exit_cond.get('use_macd_above_threshold', False),
+        'macd_above_threshold': exit_cond.get('macd_above_threshold', 0.0),
+        # Risk management from alpaca.json
+        'stop_loss_pct': risk.get('stop_loss', 0.02) * 100,
+        'take_profit_pct': risk.get('take_profit', 0.03) * 100,
+        'use_stop_loss': risk.get('use_stop_loss', True),
+        'use_take_profit': risk.get('use_take_profit', False),
+        # UI settings (defaults)
+        'show_signals': True,
+        'show_reports': True
+    }
+
+def init_session_state_once(ticker):
+    """Initialize session state only once per ticker to prevent overwrites"""
+    session_key = f"initialized_{ticker}"
+    
+    if session_key not in st.session_state:
+        # First time for this ticker - load from file
+        fresh_settings = get_settings_from_file(ticker)
+        if fresh_settings:
+            st.session_state.settings = fresh_settings
+            st.session_state[session_key] = True
+
+def auto_save_on_change(setting_key):
+    """Universal auto-save callback for any setting"""
+    if 'settings' in st.session_state:
+        ticker = st.session_state.settings.get('ticker')
+        if ticker and save_settings_to_alpaca(st.session_state.settings, ticker):
+            # Clear cache to force reload of fresh data
+            get_settings_from_file.clear()
+
 # Initialize session state for settings persistence
 if 'settings' not in st.session_state:
     # Initialize with default ticker
     default_ticker = get_available_tickers()[0]
+    init_session_state_once(default_ticker)
 
-    # ALWAYS load from alpaca.json (single source of truth)
-    alpaca_strategy = load_strategy_from_alpaca(default_ticker)
-
-    if alpaca_strategy:
-        # Initialize settings from alpaca.json
-        entry = alpaca_strategy.get('entry_conditions', {})
-        exit_cond = alpaca_strategy.get('exit_conditions', {})
-        risk = alpaca_strategy.get('risk_management', {})
-
-        st.session_state.settings = {
-            'ticker': default_ticker,
-            'period': alpaca_strategy.get('period', '1d'),
-            'interval': alpaca_strategy.get('interval', '5m'),
-            'chart_height': 1150,
-            # Entry conditions from alpaca.json
-            'use_rsi': entry.get('use_rsi', False),
-            'rsi_threshold': entry.get('rsi_threshold', 30),
-            'use_ema_cross_up': entry.get('use_ema_cross_up', False),
-            'use_bb_cross_up': entry.get('use_bb_cross_up', False),
-            'use_bb_width': entry.get('use_bb_width', False),
-            'bb_width_threshold': entry.get('bb_width_threshold', 5.0),
-            'use_macd_cross_up': entry.get('use_macd_cross_up', False),
-            'use_ema': entry.get('use_ema', False),
-            'use_price_above_ema21': entry.get('use_price_above_ema21', False),
-            'use_price_vs_ema9': entry.get('use_price_vs_ema9', False),
-            'use_price_vs_ema21': entry.get('use_price_vs_ema21', False),
-            'use_volume': entry.get('use_volume', False),
-            'use_macd_threshold': entry.get('use_macd_threshold', False),
-            'macd_threshold': entry.get('macd_threshold', 0.1),
-            # Map use_macd_threshold to UI field use_macd_below_threshold
-            'use_macd_below_threshold': entry.get('use_macd_threshold', False),
-            'macd_below_threshold': entry.get('macd_threshold', 0.1),
-            'use_macd_valley': entry.get('use_macd_valley', False),
-            # Exit conditions from alpaca.json
-            'use_rsi_exit': exit_cond.get('use_rsi_exit', False),
-            'rsi_exit_threshold': exit_cond.get('rsi_exit_threshold', 70),
-            'use_rsi_overbought': exit_cond.get('use_rsi_exit', False),  # Alias
-            'rsi_overbought_threshold': exit_cond.get('rsi_exit_threshold', 70),  # Alias
-            'use_ema_cross_down': exit_cond.get('use_ema_cross_down', False),
-            'use_price_below_ema9': exit_cond.get('use_price_vs_ema9_exit', False),
-            'use_price_below_ema21': exit_cond.get('use_price_vs_ema21_exit', False),
-            'use_bb_cross_down': exit_cond.get('use_bb_cross_down', False),
-            'use_bb_width_exit': exit_cond.get('use_bb_width_exit', False),
-            'bb_width_exit_threshold': exit_cond.get('bb_width_exit_threshold', 10.0),
-            'use_macd_cross_down': exit_cond.get('use_macd_cross_down', False),
-            'use_price_vs_ema9_exit': exit_cond.get('use_price_vs_ema9_exit', False),
-            'use_price_vs_ema21_exit': exit_cond.get('use_price_vs_ema21_exit', False),
-            'use_macd_peak': exit_cond.get('use_macd_peak', False),
-            'use_macd_above_threshold': exit_cond.get('use_macd_above_threshold', False),
-            'macd_above_threshold': exit_cond.get('macd_above_threshold', 0.0),
-            # Risk management from alpaca.json
-            'use_stop_loss': risk.get('use_stop_loss', True),
-            'stop_loss_pct': risk.get('stop_loss', 0.02) * 100,  # Convert to percentage
-            'use_take_profit': risk.get('use_take_profit', False),
-            'take_profit_pct': risk.get('take_profit', 0.03) * 100,  # Convert to percentage
-            # UI settings
-            'show_signals': True,
-            'show_reports': True
-        }
-    else:
-        # Fallback defaults if alpaca.json can't be loaded
-        st.session_state.settings = {
-            'ticker': default_ticker,
-            'period': '1d',
-            'interval': '5m',
-            'chart_height': 1150,
-            'use_rsi': False,
-            'rsi_threshold': 30,
-            'use_ema_cross_up': False,
-            'use_bb_cross_up': False,
-            'use_macd_cross_up': False,
-            'use_ema': False,
-            'use_price_above_ema21': False,
-            'use_volume': False,
-            'use_stop_loss': True,
-            'stop_loss_pct': 2.0,
-            'use_take_profit': False,
-            'take_profit_pct': 4.0,
-            'use_rsi_overbought': False,
-            'rsi_overbought_threshold': 70,
-            'use_ema_cross_down': False,
-            'use_price_below_ema9': False,
-            'use_price_below_ema21': False,
-            'use_bb_cross_down': False,
-            'use_macd_cross_down': False,
-            'use_macd_below_threshold': False,
-            'macd_below_threshold': 0.0,
-            'use_macd_above_threshold': False,
-            'macd_above_threshold': 0.0,
-            'use_macd_valley': False,
-            'use_macd_peak': False,
-            'show_signals': True,
-            'show_reports': True
-        }
+# Get current ticker and ensure proper initialization
+current_ticker = st.session_state.get('settings', {}).get('ticker')
+if current_ticker:
+    init_session_state_once(current_ticker)
 
 with st.sidebar:
     # Show account status at top of sidebar
@@ -1851,7 +1844,12 @@ with st.sidebar:
         period_index = period_options.index(st.session_state.settings['period'])
     except ValueError:
         period_index = 0
-    period = st.selectbox("Data period", period_options, index=period_index)
+    def update_period():
+        st.session_state.settings['period'] = st.session_state.period_widget
+        auto_save_on_change('period')
+    
+    period = st.selectbox("Data period", period_options, index=period_index, 
+                         key='period_widget', on_change=update_period)
     st.session_state.settings['period'] = period
 
     # Add interval selector like check.py
@@ -1863,7 +1861,13 @@ with st.sidebar:
         interval_index = interval_options.index(st.session_state.settings['interval'])
     except ValueError:
         interval_index = 0
-    interval = st.selectbox("Data interval", interval_options, index=interval_index)
+    
+    def update_interval():
+        st.session_state.settings['interval'] = st.session_state.interval_widget
+        auto_save_on_change('interval')
+    
+    interval = st.selectbox("Data interval", interval_options, index=interval_index,
+                           key='interval_widget', on_change=update_interval)
     st.session_state.settings['interval'] = interval
 
     st.divider()
