@@ -1870,7 +1870,7 @@ with st.sidebar:
     if 'interval' not in st.session_state.settings:
         st.session_state.settings['interval'] = "1m"
 
-    interval_options = ["1m", "2m", "5m", "15m", "30m", "1h", "1d"]
+    interval_options = ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "1d"]
     try:
         interval_index = interval_options.index(st.session_state.settings['interval'])
     except ValueError:
@@ -2233,9 +2233,9 @@ with st.spinner(f"Downloading {ticker} data..."):
     main_period = period_map.get(period, period)
 
     # Validate interval/period combination based on yfinance limits
-    # 1m, 2m, 5m, 15m, 30m: max 60 days
+    # 1m, 2m, 3m, 5m, 10m, 15m, 30m: max 60 days (3m and 10m use 1m data aggregation)
     # 1h, 90m: max 730 days
-    intraday_short = ["1m", "2m", "5m", "15m", "30m"]
+    intraday_short = ["1m", "2m", "3m", "5m", "10m", "15m", "30m"]
     intraday_hourly = ["1h", "90m"]
 
     if interval in intraday_short:
@@ -2251,22 +2251,67 @@ with st.spinner(f"Downloading {ticker} data..."):
 
     # Use extended hours for intraday intervals only
     use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
-    raw = yf.download(ticker, period=main_period,
-                      interval=interval, progress=False, prepost=use_extended_hours)
 
-    if raw.empty:
-        st.error(f"No data returned for main ticker. This may happen if the period ({period}) exceeds yfinance limits for the {interval} interval. Try a shorter period.")
+    # Yahoo Finance doesn't support 3m or 10m intervals natively
+    # Fetch 1-minute data and aggregate for these intervals
+    unsupported_intervals = ["3m", "10m"]
+
+    if interval in unsupported_intervals:
+        # Fetch 1-minute data first
+        raw = yf.download(ticker, period=main_period,
+                         interval='1m', progress=False, prepost=use_extended_hours)
+
+        if raw.empty:
+            st.error(f"No 1-minute data returned for ticker {ticker}. Cannot aggregate to {interval} interval.")
+        else:
+            # Handle MultiIndex columns if present
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+
+            # Convert timezone before resampling
+            if hasattr(raw.index, 'tz'):
+                if raw.index.tz is not None:
+                    raw.index = raw.index.tz_convert('America/New_York')
+                else:
+                    raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
+
+            # Aggregate to desired interval
+            interval_map = {
+                '3m': '3min',
+                '10m': '10min'
+            }
+            resample_freq = interval_map[interval]
+
+            raw = raw.resample(resample_freq).agg({
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }).dropna()
+
+            st.info(f"ℹ️ Aggregated 1-minute data to {interval} interval ({len(raw)} bars)")
     else:
-        # Handle MultiIndex columns if present
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
+        # Use Yahoo's native interval
+        raw = yf.download(ticker, period=main_period,
+                         interval=interval, progress=False, prepost=use_extended_hours)
 
-        # Convert timezone from UTC to US Eastern Time (New York)
-        if hasattr(raw.index, 'tz'):
-            if raw.index.tz is not None:
-                raw.index = raw.index.tz_convert('America/New_York')
-            else:
-                raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
+        if raw.empty:
+            st.error(f"No data returned for main ticker. This may happen if the period ({period}) exceeds yfinance limits for the {interval} interval. Try a shorter period.")
+        else:
+            # Handle MultiIndex columns if present
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+
+            # Convert timezone from UTC to US Eastern Time (New York)
+            if hasattr(raw.index, 'tz'):
+                if raw.index.tz is not None:
+                    raw.index = raw.index.tz_convert('America/New_York')
+                else:
+                    raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
+
+    # Continue processing if we have data
+    if not raw.empty:
 
         # Filter data based on selected period BEFORE backtesting
         # This ensures backtest runs only on the selected timeframe

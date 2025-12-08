@@ -1380,39 +1380,32 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
 
                 if time_diff > MAX_SIGNAL_AGE_MINUTES:
-                    # Check current price - if it's lower than signal price, proceed anyway (good deal!)
-                    skip_stale_signal = True
+                    # Signal is too old - skip it
+                    logging.warning(f"      ⚠️  SKIPPING BUY - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
+
+                    # Get current price for email notification
                     current_price = None
                     try:
                         quote = alpaca_api.quote(ticker)
                         if quote and 'last' in quote:
                             current_price = quote['last']
-                            if current_price < price:
-                                # Price dropped - this is good for buying!
-                                price_drop_pct = ((price - current_price) / price) * 100
-                                logging.info(f"      ✅ Signal is stale BUT current price ${current_price:.2f} is {price_drop_pct:.2f}% lower than signal price ${price:.2f}")
-                                logging.info(f"      ✅ Proceeding with BUY - price moved in our favor!")
-                                skip_stale_signal = False
                     except Exception as e:
-                        logging.warning(f"      Could not check current price for stale signal: {e}")
+                        logging.warning(f"      Could not check current price for email: {e}")
 
-                    if skip_stale_signal:
-                        logging.warning(f"      ⚠️  SKIPPING BUY - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
-                        
-                        # IMMEDIATELY update state to prevent reprocessing this stale signal
-                        # Use ticker from action_config directly
-                        if ticker:  # ticker is available from action_config.get('ticker') in this function
-                            ticker_check_key = f'last_check_{ticker}'
-                            
-                            # Load current state, update it, and save immediately
-                            current_state = load_state()
-                            current_state[ticker_check_key] = str(timestamp)
-                            save_state(current_state)
-                            logging.info(f"      ✅ STALE SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
-                        
-                        if EMAIL_ON_ENTRY:
-                            current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
-                            signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+                    # IMMEDIATELY update state to prevent reprocessing this stale signal
+                    # Use ticker from action_config directly
+                    if ticker:  # ticker is available from action_config.get('ticker') in this function
+                        ticker_check_key = f'last_check_{ticker}'
+
+                        # Load current state, update it, and save immediately
+                        current_state = load_state()
+                        current_state[ticker_check_key] = str(timestamp)
+                        save_state(current_state)
+                        logging.info(f"      ✅ STALE SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
+
+                    if EMAIL_ON_ENTRY:
+                        current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
+                        signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
 
                         # Determine what order type would have been used
                         if in_market_hours:
@@ -1603,45 +1596,45 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
 
                 if time_diff > MAX_SIGNAL_AGE_MINUTES:
-                    # Check current price - if it's higher than signal price, proceed anyway (better price!)
-                    skip_stale_signal = True
+                    # Signal is too old - skip it
+                    logging.warning(f"      ⚠️  SKIPPING SELL - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
+
+                    # Get current price for email notification
+                    current_price = None
                     try:
                         quote = alpaca_api.quote(ticker)
                         if quote and 'last' in quote:
                             current_price = quote['last']
-                            if current_price > price:
-                                # Price increased - this is good for selling!
-                                price_increase_pct = ((current_price - price) / price) * 100
-                                logging.info(f"      ✅ Signal is stale BUT current price ${current_price:.2f} is {price_increase_pct:.2f}% higher than signal price ${price:.2f}")
-                                logging.info(f"      ✅ Proceeding with SELL - price moved in our favor!")
-                                skip_stale_signal = False
                     except Exception as e:
-                        logging.warning(f"      Could not check current price for stale signal: {e}")
+                        logging.warning(f"      Could not check current price for email: {e}")
 
-                    if skip_stale_signal:
-                        logging.warning(f"      ⚠️  SKIPPING SELL - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
-                        
-                        # IMMEDIATELY update state to prevent reprocessing this stale signal
-                        # Use ticker from action_config directly
-                        if ticker:  # ticker is available from action_config.get('ticker') in this function
-                            ticker_check_key = f'last_check_{ticker}'
-                            
-                            # Load current state, update it, and save immediately
-                            current_state = load_state()
-                            current_state[ticker_check_key] = str(timestamp)
-                            save_state(current_state)
-                            logging.info(f"      ✅ STALE SELL SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
-                        
-                        if EMAIL_ON_EXIT:
-                            current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
-                            signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+                    # IMMEDIATELY update state to prevent reprocessing this stale signal
+                    # Use ticker from action_config directly
+                    if ticker:  # ticker is available from action_config.get('ticker') in this function
+                        ticker_check_key = f'last_check_{ticker}'
 
-                            email_subject = f"⚠️ SELL SKIPPED - {ticker} (Stale Signal)"
-                            email_body = f"""Sell Order Skipped - Signal Too Old
+                        # Load current state, update it, and save immediately
+                        current_state = load_state()
+                        current_state[ticker_check_key] = str(timestamp)
+                        save_state(current_state)
+                        logging.info(f"      ✅ STALE SELL SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
+
+                    if EMAIL_ON_EXIT:
+                        current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
+                        signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                        # Build current price info
+                        current_price_info = ""
+                        if current_price is not None:
+                            price_diff_pct = ((current_price - price) / price) * 100
+                            current_price_info = f"\nCurrent Price: ${current_price:.2f}\nPrice Change: {price_diff_pct:+.2f}%"
+
+                        email_subject = f"⚠️ SELL SKIPPED - {ticker} (Stale Signal)"
+                        email_body = f"""Sell Order Skipped - Signal Too Old
 
 Ticker: {ticker}
 Action: SELL {quantity} shares (SKIPPED)
-Signal Price: ${price:.2f}
+Signal Price: ${price:.2f}{current_price_info}
 Signal Time: {signal_time_str}
 Current Time: {current_time}
 Time Difference: {time_diff:.1f} minutes
@@ -1656,9 +1649,9 @@ Signal has been cleared and will not retry.
 ---
 Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
-                            send_email_alert(email_subject, email_body)
-                        # Return True to mark signal as processed (prevents retry)
-                        return True
+                        send_email_alert(email_subject, email_body)
+                    # Return True to mark signal as processed (prevents retry)
+                    return True
                 else:
                     logging.info(f"      ✅ Signal freshness check passed: {time_diff:.1f} minutes old (max {MAX_SIGNAL_AGE_MINUTES} minutes)")
             except Exception as e:
@@ -2308,7 +2301,9 @@ def run_strategy():
                 # Map interval to pandas resample frequency
                 interval_map = {
                     '2m': '2min',
+                    '3m': '3min',
                     '5m': '5min',
+                    '10m': '10min',
                     '15m': '15min',
                     '30m': '30min',
                     '1h': '1H',
