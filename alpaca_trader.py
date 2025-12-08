@@ -1329,6 +1329,17 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
                 slippage_pct = ((limit_price - price) / price) * 100
 
+                # Get current price for reference
+                current_price_info = ""
+                try:
+                    quote = alpaca_api.quote(ticker)
+                    if quote and 'last' in quote:
+                        current_price = quote['last']
+                        price_diff_pct = ((current_price - price) / price) * 100
+                        current_price_info = f"\nCurrent Price: ${current_price:.2f}\nPrice Change: {price_diff_pct:+.2f}%"
+                except Exception as e:
+                    logging.warning(f"      Could not fetch current price for email: {e}")
+
                 email_subject = f"⚠️ BUY SKIPPED - {ticker} (Extended Hours)"
                 email_body = f"""Buy Order Skipped - Extended Hours Trading Disabled
 
@@ -1336,7 +1347,7 @@ Ticker: {ticker}
 Action: BUY {quantity} shares (SKIPPED)
 Order Type: {order_type}
 Signal Price: ${price:.2f}
-Order Price: ${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)
+Order Price: ${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage){current_price_info}
 Signal Time: {signal_time_str}
 Current Time: {current_time}
 
@@ -1371,6 +1382,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 if time_diff > MAX_SIGNAL_AGE_MINUTES:
                     # Check current price - if it's lower than signal price, proceed anyway (good deal!)
                     skip_stale_signal = True
+                    current_price = None
                     try:
                         quote = alpaca_api.quote(ticker)
                         if quote and 'last' in quote:
@@ -1412,13 +1424,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                             slippage_pct = ((limit_price - price) / price) * 100
                             price_info = f"Signal Price: ${price:.2f}\nOrder Price: ${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
 
+                        # Build current price info
+                        current_price_info = ""
+                        if current_price is not None:
+                            price_diff_pct = ((current_price - price) / price) * 100
+                            current_price_info = f"\nCurrent Price: ${current_price:.2f}\nPrice Change: {price_diff_pct:+.2f}%"
+
                         email_subject = f"⚠️ BUY SKIPPED - {ticker} (Stale Signal)"
                         email_body = f"""Buy Order Skipped - Signal Too Old
 
 Ticker: {ticker}
 Action: BUY {quantity} shares (SKIPPED)
 Order Type: {order_type}
-{price_info}
+{price_info}{current_price_info}
 Signal Time: {signal_time_str}
 Current Time: {current_time}
 Time Difference: {time_diff:.1f} minutes
@@ -2257,17 +2275,21 @@ def run_strategy():
         period = ticker_strategy.get('period', default_settings.get('period', '1d'))
 
         # Download recent data
+        # STRATEGY: Fetch 1-minute bars (freshest) and aggregate to desired interval
+        # Yahoo's 1-min data is 2+ minutes fresher than pre-calculated 5-min bars
+        # This gives us the most current data possible from Yahoo Finance
         try:
             logging.info(f"Downloading data for {ticker}...")
             # Use configured period from strategy
             download_period = period if period else "5d"
-            use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
-            logging.info(f"Using interval: {interval}, period: {download_period}")
-            raw = yf.download(ticker, period=download_period, interval=interval,
-                             progress=False, prepost=use_extended_hours)
+
+            # Always fetch 1-minute data first (it's the freshest)
+            logging.info(f"Fetching 1-minute data, will aggregate to {interval} interval")
+            raw = yf.download(ticker, period=download_period, interval='1m',
+                             progress=False, prepost=True)
 
             if raw.empty:
-                logging.error(f"No data returned for {ticker}")
+                logging.error(f"No 1-minute data returned for {ticker}")
                 continue  # Skip to next ticker
 
             # Handle MultiIndex columns
@@ -2281,7 +2303,39 @@ def run_strategy():
                 else:
                     raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
 
-            df = raw.copy()
+            # Resample 1-minute data to desired interval
+            if interval != '1m':
+                # Map interval to pandas resample frequency
+                interval_map = {
+                    '2m': '2min',
+                    '5m': '5min',
+                    '15m': '15min',
+                    '30m': '30min',
+                    '1h': '1H',
+                    '1d': '1D'
+                }
+
+                if interval in interval_map:
+                    resample_freq = interval_map[interval]
+                    logging.info(f"Resampling 1-minute bars to {interval} ({len(raw)} → aggregating...)")
+
+                    df = raw.resample(resample_freq).agg({
+                        'Open': 'first',
+                        'High': 'max',
+                        'Low': 'min',
+                        'Close': 'last',
+                        'Volume': 'sum'
+                    }).dropna()
+
+                    logging.info(f"✅ Aggregated to {len(df)} {interval} bars (from {len(raw)} 1-min bars)")
+                else:
+                    # Unsupported interval, use 1-minute data as-is
+                    logging.warning(f"Unsupported interval {interval}, using 1-minute bars")
+                    df = raw.copy()
+            else:
+                # Use 1-minute data as-is
+                df = raw.copy()
+                logging.info(f"✅ Using {len(df)} 1-minute bars")
 
             # Get ticker-specific strategy settings (with overrides)
             ticker_strategy = get_ticker_strategy(ticker, default_strategy, signal_actions_config)

@@ -7,7 +7,10 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockLatestQuoteRequest
+from alpaca.data.requests import StockLatestQuoteRequest, StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from datetime import datetime, timedelta
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -99,6 +102,101 @@ class AlpacaAPI:
         except Exception as e:
             print(f"[!] Failed to get quote for {ticker}: {e}")
             return None
+
+    def get_bars(self, ticker, interval='5m', period='1d', feed='iex'):
+        """
+        Get historical bars from Alpaca
+
+        Args:
+            ticker: Stock symbol
+            interval: Bar interval - '1m', '5m', '15m', '30m', '1h', '1d'
+            period: How far back to fetch - '1d', '5d', '1mo', etc.
+            feed: Data feed - 'iex' (free, 15-min delayed) or 'sip' (paid, real-time)
+
+        Returns:
+            pandas DataFrame with OHLCV data, index as timestamp in Eastern Time
+        """
+        try:
+            # Map interval string to Alpaca TimeFrame
+            timeframe_map = {
+                '1m': TimeFrame.Minute,
+                '5m': TimeFrame(5, TimeFrameUnit.Minute),
+                '15m': TimeFrame(15, TimeFrameUnit.Minute),
+                '30m': TimeFrame(30, TimeFrameUnit.Minute),
+                '1h': TimeFrame.Hour,
+                '1d': TimeFrame.Day
+            }
+
+            if interval not in timeframe_map:
+                raise ValueError(f"Unsupported interval: {interval}. Use: {list(timeframe_map.keys())}")
+
+            timeframe = timeframe_map[interval]
+
+            # Convert period to start/end dates
+            end = datetime.now()
+            if period == '1d':
+                start = end - timedelta(days=1)
+            elif period == '5d':
+                start = end - timedelta(days=5)
+            elif period == '1wk':
+                start = end - timedelta(weeks=1)
+            elif period == '1mo':
+                start = end - timedelta(days=30)
+            elif period == '3mo':
+                start = end - timedelta(days=90)
+            else:
+                # Default to 1 day
+                start = end - timedelta(days=1)
+
+            # Create request
+            request = StockBarsRequest(
+                symbol_or_symbols=ticker,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+                feed=feed  # 'iex' for free (15-min delayed), 'sip' for paid (real-time)
+            )
+
+            # Fetch bars
+            bars = self.data_client.get_stock_bars(request)
+
+            if ticker not in bars or not bars[ticker]:
+                print(f"[!] No bar data returned for {ticker}")
+                return pd.DataFrame()
+
+            # Convert to DataFrame
+            data = []
+            for bar in bars[ticker]:
+                data.append({
+                    'Open': float(bar.open),
+                    'High': float(bar.high),
+                    'Low': float(bar.low),
+                    'Close': float(bar.close),
+                    'Volume': int(bar.volume),
+                    'timestamp': bar.timestamp
+                })
+
+            df = pd.DataFrame(data)
+            if df.empty:
+                return df
+
+            # Set timestamp as index and convert to Eastern Time
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.set_index('timestamp', inplace=True)
+
+            # Convert from UTC to Eastern Time
+            if df.index.tz is not None:
+                df.index = df.index.tz_convert('America/New_York')
+            else:
+                df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
+
+            return df
+
+        except Exception as e:
+            print(f"[!] Failed to get bars for {ticker}: {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
 
     def place_order(self, ticker, qty, action, order_type="LMT", price=None, extended_hours=True):
         """

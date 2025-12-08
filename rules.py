@@ -1508,18 +1508,21 @@ with st.sidebar:
                             "enabled": False,
                             "default_quantity": 100,
                             "entry": {
+                                "enabled": True,
                                 "actions": [
                                     {"type": "BUY", "ticker": new_ticker, "quantity": 100}
                                 ],
                                 "description": f"{new_ticker} entry signal - Go long"
                             },
                             "exit_conditions_met": {
+                                "enabled": True,
                                 "actions": [
                                     {"type": "SELL_ALL", "ticker": new_ticker}
                                 ],
                                 "description": f"{new_ticker} exit conditions met - Close position"
                             },
                             "exit_SL": {
+                                "enabled": True,
                                 "actions": [
                                     {"type": "SELL_ALL", "ticker": new_ticker}
                                 ],
