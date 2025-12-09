@@ -2094,7 +2094,58 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
             ticker_enabled = ticker_config.get('enabled', True)
             if not ticker_enabled:
                 logging.info(f"      Ticker {ticker} is DISABLED at ticker level")
-                logging.info(f"      Action: IGNORE")
+                logging.info(f"      Action: IGNORE (but send notification)")
+
+                # Send email notification that signal was detected but bot is disabled
+                if EMAIL_NOTIFICATIONS_ENABLED and (EMAIL_ON_ENTRY or EMAIL_ON_EXIT):
+                    try:
+                        eastern = pytz.timezone('America/New_York')
+                        current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                        # Format signal timestamp to EST if it has timezone info
+                        if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                            signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                        else:
+                            signal_time_str = str(timestamp)
+
+                        # Determine if this is entry or exit signal
+                        if event == 'entry':
+                            signal_emoji = "🟢"
+                            signal_type = "ENTRY"
+                            action_text = "BUY"
+                        elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
+                            signal_emoji = "🔴"
+                            signal_type = "EXIT"
+                            action_text = "SELL"
+                        else:
+                            signal_emoji = "📊"
+                            signal_type = event.upper()
+                            action_text = "TRADE"
+
+                        email_subject = f"{signal_emoji} {signal_type} SIGNAL - {ticker} (BOT DISABLED)"
+                        email_body = f"""{signal_type} Signal Detected - No Order Placed
+
+Ticker: {ticker}
+Signal: {action_text} signal detected
+Signal Price: ${price:.2f}
+Signal Time: {signal_time_str}
+Current Time: {current_time}
+
+Details: {note}
+
+⚠️ NOTE: Trading bot is currently DISABLED for {ticker}.
+No order was placed. This is a notification only.
+
+To enable trading for this ticker, update the configuration in alpaca.json.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                        send_email_alert(email_subject, email_body)
+                        logging.info(f"      ✉️  Email notification sent for disabled ticker")
+                    except Exception as e:
+                        logging.error(f"      Failed to send disabled ticker notification: {e}")
+
                 logging.info("=" * 60)
                 return False
 
@@ -2125,7 +2176,58 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
     # Check if signal is enabled
     if not config.get('enabled', False):
         logging.info(f"      Signal type: {event} (DISABLED)")
-        logging.info(f"      Action: IGNORE")
+        logging.info(f"      Action: IGNORE (but send notification)")
+
+        # Send email notification that signal was detected but signal type is disabled
+        if EMAIL_NOTIFICATIONS_ENABLED and (EMAIL_ON_ENTRY or EMAIL_ON_EXIT) and ticker:
+            try:
+                eastern = pytz.timezone('America/New_York')
+                current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                # Format signal timestamp to EST if it has timezone info
+                if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                    signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                else:
+                    signal_time_str = str(timestamp)
+
+                # Determine if this is entry or exit signal
+                if event == 'entry':
+                    signal_emoji = "🟢"
+                    signal_type = "ENTRY"
+                    action_text = "BUY"
+                elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
+                    signal_emoji = "🔴"
+                    signal_type = "EXIT"
+                    action_text = "SELL"
+                else:
+                    signal_emoji = "📊"
+                    signal_type = event.upper()
+                    action_text = "TRADE"
+
+                email_subject = f"{signal_emoji} {signal_type} SIGNAL - {ticker} (SIGNAL DISABLED)"
+                email_body = f"""{signal_type} Signal Detected - No Order Placed
+
+Ticker: {ticker}
+Signal: {action_text} signal detected
+Signal Price: ${price:.2f}
+Signal Time: {signal_time_str}
+Current Time: {current_time}
+
+Details: {note}
+
+⚠️ NOTE: The '{event}' signal type is currently DISABLED in configuration.
+No order was placed. This is a notification only.
+
+To enable this signal type, update the configuration in alpaca.json.
+
+---
+Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
+"""
+                send_email_alert(email_subject, email_body)
+                logging.info(f"      ✉️  Email notification sent for disabled signal type")
+            except Exception as e:
+                logging.error(f"      Failed to send disabled signal notification: {e}")
+
         logging.info("=" * 60)
         return False
 

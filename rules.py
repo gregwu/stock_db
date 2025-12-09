@@ -2520,7 +2520,7 @@ with st.spinner(f"Downloading {ticker} data..."):
             df5_display = df5
 
         # Chart with entries/exits - single chart with multiple y-axes
-        st.subheader(f"{interval} chart with signals")
+        st.subheader(f"{ticker} - {interval} chart with signals")
 
         # Create figure with single x-axis and multiple y-axes (like check.py)
         fig = go.Figure()
