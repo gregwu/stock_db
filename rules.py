@@ -167,6 +167,7 @@ def settings_have_changed(current_settings, loaded_settings):
         'use_bb_width', 'bb_width_threshold',
         'use_macd_cross_up', 'use_ema', 'use_price_above_ema21',
         'use_macd_threshold', 'macd_threshold', 'use_macd_valley',
+        'use_ema21_slope_entry', 'ema21_slope_entry_threshold',
         'use_rsi_overbought', 'rsi_overbought_threshold', 'use_ema_cross_down',
         'use_bb_cross_down', 'use_bb_width_exit', 'bb_width_exit_threshold',
         'use_macd_cross_down', 'use_price_below_ema9',
@@ -174,7 +175,8 @@ def settings_have_changed(current_settings, loaded_settings):
         'stop_loss_pct', 'take_profit_pct', 'use_stop_loss', 'use_take_profit',
         'use_volume',
         'use_macd_below_threshold', 'macd_below_threshold',
-        'use_macd_above_threshold', 'macd_above_threshold'
+        'use_macd_above_threshold', 'macd_above_threshold',
+        'use_ema21_slope_exit', 'ema21_slope_exit_threshold'
     ]
 
     for key in strategy_keys:
@@ -205,7 +207,9 @@ def save_settings_to_alpaca(settings, ticker):
             'macd_threshold': settings.get('macd_below_threshold', 0.1),
             'use_macd_valley': settings.get('use_macd_valley', False),
             'use_ema': settings.get('use_ema', False),  # Also keep this for backward compatibility
-            'use_volume': settings.get('use_volume', False)
+            'use_volume': settings.get('use_volume', False),
+            'use_ema21_slope_entry': settings.get('use_ema21_slope_entry', False),
+            'ema21_slope_entry_threshold': settings.get('ema21_slope_entry_threshold', 0.0)
         }
 
         exit_conditions = {
@@ -220,7 +224,9 @@ def save_settings_to_alpaca(settings, ticker):
             'use_price_vs_ema21_exit': settings.get('use_price_below_ema21', False),  # Map UI field to alpaca.json field
             'use_macd_peak': settings.get('use_macd_peak', False),
             'use_macd_above_threshold': settings.get('use_macd_above_threshold', False),
-            'macd_above_threshold': settings.get('macd_above_threshold', 0.0)
+            'macd_above_threshold': settings.get('macd_above_threshold', 0.0),
+            'use_ema21_slope_exit': settings.get('use_ema21_slope_exit', False),
+            'ema21_slope_exit_threshold': settings.get('ema21_slope_exit_threshold', 0.0)
         }
 
         risk_management = {
@@ -879,6 +885,10 @@ def backtest_symbol(df1,
                     macd_above_threshold=0.0,
                     use_macd_peak=False,
                     use_macd_valley=False,
+                    use_ema21_slope_entry=False,
+                    ema21_slope_entry_threshold=0.0,
+                    use_ema21_slope_exit=False,
+                    ema21_slope_exit_threshold=0.0,
                     avoid_extended_hours=False):
     """
     Apply Greg's rules to a single symbol.
@@ -902,6 +912,10 @@ def backtest_symbol(df1,
     # Calculate EMA9, EMA21 and BB(20,2) on selected interval
     df5["ema9"] = ema(df5["Close"], 9)
     df5["ema21"] = ema(df5["Close"], 21)
+
+    # Calculate EMA21 slope (percentage change from previous bar)
+    df5["ema21_slope"] = ((df5["ema21"] - df5["ema21"].shift(1)) / df5["ema21"].shift(1) * 100).fillna(0)
+
     bb_mid, bb_up, bb_low = bollinger_bands(df5["Close"], 20, 2)
     df5["bb_mid"] = bb_mid
     df5["bb_up"] = bb_up
@@ -974,6 +988,7 @@ def backtest_symbol(df1,
         ema21 = row["ema21"]
         ema9_prev = row["ema9_prev"]
         ema21_prev = row["ema21_prev"]
+        ema21_slope = row["ema21_slope"]
         bb_low_v = row["bb_low"]
         bb_up_v = row["bb_up"]
         bb_width_val = row["bb_width"]
@@ -1075,6 +1090,8 @@ def backtest_symbol(df1,
                 exit_conditions.append(macd_val is not np.nan and macd_val > macd_above_threshold)
             if use_macd_peak:
                 exit_conditions.append(is_macd_peak)
+            if use_ema21_slope_exit:
+                exit_conditions.append(ema21_slope is not np.nan and ema21_slope < ema21_slope_exit_threshold)
 
             # Check if all enabled exit conditions are met
             if exit_conditions and all(exit_conditions):
@@ -1100,6 +1117,8 @@ def backtest_symbol(df1,
                     exit_note_parts.append(f"MACD > {macd_above_threshold} (MACD={macd_val:.4f})")
                 if use_macd_peak:
                     exit_note_parts.append(f"MACD peak (MACD={macd_val:.4f})")
+                if use_ema21_slope_exit:
+                    exit_note_parts.append(f"EMA21 slope < {ema21_slope_exit_threshold}% (Slope={ema21_slope:.4f}%)")
 
                 exit_reason = ', '.join(exit_note_parts)
                 entry_reason = position.get("entry_reason", "N/A")
@@ -1155,6 +1174,8 @@ def backtest_symbol(df1,
                     conditions.append(is_macd_valley)
                 if use_volume:
                     conditions.append(prev_vol is not np.nan and vol >= prev_vol)
+                if use_ema21_slope_entry:
+                    conditions.append(ema21_slope is not np.nan and ema21_slope > ema21_slope_entry_threshold)
 
                 # If no conditions are enabled, don't allow entry
                 if not conditions:
@@ -1199,6 +1220,8 @@ def backtest_symbol(df1,
                         note_parts.append(f"MACD valley detected (MACD={macd_val:.4f})")
                     if use_volume:
                         note_parts.append(f"Volume rising (Vol={vol:.0f}, PrevVol={prev_vol:.0f})")
+                    if use_ema21_slope_entry:
+                        note_parts.append(f"EMA21 slope > {ema21_slope_entry_threshold}% (Slope={ema21_slope:.4f}%)")
 
                     entry_reason = ', '.join(note_parts)
                     position = {"entry_time": t, "entry_price": close, "entry_reason": entry_reason}
@@ -1282,6 +1305,8 @@ def get_settings_from_file(ticker):
         'use_macd_below_threshold': entry.get('use_macd_threshold', False),
         'macd_below_threshold': entry.get('macd_threshold', 0.1),
         'use_macd_valley': entry.get('use_macd_valley', False),
+        'use_ema21_slope_entry': entry.get('use_ema21_slope_entry', False),
+        'ema21_slope_entry_threshold': entry.get('ema21_slope_entry_threshold', 0.0),
         # Exit conditions from alpaca.json
         'use_rsi_exit': exit_cond.get('use_rsi_exit', False),
         'rsi_exit_threshold': exit_cond.get('rsi_exit_threshold', 70),
@@ -1299,6 +1324,8 @@ def get_settings_from_file(ticker):
         'use_macd_peak': exit_cond.get('use_macd_peak', False),
         'use_macd_above_threshold': exit_cond.get('use_macd_above_threshold', False),
         'macd_above_threshold': exit_cond.get('macd_above_threshold', 0.0),
+        'use_ema21_slope_exit': exit_cond.get('use_ema21_slope_exit', False),
+        'ema21_slope_exit_threshold': exit_cond.get('ema21_slope_exit_threshold', 0.0),
         # Risk management from alpaca.json
         'stop_loss_pct': risk.get('stop_loss', 0.02) * 100,
         'take_profit_pct': risk.get('take_profit', 0.03) * 100,
@@ -1599,6 +1626,8 @@ with st.sidebar:
         st.session_state.settings['use_macd_below_threshold'] = entry.get('use_macd_threshold', False)
         st.session_state.settings['macd_below_threshold'] = entry.get('macd_threshold', 0.1)
         st.session_state.settings['use_macd_valley'] = entry.get('use_macd_valley', False)
+        st.session_state.settings['use_ema21_slope_entry'] = entry.get('use_ema21_slope_entry', False)
+        st.session_state.settings['ema21_slope_entry_threshold'] = entry.get('ema21_slope_entry_threshold', 0.0)
 
         # Exit conditions from alpaca.json
         st.session_state.settings['use_rsi_exit'] = exit_cond.get('use_rsi_exit', False)
@@ -1617,6 +1646,8 @@ with st.sidebar:
         st.session_state.settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
         st.session_state.settings['use_macd_above_threshold'] = exit_cond.get('use_macd_above_threshold', False)
         st.session_state.settings['macd_above_threshold'] = exit_cond.get('macd_above_threshold', 0.0)
+        st.session_state.settings['use_ema21_slope_exit'] = exit_cond.get('use_ema21_slope_exit', False)
+        st.session_state.settings['ema21_slope_exit_threshold'] = exit_cond.get('ema21_slope_exit_threshold', 0.0)
 
         # Risk management from alpaca.json
         st.session_state.settings['use_stop_loss'] = risk.get('use_stop_loss', True)
@@ -1929,7 +1960,8 @@ with st.sidebar:
     bb_width_threshold = st.number_input("BB Width threshold (%)",
                                          min_value=0.1, max_value=20.0,
                                          value=st.session_state.settings['bb_width_threshold'],
-                                         step=0.1,
+                                         step=0.001,
+                                         format="%.3f",
                                          disabled=not use_bb_width,
                                          help="Entry when BB width is above this percentage (typical: 5-10%)",
                                          key='bb_width_threshold_widget', on_change=create_setting_callback('bb_width_threshold'))
@@ -1973,7 +2005,8 @@ with st.sidebar:
 
     macd_below_threshold = st.number_input("MACD below threshold value",
                                             value=st.session_state.settings['macd_below_threshold'],
-                                            step=0.1,
+                                            step=0.001,
+                                            format="%.3f",
                                             disabled=not use_macd_below_threshold,
                                             help="Enter when MACD is below this value",
                                             key='macd_below_threshold_widget', on_change=create_setting_callback('macd_below_threshold'))
@@ -1993,6 +2026,28 @@ with st.sidebar:
                             help="Current candle volume >= previous candle volume",
                             key='use_volume_widget', on_change=create_setting_callback('use_volume'))
     st.session_state.settings['use_volume'] = use_volume
+
+    # Handle backwards compatibility for use_ema21_slope_entry
+    if 'use_ema21_slope_entry' not in st.session_state.settings:
+        st.session_state.settings['use_ema21_slope_entry'] = False
+    if 'ema21_slope_entry_threshold' not in st.session_state.settings:
+        st.session_state.settings['ema21_slope_entry_threshold'] = 0.0
+
+    use_ema21_slope_entry = st.checkbox("EMA21 Slope > Threshold (rising)",
+                                        value=st.session_state.settings['use_ema21_slope_entry'],
+                                        help="Entry when EMA21 slope is above threshold (trending up)",
+                                        key='use_ema21_slope_entry_widget', on_change=create_setting_callback('use_ema21_slope_entry'))
+    st.session_state.settings['use_ema21_slope_entry'] = use_ema21_slope_entry
+
+    ema21_slope_entry_threshold = st.number_input("EMA21 slope entry threshold (%)",
+                                                  min_value=-1.0, max_value=1.0,
+                                                  value=st.session_state.settings['ema21_slope_entry_threshold'],
+                                                  step=0.001,
+                                                  format="%.3f",
+                                                  disabled=not use_ema21_slope_entry,
+                                                  help="Entry when EMA21 slope is above this % (typical: 0.01-0.1%)",
+                                                  key='ema21_slope_entry_threshold_widget', on_change=create_setting_callback('ema21_slope_entry_threshold'))
+    st.session_state.settings['ema21_slope_entry_threshold'] = ema21_slope_entry_threshold
 
     # Price drop from exit requirement
     # Exit Rules
@@ -2080,7 +2135,8 @@ with st.sidebar:
     bb_width_exit_threshold = st.number_input("BB Width exit threshold (%)",
                                               min_value=0.1, max_value=20.0,
                                               value=st.session_state.settings['bb_width_exit_threshold'],
-                                              step=0.1,
+                                              step=0.001,
+                                              format="%.3f",
                                               disabled=not use_bb_width_exit,
                                               help="Exit when BB width exceeds this percentage (typical: 8-15%)",
                                               key='bb_width_exit_threshold_widget', on_change=create_setting_callback('bb_width_exit_threshold'))
@@ -2110,7 +2166,8 @@ with st.sidebar:
 
     macd_above_threshold = st.number_input("MACD above threshold value",
                                             value=st.session_state.settings['macd_above_threshold'],
-                                            step=0.1,
+                                            step=0.001,
+                                            format="%.3f",
                                             disabled=not use_macd_above_threshold,
                                             help="Exit when MACD exceeds this value",
                                             key='macd_above_threshold_widget', on_change=create_setting_callback('macd_above_threshold'))
@@ -2125,6 +2182,28 @@ with st.sidebar:
                                  help="Exit when MACD peak is detected (MACD turning down)",
                                  key='use_macd_peak_widget', on_change=create_setting_callback('use_macd_peak'))
     st.session_state.settings['use_macd_peak'] = use_macd_peak
+
+    # Handle backwards compatibility for use_ema21_slope_exit
+    if 'use_ema21_slope_exit' not in st.session_state.settings:
+        st.session_state.settings['use_ema21_slope_exit'] = False
+    if 'ema21_slope_exit_threshold' not in st.session_state.settings:
+        st.session_state.settings['ema21_slope_exit_threshold'] = 0.0
+
+    use_ema21_slope_exit = st.checkbox("Exit on EMA21 Slope < Threshold (falling)",
+                                       value=st.session_state.settings['use_ema21_slope_exit'],
+                                       help="Exit when EMA21 slope is below threshold (trending down)",
+                                       key='use_ema21_slope_exit_widget', on_change=create_setting_callback('use_ema21_slope_exit'))
+    st.session_state.settings['use_ema21_slope_exit'] = use_ema21_slope_exit
+
+    ema21_slope_exit_threshold = st.number_input("EMA21 slope exit threshold (%)",
+                                                 min_value=-1.0, max_value=1.0,
+                                                 value=st.session_state.settings['ema21_slope_exit_threshold'],
+                                                 step=0.001,
+                                                 format="%.3f",
+                                                 disabled=not use_ema21_slope_exit,
+                                                 help="Exit when EMA21 slope is below this % (typical: -0.1-0.0%)",
+                                                 key='ema21_slope_exit_threshold_widget', on_change=create_setting_callback('ema21_slope_exit_threshold'))
+    st.session_state.settings['ema21_slope_exit_threshold'] = ema21_slope_exit_threshold
 
     st.divider()
 
@@ -2387,6 +2466,10 @@ with st.spinner(f"Downloading {ticker} data..."):
             macd_above_threshold=macd_above_threshold,
             use_macd_peak=use_macd_peak,
             use_macd_valley=use_macd_valley,
+            use_ema21_slope_entry=use_ema21_slope_entry,
+            ema21_slope_entry_threshold=ema21_slope_entry_threshold,
+            use_ema21_slope_exit=use_ema21_slope_exit,
+            ema21_slope_exit_threshold=ema21_slope_exit_threshold,
             avoid_extended_hours=avoid_extended_hours_setting
         )
 
@@ -2473,8 +2556,16 @@ with st.spinner(f"Downloading {ticker} data..."):
         fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["ema9"],
                                  name="EMA9", line=dict(width=1),
                                  yaxis='y'))
+        # Create custom hover text for EMA21 with slope
+        # Note: slope is already calculated as percentage (×100), so display as-is
+        ema21_hover = [
+            f"EMA21: {ema:.2f}<br>Slope: {slope:.4f}%"
+            for ema, slope in zip(df5_display["ema21"], df5_display["ema21_slope"])
+        ]
         fig.add_trace(go.Scatter(x=df5_display.index, y=df5_display["ema21"],
                                  name="EMA21", line=dict(width=1, color='purple'),
+                                 hovertemplate='%{text}<extra></extra>',
+                                 text=ema21_hover,
                                  yaxis='y'))
 
         if show_signals and not trades_df.empty:
@@ -2495,8 +2586,23 @@ with st.spinner(f"Downloading {ticker} data..."):
                 # Build enhanced entry tooltips with buy price
                 entry_tooltips = []
                 for idx, row in all_entries.iterrows():
-                    # Start with entry reason and buy price only
-                    tooltip = f"{row['entry_reason']}<br>Buy: ${row['entry_price']:.2f}"
+                    # Group entry conditions with line breaks for readability
+                    entry_reason = row['entry_reason']
+                    # Remove "Entry: " prefix if present
+                    if entry_reason.startswith("Entry: "):
+                        entry_reason = entry_reason[7:]
+
+                    # Split conditions and format with line breaks
+                    conditions = entry_reason.split(', ')
+                    formatted_conditions = '<br>  • ' + '<br>  • '.join(conditions)
+
+                    # Format entry time
+                    entry_display = row['entry_time']
+                    if hasattr(entry_display, 'tz_convert'):
+                        entry_display = entry_display.tz_convert('America/New_York')
+                    entry_time_str = entry_display.strftime('%Y-%m-%d %H:%M %Z')
+
+                    tooltip = f"<b>ENTRY</b>{formatted_conditions}<br><b>Time:</b> {entry_time_str}<br><b>Buy:</b> ${row['entry_price']:.2f}"
                     entry_tooltips.append(tooltip)
 
                 # Add entry signals to chart
@@ -2516,17 +2622,28 @@ with st.spinner(f"Downloading {ticker} data..."):
                 exit_tooltips = []
                 exit_colors = []
                 for _, row in real_exits.iterrows():
-                    # Format both entry and exit times for verification
-                    # Ensure timezone is properly displayed (convert to ET if needed)
-                    entry_display = row['entry_time']
+                    # Group exit conditions with line breaks for readability
+                    exit_reason = row['exit_reason']
+                    # Remove "Exit: " prefix if present
+                    if exit_reason.startswith("Exit: "):
+                        exit_reason = exit_reason[6:]
+
+                    # Format exit reason - could be "SL", "TP", or multiple conditions
+                    if exit_reason in ["SL", "TP"]:
+                        formatted_exit = f"<b>EXIT: {exit_reason}</b>"
+                    else:
+                        # Split conditions and format with line breaks
+                        conditions = exit_reason.split(', ')
+                        formatted_conditions = '<br>  • ' + '<br>  • '.join(conditions)
+                        formatted_exit = f"<b>EXIT</b>{formatted_conditions}"
+
+                    # Format exit time
                     exit_display = row['exit_time']
-                    if hasattr(entry_display, 'tz_convert'):
-                        entry_display = entry_display.tz_convert('America/New_York')
                     if hasattr(exit_display, 'tz_convert'):
                         exit_display = exit_display.tz_convert('America/New_York')
-                    entry_time_str = entry_display.strftime('%Y-%m-%d %H:%M %Z')
                     exit_time_str = exit_display.strftime('%Y-%m-%d %H:%M %Z')
-                    tooltip = f"{row['exit_reason']}<br>Entry: {entry_time_str}<br>Exit: {exit_time_str}<br>Sell: ${row['exit_price']:.2f}<br>Return: {row['return_pct']:.2f}%"
+
+                    tooltip = f"{formatted_exit}<br><b>Time:</b> {exit_time_str}<br><b>Sell:</b> ${row['exit_price']:.2f}<br><b>Return:</b> {row['return_pct']:.2f}%"
                     exit_tooltips.append(tooltip)
                     # Use red for profit, black for loss
                     exit_colors.append('red' if row['return_pct'] >= 0 else 'black')

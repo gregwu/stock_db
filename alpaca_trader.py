@@ -201,6 +201,8 @@ def flatten_strategy(strategy):
     settings['use_macd_valley'] = entry.get('use_macd_valley', False)
     settings['use_ema'] = entry.get('use_ema', False)
     settings['use_volume'] = entry.get('use_volume', False)
+    settings['use_ema21_slope_entry'] = entry.get('use_ema21_slope_entry', False)
+    settings['ema21_slope_entry_threshold'] = entry.get('ema21_slope_entry_threshold', 0.0)
 
     # Exit conditions
     exit_cond = strategy.get('exit_conditions', {})
@@ -214,6 +216,8 @@ def flatten_strategy(strategy):
     settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
     settings['use_macd_above_threshold'] = exit_cond.get('use_macd_above_threshold', False)
     settings['macd_above_threshold'] = exit_cond.get('macd_above_threshold', 0.0)
+    settings['use_ema21_slope_exit'] = exit_cond.get('use_ema21_slope_exit', False)
+    settings['ema21_slope_exit_threshold'] = exit_cond.get('ema21_slope_exit_threshold', 0.0)
 
     # Risk management
     risk = strategy.get('risk_management', {})
@@ -2373,7 +2377,11 @@ def run_strategy():
                 use_macd_above_threshold=ticker_settings.get('use_macd_above_threshold', False),
                 macd_above_threshold=ticker_settings.get('macd_above_threshold', 0),
                 use_macd_peak=ticker_settings.get('use_macd_peak', False),
-                use_macd_valley=ticker_settings.get('use_macd_valley', False)
+                use_macd_valley=ticker_settings.get('use_macd_valley', False),
+                use_ema21_slope_entry=ticker_settings.get('use_ema21_slope_entry', False),
+                ema21_slope_entry_threshold=ticker_settings.get('ema21_slope_entry_threshold', 0.0),
+                use_ema21_slope_exit=ticker_settings.get('use_ema21_slope_exit', False),
+                ema21_slope_exit_threshold=ticker_settings.get('ema21_slope_exit_threshold', 0.0)
             )
 
             # Get current price from DataFrame
