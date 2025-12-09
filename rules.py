@@ -1156,6 +1156,8 @@ def backtest_symbol(df1,
                 # Build entry conditions based on enabled rules
                 conditions = []
 
+                if use_rsi:
+                    conditions.append(rsi_last < rsi_threshold)
                 if use_ema_cross_up:
                     conditions.append(ema_cross_up)
                 if use_bb_cross_up:
