@@ -1547,10 +1547,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     # Market order
                     price_info += f"\nOrder Price: Market Order (executed at best available price)"
 
+                # Get interval and period from ticker strategy
+                ticker_configs = signal_actions_config.get('tickers', {})
+                ticker_config = ticker_configs.get(ticker, {})
+                ticker_strategy = ticker_config.get('strategy', {})
+                interval = ticker_strategy.get('interval', 'N/A')
+                period = ticker_strategy.get('period', 'N/A')
+
                 email_subject = f"🟢 ENTRY SIGNAL - {ticker}"
                 email_body = f"""Entry Signal Executed
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: BUY {quantity} shares
 Order Type: {order_type}
 {price_info}
@@ -1752,6 +1761,13 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     slippage_pct = ((price - order_price) / price) * 100
                     price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
 
+                # Get interval and period from ticker strategy
+                ticker_configs = signal_actions_config.get('tickers', {})
+                ticker_config = ticker_configs.get(ticker, {})
+                ticker_strategy = ticker_config.get('strategy', {})
+                interval = ticker_strategy.get('interval', 'N/A')
+                period = ticker_strategy.get('period', 'N/A')
+
                 # Choose emoji based on P&L
                 if has_pnl:
                     if pnl_dollars >= 0:
@@ -1768,6 +1784,8 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 email_body = f"""Exit Signal Executed
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: SELL {sell_qty} shares
 Order Type: {sell_order_type}
 {price_info}
@@ -1958,6 +1976,13 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                         slippage_pct = ((price - order_price) / price) * 100
                         price_info += f"\nOrder Price: ${order_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
 
+                    # Get interval and period from ticker strategy
+                    ticker_configs = signal_actions_config.get('tickers', {})
+                    ticker_config = ticker_configs.get(ticker, {})
+                    ticker_strategy = ticker_config.get('strategy', {})
+                    interval = ticker_strategy.get('interval', 'N/A')
+                    period = ticker_strategy.get('period', 'N/A')
+
                     # Choose emoji based on P&L
                     if has_pnl:
                         if pnl_dollars >= 0:
@@ -1974,6 +1999,8 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     email_body = f"""Exit Signal Executed
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: SELL ALL ({available_qty} shares)
 Order Type: {sell_order_type}
 {price_info}
@@ -2097,35 +2124,69 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
                 logging.info(f"      Action: IGNORE (but send notification)")
 
                 # Send email notification that signal was detected but bot is disabled
+                # Only send for entry/exit signals, not for oversold/overbought alerts
                 if EMAIL_NOTIFICATIONS_ENABLED and (EMAIL_ON_ENTRY or EMAIL_ON_EXIT):
-                    try:
-                        eastern = pytz.timezone('America/New_York')
-                        current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+                    # Only notify for actual buy/sell signals
+                    if event in ['entry', 'exit_SL', 'exit_TP', 'exit_conditions_met']:
+                        # Check if signal is too old (more than MAX_SIGNAL_AGE_MINUTES)
+                        try:
+                            eastern = pytz.timezone('America/New_York')
+                            now_et = datetime.now(eastern)
 
-                        # Format signal timestamp to EST if it has timezone info
-                        if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
-                            signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
-                        else:
-                            signal_time_str = str(timestamp)
+                            # Convert timestamp to datetime if needed
+                            if hasattr(timestamp, 'tz_localize'):
+                                signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
+                            elif hasattr(timestamp, 'tz_convert'):
+                                signal_time = timestamp.tz_convert('America/New_York')
+                            else:
+                                # Try to parse string timestamp
+                                signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
 
-                        # Determine if this is entry or exit signal
-                        if event == 'entry':
-                            signal_emoji = "🟢"
-                            signal_type = "ENTRY"
-                            action_text = "BUY"
-                        elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
-                            signal_emoji = "🔴"
-                            signal_type = "EXIT"
-                            action_text = "SELL"
-                        else:
-                            signal_emoji = "📊"
-                            signal_type = event.upper()
-                            action_text = "TRADE"
+                            time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
 
-                        email_subject = f"{signal_emoji} {signal_type} SIGNAL - {ticker} (BOT DISABLED)"
-                        email_body = f"""{signal_type} Signal Detected - No Order Placed
+                            if time_diff > MAX_SIGNAL_AGE_MINUTES:
+                                logging.info(f"      ⚠️  Signal is too old ({time_diff:.1f} minutes) - skipping notification for disabled ticker")
+                                logging.info("=" * 60)
+                                return False
+
+                        except Exception as e:
+                            logging.warning(f"      Could not check signal age: {e}. Proceeding with notification.")
+
+                        try:
+                            eastern = pytz.timezone('America/New_York')
+                            current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                            # Format signal timestamp to EST if it has timezone info
+                            if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                                signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                            else:
+                                signal_time_str = str(timestamp)
+
+                            # Get interval and period from ticker strategy
+                            ticker_strategy = ticker_config.get('strategy', {})
+                            interval = ticker_strategy.get('interval', 'N/A')
+                            period = ticker_strategy.get('period', 'N/A')
+
+                            # Determine if this is entry or exit signal
+                            if event == 'entry':
+                                signal_emoji = "🟢"
+                                signal_type = "ENTRY"
+                                action_text = "BUY"
+                            elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
+                                signal_emoji = "🔴"
+                                signal_type = "EXIT"
+                                action_text = "SELL"
+                            else:
+                                signal_emoji = "📊"
+                                signal_type = event.upper()
+                                action_text = "TRADE"
+
+                            email_subject = f"{signal_emoji} {signal_type} SIGNAL - {ticker} (BOT DISABLED)"
+                            email_body = f"""{signal_type} Signal Detected - No Order Placed
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Signal: {action_text} signal detected
 Signal Price: ${price:.2f}
 Signal Time: {signal_time_str}
@@ -2141,10 +2202,10 @@ To enable trading for this ticker, update the configuration in alpaca.json.
 ---
 Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
-                        send_email_alert(email_subject, email_body)
-                        logging.info(f"      ✉️  Email notification sent for disabled ticker")
-                    except Exception as e:
-                        logging.error(f"      Failed to send disabled ticker notification: {e}")
+                            send_email_alert(email_subject, email_body)
+                            logging.info(f"      ✉️  Email notification sent for disabled ticker")
+                        except Exception as e:
+                            logging.error(f"      Failed to send disabled ticker notification: {e}")
 
                 logging.info("=" * 60)
                 return False
@@ -2179,35 +2240,71 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         logging.info(f"      Action: IGNORE (but send notification)")
 
         # Send email notification that signal was detected but signal type is disabled
+        # Only send for entry/exit signals, not for oversold/overbought alerts
         if EMAIL_NOTIFICATIONS_ENABLED and (EMAIL_ON_ENTRY or EMAIL_ON_EXIT) and ticker:
-            try:
-                eastern = pytz.timezone('America/New_York')
-                current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+            # Only notify for actual buy/sell signals
+            if event in ['entry', 'exit_SL', 'exit_TP', 'exit_conditions_met']:
+                # Check if signal is too old (more than MAX_SIGNAL_AGE_MINUTES)
+                try:
+                    eastern = pytz.timezone('America/New_York')
+                    now_et = datetime.now(eastern)
 
-                # Format signal timestamp to EST if it has timezone info
-                if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
-                    signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
-                else:
-                    signal_time_str = str(timestamp)
+                    # Convert timestamp to datetime if needed
+                    if hasattr(timestamp, 'tz_localize'):
+                        signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
+                    elif hasattr(timestamp, 'tz_convert'):
+                        signal_time = timestamp.tz_convert('America/New_York')
+                    else:
+                        # Try to parse string timestamp
+                        signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
 
-                # Determine if this is entry or exit signal
-                if event == 'entry':
-                    signal_emoji = "🟢"
-                    signal_type = "ENTRY"
-                    action_text = "BUY"
-                elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
-                    signal_emoji = "🔴"
-                    signal_type = "EXIT"
-                    action_text = "SELL"
-                else:
-                    signal_emoji = "📊"
-                    signal_type = event.upper()
-                    action_text = "TRADE"
+                    time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
 
-                email_subject = f"{signal_emoji} {signal_type} SIGNAL - {ticker} (SIGNAL DISABLED)"
-                email_body = f"""{signal_type} Signal Detected - No Order Placed
+                    if time_diff > MAX_SIGNAL_AGE_MINUTES:
+                        logging.info(f"      ⚠️  Signal is too old ({time_diff:.1f} minutes) - skipping notification for disabled signal type")
+                        logging.info("=" * 60)
+                        return False
+
+                except Exception as e:
+                    logging.warning(f"      Could not check signal age: {e}. Proceeding with notification.")
+
+                try:
+                    eastern = pytz.timezone('America/New_York')
+                    current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                    # Format signal timestamp to EST if it has timezone info
+                    if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                        signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                    else:
+                        signal_time_str = str(timestamp)
+
+                    # Get interval and period from ticker strategy
+                    ticker_configs = signal_actions_config.get('tickers', {})
+                    ticker_config = ticker_configs.get(ticker, {})
+                    ticker_strategy = ticker_config.get('strategy', {})
+                    interval = ticker_strategy.get('interval', 'N/A')
+                    period = ticker_strategy.get('period', 'N/A')
+
+                    # Determine if this is entry or exit signal
+                    if event == 'entry':
+                        signal_emoji = "🟢"
+                        signal_type = "ENTRY"
+                        action_text = "BUY"
+                    elif event in ['exit_SL', 'exit_TP', 'exit_conditions_met']:
+                        signal_emoji = "🔴"
+                        signal_type = "EXIT"
+                        action_text = "SELL"
+                    else:
+                        signal_emoji = "📊"
+                        signal_type = event.upper()
+                        action_text = "TRADE"
+
+                    email_subject = f"{signal_emoji} {signal_type} SIGNAL - {ticker} (SIGNAL DISABLED)"
+                    email_body = f"""{signal_type} Signal Detected - No Order Placed
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Signal: {action_text} signal detected
 Signal Price: ${price:.2f}
 Signal Time: {signal_time_str}
@@ -2223,10 +2320,10 @@ To enable this signal type, update the configuration in alpaca.json.
 ---
 Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 """
-                send_email_alert(email_subject, email_body)
-                logging.info(f"      ✉️  Email notification sent for disabled signal type")
-            except Exception as e:
-                logging.error(f"      Failed to send disabled signal notification: {e}")
+                    send_email_alert(email_subject, email_body)
+                    logging.info(f"      ✉️  Email notification sent for disabled signal type")
+                except Exception as e:
+                    logging.error(f"      Failed to send disabled signal notification: {e}")
 
         logging.info("=" * 60)
         return False
@@ -2348,22 +2445,23 @@ def run_strategy():
     disabled_tickers = [t for t in tickers if not ticker_configs.get(t, {}).get('enabled', True)]
 
     if enabled_tickers:
-        logging.info(f"✅ Monitoring {len(enabled_tickers)} enabled ticker(s): {', '.join(enabled_tickers)}")
+        logging.info(f"✅ Monitoring {len(enabled_tickers)} enabled ticker(s) for trading: {', '.join(enabled_tickers)}")
     if disabled_tickers:
-        logging.info(f"⚠️  Skipping {len(disabled_tickers)} disabled ticker(s): {', '.join(disabled_tickers)}")
+        logging.info(f"📧 Monitoring {len(disabled_tickers)} disabled ticker(s) for notifications only: {', '.join(disabled_tickers)}")
 
     # Check each ticker for signals
     for ticker in tickers:
-        # Check if ticker is enabled in signal_actions config FIRST
+        # Check if ticker is enabled in signal_actions config
         ticker_configs = signal_actions_config.get('tickers', {})
+        ticker_enabled = True
         if ticker in ticker_configs:
             ticker_enabled = ticker_configs[ticker].get('enabled', True)
-            if not ticker_enabled:
-                # Skip disabled ticker silently (already shown in summary above)
-                continue
 
         logging.info("-" * 60)
-        logging.info(f"Checking {ticker}...")
+        if ticker_enabled:
+            logging.info(f"Checking {ticker}...")
+        else:
+            logging.info(f"Checking {ticker} (DISABLED - monitoring only for notifications)...")
 
         # Load ticker-specific strategy settings (interval and period)
         ticker_config = ticker_configs.get(ticker, {})
