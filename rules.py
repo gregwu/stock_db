@@ -1928,7 +1928,7 @@ with st.sidebar:
                          key='use_rsi_widget', on_change=create_setting_callback('use_rsi'))
     st.session_state.settings['use_rsi'] = use_rsi
 
-    rsi_threshold = st.number_input("RSI oversold threshold", min_value=10, max_value=50,
+    rsi_threshold = st.number_input("RSI oversold threshold", min_value=0, max_value=100,
                                     value=st.session_state.settings['rsi_threshold'],
                                     disabled=not use_rsi,
                                     help="Alert when RSI falls below this level",
@@ -2087,7 +2087,7 @@ with st.sidebar:
     st.session_state.settings['use_rsi_overbought'] = use_rsi_overbought
 
     rsi_overbought_threshold = st.number_input("RSI overbought threshold",
-                                                min_value=50, max_value=90,
+                                                min_value=0, max_value=100,
                                                 value=st.session_state.settings['rsi_overbought_threshold'],
                                                 disabled=not use_rsi_overbought,
                                                 help="Exit when RSI rises above this level",

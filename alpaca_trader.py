@@ -1242,7 +1242,8 @@ def execute_action(action_config, price, note, timestamp, state):
                 logging.info(f"      Price difference: {price_diff_pct:+.2f}%")
 
                 # Skip buy if current price is higher than signal price by max slippage threshold
-                if price_diff_pct > MAX_BUY_SLIPPAGE_PCT:
+                # DISABLED: Always proceed with BUY regardless of price movement
+                if False and price_diff_pct > MAX_BUY_SLIPPAGE_PCT:
                     logging.warning(f"      ⚠️  SKIPPING BUY - Current price ${current_price:.2f} is {price_diff_pct:.2f}% higher than signal price ${signal_price:.2f}")
 
                     # Still send email notification
@@ -1266,10 +1267,19 @@ def execute_action(action_config, price, note, timestamp, state):
                             slippage_pct = ((limit_price - signal_price) / signal_price) * 100
                             order_price_info = f"${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
 
+                        # Get interval and period from ticker strategy
+                        ticker_configs = signal_actions_config.get('tickers', {})
+                        ticker_config = ticker_configs.get(ticker, {})
+                        ticker_strategy = ticker_config.get('strategy', {})
+                        interval = ticker_strategy.get('interval', 'N/A')
+                        period = ticker_strategy.get('period', 'N/A')
+
                         email_subject = f"⚠️ BUY SKIPPED - {ticker} (Price Too High)"
                         email_body = f"""Buy Order Skipped - Price Moved Too Much
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: BUY {quantity} shares (SKIPPED)
 Order Type: {order_type}
 Signal Price: ${signal_price:.2f}
@@ -1344,10 +1354,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 except Exception as e:
                     logging.warning(f"      Could not fetch current price for email: {e}")
 
+                # Get interval and period from ticker strategy
+                ticker_configs = signal_actions_config.get('tickers', {})
+                ticker_config = ticker_configs.get(ticker, {})
+                ticker_strategy = ticker_config.get('strategy', {})
+                interval = ticker_strategy.get('interval', 'N/A')
+                period = ticker_strategy.get('period', 'N/A')
+
                 email_subject = f"⚠️ BUY SKIPPED - {ticker} (Extended Hours)"
                 email_body = f"""Buy Order Skipped - Extended Hours Trading Disabled
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: BUY {quantity} shares (SKIPPED)
 Order Type: {order_type}
 Signal Price: ${price:.2f}
@@ -1427,10 +1446,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                             price_diff_pct = ((current_price - price) / price) * 100
                             current_price_info = f"\nCurrent Price: ${current_price:.2f}\nPrice Change: {price_diff_pct:+.2f}%"
 
+                        # Get interval and period from ticker strategy
+                        ticker_configs = signal_actions_config.get('tickers', {})
+                        ticker_config = ticker_configs.get(ticker, {})
+                        ticker_strategy = ticker_config.get('strategy', {})
+                        interval = ticker_strategy.get('interval', 'N/A')
+                        period = ticker_strategy.get('period', 'N/A')
+
                         email_subject = f"⚠️ BUY SKIPPED - {ticker} (Stale Signal)"
                         email_body = f"""Buy Order Skipped - Signal Too Old
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: BUY {quantity} shares (SKIPPED)
 Order Type: {order_type}
 {price_info}{current_price_info}
@@ -1642,10 +1670,19 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                             price_diff_pct = ((current_price - price) / price) * 100
                             current_price_info = f"\nCurrent Price: ${current_price:.2f}\nPrice Change: {price_diff_pct:+.2f}%"
 
+                        # Get interval and period from ticker strategy
+                        ticker_configs = signal_actions_config.get('tickers', {})
+                        ticker_config = ticker_configs.get(ticker, {})
+                        ticker_strategy = ticker_config.get('strategy', {})
+                        interval = ticker_strategy.get('interval', 'N/A')
+                        period = ticker_strategy.get('period', 'N/A')
+
                         email_subject = f"⚠️ SELL SKIPPED - {ticker} (Stale Signal)"
                         email_body = f"""Sell Order Skipped - Signal Too Old
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: SELL {quantity} shares (SKIPPED)
 Signal Price: ${price:.2f}{current_price_info}
 Signal Time: {signal_time_str}
@@ -1846,7 +1883,8 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     logging.info(f"      Price difference: {price_diff_pct:+.2f}%")
 
                     # Skip sell if signal price is greater than current price by max slippage threshold
-                    if price_diff_pct > MAX_SELL_SLIPPAGE_PCT:
+                    # DISABLED: Always proceed with SELL regardless of price movement
+                    if False and price_diff_pct > MAX_SELL_SLIPPAGE_PCT:
                         logging.warning(f"      ⚠️  SKIPPING SELL - Signal price ${signal_price:.2f} is {price_diff_pct:.2f}% higher than current price ${current_price:.2f}")
 
                         # Still send email notification
@@ -1854,15 +1892,31 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                             eastern = pytz.timezone('America/New_York')
                             current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+                            # Format signal timestamp to EST if it has timezone info
+                            if hasattr(timestamp, 'tz_localize') or hasattr(timestamp, 'tz_convert'):
+                                signal_time_str = timestamp.tz_convert('America/New_York').strftime('%Y-%m-%d %H:%M:%S %Z')
+                            else:
+                                signal_time_str = str(timestamp)
+
+                            # Get interval and period from ticker strategy
+                            ticker_configs = signal_actions_config.get('tickers', {})
+                            ticker_config = ticker_configs.get(ticker, {})
+                            ticker_strategy = ticker_config.get('strategy', {})
+                            interval = ticker_strategy.get('interval', 'N/A')
+                            period = ticker_strategy.get('period', 'N/A')
+
                             email_subject = f"⚠️ SELL SKIPPED - {ticker} (Price Too Low)"
                             email_body = f"""Sell Order Skipped - Price Dropped Too Much
 
 Ticker: {ticker}
+Interval: {interval}
+Period: {period}
 Action: SELL {available_qty} shares (SKIPPED)
 Signal Price: ${signal_price:.2f}
 Current Price: ${current_price:.2f}
 Price Drop: {price_diff_pct:.2f}%
-Time: {current_time}
+Signal Time: {signal_time_str}
+Current Time: {current_time}
 
 Details: {note}
 
@@ -2594,45 +2648,62 @@ def run_strategy():
                 actionable_logs = logs_df[logs_df['event'] != 'exit_EOD']
 
                 if not actionable_logs.empty:
-                    # Use the most recent actionable signal
-                    latest_log = actionable_logs.tail(1).iloc[-1]
-                    event = latest_log['event']
-                    price = latest_log['price']
-                    note = latest_log['note']
-                    timestamp = latest_log['time']
+                    # IMPORTANT: Only process signals that are recent (within MAX_SIGNAL_AGE_MINUTES)
+                    # This prevents processing old/stale signals from the backtest history
+                    eastern = pytz.timezone('America/New_York')
+                    now_et = datetime.now(eastern)
 
-                    logging.info(f"Latest signal for {ticker}: {event}")
-                    logging.info(f"Time: {timestamp}")
-                    logging.info(f"Price: ${price:.2f}")
-                    logging.info(f"Details: {note}")
+                    # Filter to only signals from the last MAX_SIGNAL_AGE_MINUTES
+                    recent_signals = actionable_logs[
+                        actionable_logs['time'] >= (now_et - pd.Timedelta(minutes=MAX_SIGNAL_AGE_MINUTES))
+                    ]
 
-                    # Create unique check key per ticker to track signals independently
-                    ticker_check_key = f'last_check_{ticker}'
-                    if ticker_check_key not in state:
-                        state[ticker_check_key] = None
-
-                    # Check if this is a new signal (not already processed)
-                    if state[ticker_check_key] != str(timestamp):
-                        logging.info("=" * 60)
-                        logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
-                        logging.info("=" * 60)
-
-                        # [1] Signal Classification
-                        logging.info("[1/4] Classifying signal...")
-
-                        # Add ticker metadata to note
-                        note_with_ticker = f"[{ticker}] {note}"
-
-                        # Process signal using configuration (pass ticker for ticker-specific actions)
-                        process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker)
-
-                        # Always update last check time for this ticker to mark signal as seen
-                        # (even if it was skipped due to being stale or disabled)
-                        state[ticker_check_key] = str(timestamp)
-                        save_state(state)
-                        logging.info(f"✅ State updated: {ticker_check_key} = {timestamp}")
+                    if recent_signals.empty:
+                        logging.info(f"No recent signals for {ticker} (all signals older than {MAX_SIGNAL_AGE_MINUTES} minutes)")
                     else:
-                        logging.info(f"Signal for {ticker} already processed")
+                        # Use the most recent actionable signal within the time window
+                        latest_log = recent_signals.tail(1).iloc[-1]
+                        event = latest_log['event']
+                        price = latest_log['price']
+                        note = latest_log['note']
+                        timestamp = latest_log['time']
+
+                        # Calculate signal age
+                        signal_age_minutes = (now_et - timestamp).total_seconds() / 60
+
+                        logging.info(f"Latest signal for {ticker}: {event}")
+                        logging.info(f"Time: {timestamp}")
+                        logging.info(f"Age: {signal_age_minutes:.1f} minutes")
+                        logging.info(f"Price: ${price:.2f}")
+                        logging.info(f"Details: {note}")
+
+                        # Create unique check key per ticker to track signals independently
+                        ticker_check_key = f'last_check_{ticker}'
+                        if ticker_check_key not in state:
+                            state[ticker_check_key] = None
+
+                        # Check if this is a new signal (not already processed)
+                        if state[ticker_check_key] != str(timestamp):
+                            logging.info("=" * 60)
+                            logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
+                            logging.info("=" * 60)
+
+                            # [1] Signal Classification
+                            logging.info("[1/4] Classifying signal...")
+
+                            # Add ticker metadata to note
+                            note_with_ticker = f"[{ticker}] {note}"
+
+                            # Process signal using configuration (pass ticker for ticker-specific actions)
+                            process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker)
+
+                            # Always update last check time for this ticker to mark signal as seen
+                            # (even if it was skipped due to being stale or disabled)
+                            state[ticker_check_key] = str(timestamp)
+                            save_state(state)
+                            logging.info(f"✅ State updated: {ticker_check_key} = {timestamp}")
+                        else:
+                            logging.info(f"Signal for {ticker} already processed")
                 else:
                     # No actionable signals (only exit_EOD)
                     logging.info(f"No actionable signals for {ticker} (only exit_EOD markers)")
