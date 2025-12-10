@@ -491,6 +491,10 @@ def sell_all_positions(order_type="AUTO"):
                 order = place_sell_order(ticker, quantity, current_price, "Clear existing position", order_type=order_type)
 
                 if order:
+                    # Check if order contains an error
+                    if 'error' in order:
+                        logging.error(f"Failed to sell {ticker}: {order.get('error_type', 'Unknown')}: {order.get('error', 'Unknown error')}")
+                        return False
                     logging.info(f"Successfully placed sell order for {ticker}")
                 else:
                     logging.error(f"Failed to sell {ticker}")
@@ -798,6 +802,11 @@ def place_buy_order(ticker, qty, price, reason, entry_conditions=None, order_typ
             logging.error(f"Order placement returned None - likely API error or invalid parameters")
             return None
 
+        # Check if order contains an error
+        if 'error' in order:
+            logging.error(f"Order placement failed: {order.get('error_type', 'Unknown')}: {order.get('error', 'Unknown error')}")
+            return order  # Return the error dict so caller can handle it
+
         # Get current market price
         current_market_price = None
         try:
@@ -826,7 +835,7 @@ Ticker: {ticker}
 Quantity: {qty} shares
 {price_details}
 Order Value: ${price * qty:.2f}
-Order ID: {order['order_id'] if order else 'FAILED'}
+Order ID: {order.get('order_id', 'FAILED')}
 Order Type: {order_type}
 
 ═══════════════════════════════════════
@@ -879,7 +888,27 @@ Account: {'PAPER' if USE_PAPER else 'LIVE'}
 
     except Exception as e:
         logging.error(f"Failed to place buy order: {e}")
-        send_email_alert("❌ ORDER FAILED", f"Failed to place BUY order for {ticker}: {e}")
+        import traceback
+        error_details = traceback.format_exc()
+        send_email_alert(
+            "❌ BUY ORDER FAILED",
+            f"""Failed to place BUY order for {ticker}
+
+Ticker: {ticker}
+Quantity: {quantity} shares
+Signal Price: ${price:.2f}
+Order Type: {order_type}
+
+Error Type: {type(e).__name__}
+Error Message: {str(e)}
+
+Full Error Details:
+{error_details}
+
+Time: {pd.Timestamp.now()}
+Account: {'PAPER' if USE_PAPER else 'LIVE'}
+"""
+        )
         return None
 
 
@@ -942,6 +971,16 @@ def place_sell_order(ticker, qty, price, reason, entry_conditions=None, order_ty
                 extended_hours=not in_market_hours  # Only enable extended_hours if NOT in regular hours
             )
 
+        # Check if order was successfully created
+        if not order:
+            logging.error(f"Order placement returned None - likely API error or invalid parameters")
+            return None
+
+        # Check if order contains an error
+        if 'error' in order:
+            logging.error(f"Order placement failed: {order.get('error_type', 'Unknown')}: {order.get('error', 'Unknown error')}")
+            return order  # Return the error dict so caller can handle it
+
         # Get current market price
         current_market_price = None
         try:
@@ -970,7 +1009,7 @@ Ticker: {ticker}
 Quantity: {qty} shares
 {price_details}
 Order Value: ${price * qty:.2f}
-Order ID: {order['order_id'] if order else 'FAILED'}
+Order ID: {order.get('order_id', 'FAILED')}
 Order Type: {order_type}
 
 ═══════════════════════════════════════
@@ -1023,7 +1062,27 @@ Account: {'PAPER' if USE_PAPER else 'LIVE'}
 
     except Exception as e:
         logging.error(f"Failed to place sell order: {e}")
-        send_email_alert("❌ ORDER FAILED", f"Failed to place SELL order for {ticker}: {e}")
+        import traceback
+        error_details = traceback.format_exc()
+        send_email_alert(
+            "❌ SELL ORDER FAILED",
+            f"""Failed to place SELL order for {ticker}
+
+Ticker: {ticker}
+Quantity: {qty} shares
+Signal Price: ${price:.2f}
+Order Type: {order_type}
+
+Error Type: {type(e).__name__}
+Error Message: {str(e)}
+
+Full Error Details:
+{error_details}
+
+Time: {pd.Timestamp.now()}
+Account: {'PAPER' if USE_PAPER else 'LIVE'}
+"""
+        )
         return None
 
 
@@ -1502,6 +1561,13 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         order = place_buy_order(ticker, quantity, price, note, order_type=order_type,
                                limit_slippage_pct=limit_slippage)
         if order:
+            # Check if order contains an error
+            if 'error' in order:
+                logging.error(f"      ❌ BUY order FAILED for {ticker}: {order.get('error_type', 'Unknown')}: {order.get('error', 'Unknown error')}")
+                # Error email was already sent by place_buy_order
+                # Return False to indicate failure (signal will be retried)
+                return False
+
             logging.info(f"      ✅ BUY order placed: {quantity} shares of {ticker} @ ${price:.2f}")
 
             # Check order status after placement
@@ -1514,7 +1580,8 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
             state['entry_time'] = str(timestamp)
             state['entry_conditions'] = note
             state['position_size'] = quantity
-            state['order_ids'].append(order['order_id'])
+            if 'order_id' in order:
+                state['order_ids'].append(order['order_id'])
 
             # Track multiple positions
             if 'positions' not in state:
@@ -1725,6 +1792,13 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
         order = place_sell_order(ticker, sell_qty, price, note)
         if order:
+            # Check if order contains an error
+            if 'error' in order:
+                logging.error(f"      ❌ SELL order FAILED for {ticker}: {order.get('error_type', 'Unknown')}: {order.get('error', 'Unknown error')}")
+                # Error email was already sent by place_sell_order
+                # Return False to indicate failure (signal will be retried)
+                return False
+
             logging.info(f"      ✅ SELL order placed: {sell_qty} shares of {ticker} @ ${price:.2f}")
 
             # Check order status after placement
@@ -1951,6 +2025,13 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
 
             order = place_sell_order(ticker, available_qty, price, note)
             if order:
+                # Check if order contains an error
+                if 'error' in order:
+                    logging.error(f"      ❌ SELL order FAILED for {ticker}: {order.get('error_type', 'Unknown')}: {order.get('error', 'Unknown error')}")
+                    # Error email was already sent by place_sell_order
+                    # Return False to indicate failure (signal will be retried)
+                    return False
+
                 logging.info(f"      ✅ SELL ALL order placed: {available_qty} shares of {ticker} @ ${price:.2f}")
 
                 # Check order status after placement
