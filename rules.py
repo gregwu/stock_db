@@ -89,8 +89,12 @@ def load_strategy_from_alpaca(ticker=None):
             # Override period and interval if present in ticker strategy
             if 'period' in ticker_strategy:
                 merged_strategy['period'] = ticker_strategy['period']
+
             if 'interval' in ticker_strategy:
                 merged_strategy['interval'] = ticker_strategy['interval']
+
+            if 'interval_2' in ticker_strategy:
+                merged_strategy['interval_2'] = ticker_strategy['interval_2']
 
             if 'entry_conditions' in ticker_strategy:
                 if 'entry_conditions' not in merged_strategy:
@@ -162,7 +166,7 @@ def settings_have_changed(current_settings, loaded_settings):
     # List of keys to compare (include period and interval)
     # Use UI field names (not alpaca.json field names)
     strategy_keys = [
-        'period', 'interval',  # Data settings
+        'period', 'interval', 'interval_2',  # Data settings
         'use_rsi', 'rsi_threshold', 'use_ema_cross_up', 'use_bb_cross_up',
         'use_bb_width', 'bb_width_threshold',
         'use_macd_cross_up', 'use_ema', 'use_price_above_ema21',
@@ -239,6 +243,7 @@ def save_settings_to_alpaca(settings, ticker):
         # Prepare ticker strategy
         ticker_strategy = {
             'interval': settings.get('interval', '5m'),
+            'interval_2': settings.get('interval_2', '1h'),
             'period': settings.get('period', '1d'),
             'entry_conditions': entry_conditions,
             'exit_conditions': exit_conditions,
@@ -1288,6 +1293,7 @@ def get_settings_from_file(ticker):
         'ticker': ticker,
         'period': alpaca_strategy.get('period', '1d'),
         'interval': alpaca_strategy.get('interval', '5m'),
+        'interval_2': alpaca_strategy.get('interval_2', '1h'),
         'chart_height': 1150,
         # Entry conditions from alpaca.json
         'use_rsi': entry.get('use_rsi', False),
@@ -1577,6 +1583,8 @@ with st.sidebar:
 
     st.session_state.settings['ticker'] = ticker
 
+
+
     # Auto-load strategy from alpaca.json when ticker changes
     if 'previous_ticker' not in st.session_state:
         st.session_state.previous_ticker = ticker
@@ -1592,13 +1600,13 @@ with st.sidebar:
 
     # Only update from alpaca.json on first load or explicit ticker change
     should_load_from_alpaca = (
-        alpaca_strategy and 
+        alpaca_strategy and
         (
             'settings_initialized' not in st.session_state or
             ticker != st.session_state.get('last_loaded_ticker', '')
         )
     )
-    
+
     if should_load_from_alpaca:
         # Update settings from alpaca.json
         entry = alpaca_strategy.get('entry_conditions', {})
@@ -1659,7 +1667,10 @@ with st.sidebar:
 
         # Interval and period
         st.session_state.settings['interval'] = alpaca_strategy.get('interval', '5m')
+        st.session_state.settings['interval_2'] = alpaca_strategy.get('interval_2', '10m')
         st.session_state.settings['period'] = alpaca_strategy.get('period', '1d')
+
+
 
         # Save a snapshot of loaded settings to track changes
         st.session_state.loaded_settings = st.session_state.settings.copy()
@@ -1902,7 +1913,7 @@ with st.sidebar:
 
     # Add interval selector like check.py
     if 'interval' not in st.session_state.settings:
-        st.session_state.settings['interval'] = "1m"
+        st.session_state.settings['interval'] = "5m"
 
     interval_options = ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "1d"]
     try:
@@ -1917,6 +1928,24 @@ with st.sidebar:
     interval = st.selectbox("Data interval", interval_options, index=interval_index,
                            key=f'interval_widget_{ticker}', on_change=update_interval)
     st.session_state.settings['interval'] = interval
+
+
+    if 'interval_2' not in st.session_state.settings:
+        st.session_state.settings['interval_2'] = "10m"
+
+    try:
+        interval_2_index = interval_options.index(st.session_state.settings['interval_2'])
+    except (ValueError, KeyError):
+        interval_2_index = 7  # Default to "1h"
+
+    def update_interval_2():
+        st.session_state.settings['interval_2'] = st.session_state[f'interval_2_widget_{ticker}']
+        auto_save_on_change('interval_2')
+
+    interval_2 = st.selectbox("Data interval 2 ", interval_options, index=interval_2_index,
+                              key=f'interval_2_widget_{ticker}', on_change=update_interval_2,
+                              help="Select a different timeframe for comparison MACD")
+    st.session_state.settings['interval_2'] = interval_2
 
     st.divider()
 
@@ -2255,6 +2284,7 @@ if settings_have_changed(st.session_state.settings, st.session_state.get('loaded
             # Update session state with the saved values
             st.session_state.settings.update({
                 'interval': alpaca_strategy.get('interval', '5m'),
+                'interval_2': alpaca_strategy.get('interval', '10m'),
                 'period': alpaca_strategy.get('period', '1d'),
                 'use_rsi': entry.get('use_rsi', False),
                 'rsi_threshold': entry.get('rsi_threshold', 30),
@@ -2520,6 +2550,57 @@ with st.spinner(f"Downloading {ticker} data..."):
             df1_display = df1
             df5_display = df5
 
+        # Download data for second interval for comparison MACD
+        raw_2 = pd.DataFrame()
+        if interval_2 in unsupported_intervals:
+            # Fetch 1-minute data and aggregate
+            raw_2 = yf.download(ticker, period=main_period,
+                               interval='1m', progress=False, prepost=use_extended_hours)
+            if not raw_2.empty:
+                if isinstance(raw_2.columns, pd.MultiIndex):
+                    raw_2.columns = raw_2.columns.get_level_values(0)
+                if hasattr(raw_2.index, 'tz'):
+                    if raw_2.index.tz is not None:
+                        raw_2.index = raw_2.index.tz_convert('America/New_York')
+                    else:
+                        raw_2.index = raw_2.index.tz_localize('UTC').tz_convert('America/New_York')
+
+                interval_map = {'3m': '3min', '10m': '10min'}
+                resample_freq = interval_map[interval_2]
+                raw_2 = raw_2.resample(resample_freq).agg({
+                    'Open': 'first', 'High': 'max', 'Low': 'min',
+                    'Close': 'last', 'Volume': 'sum'
+                }).dropna()
+        else:
+            # Use Yahoo's native interval
+            raw_2 = yf.download(ticker, period=main_period,
+                               interval=interval_2, progress=False, prepost=use_extended_hours)
+            if not raw_2.empty:
+                if isinstance(raw_2.columns, pd.MultiIndex):
+                    raw_2.columns = raw_2.columns.get_level_values(0)
+                if hasattr(raw_2.index, 'tz'):
+                    if raw_2.index.tz is not None:
+                        raw_2.index = raw_2.index.tz_convert('America/New_York')
+                    else:
+                        raw_2.index = raw_2.index.tz_localize('UTC').tz_convert('America/New_York')
+
+        # Calculate MACD for second interval
+        df_macd2 = pd.DataFrame()
+        if not raw_2.empty:
+            # Calculate MACD using the macd function
+            macd_line_2, signal_line_2, histogram_2 = macd(raw_2["Close"])
+            df_macd2 = pd.DataFrame({
+                'macd': macd_line_2,
+                'macd_signal': signal_line_2,
+                'macd_hist': histogram_2
+            }, index=raw_2.index)
+
+            # Filter to match display period
+            if not df5_display.empty:
+                start_time = df5_display.index[0]
+                end_time = df5_display.index[-1]
+                df_macd2 = df_macd2[(df_macd2.index >= start_time) & (df_macd2.index <= end_time)]
+
         # Chart with entries/exits - single chart with multiple y-axes
         st.subheader(f"{ticker} - {interval} chart with signals")
 
@@ -2741,6 +2822,61 @@ with st.spinner(f"Downloading {ticker} data..."):
         # MACD zero line
         fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, yref='y4')
 
+        # Second MACD chart (yaxis5) - different interval for comparison
+        if not df_macd2.empty:
+            fig.add_trace(go.Scatter(x=df_macd2.index, y=df_macd2["macd"],
+                                     name=f"MACD ({interval_2})", line=dict(width=2, color='orange'),
+                                     yaxis='y5'))
+            fig.add_trace(go.Scatter(x=df_macd2.index, y=df_macd2["macd_signal"],
+                                     name=f"Signal ({interval_2})", line=dict(width=2, color='purple'),
+                                     yaxis='y5'))
+
+            # MACD2 histogram
+            hist_colors_2 = ['green' if val >= 0 else 'red' for val in df_macd2["macd_hist"]]
+            fig.add_trace(go.Bar(
+                x=df_macd2.index,
+                y=df_macd2["macd_hist"],
+                name=f"MACD Histogram ({interval_2})",
+                marker_color=hist_colors_2,
+                opacity=0.5,
+                yaxis='y5'
+            ))
+
+            # Detect MACD2 peaks and valleys
+            if len(df_macd2) > 6:
+                macd_values_2 = df_macd2["macd"].values
+                peak_indices_2 = argrelextrema(macd_values_2, np.greater, order=3)[0]
+                valley_indices_2 = argrelextrema(macd_values_2, np.less, order=3)[0]
+
+                if len(peak_indices_2) > 0:
+                    peak_times_2 = df_macd2.index[peak_indices_2]
+                    peak_values_2 = macd_values_2[peak_indices_2]
+                    fig.add_trace(go.Scatter(
+                        x=peak_times_2,
+                        y=peak_values_2,
+                        mode='markers',
+                        name=f'MACD Peak ({interval_2})',
+                        marker=dict(size=10, symbol='triangle-down', color='red'),
+                        yaxis='y5',
+                        hoverinfo='x+y'
+                    ))
+
+                if len(valley_indices_2) > 0:
+                    valley_times_2 = df_macd2.index[valley_indices_2]
+                    valley_values_2 = macd_values_2[valley_indices_2]
+                    fig.add_trace(go.Scatter(
+                        x=valley_times_2,
+                        y=valley_values_2,
+                        mode='markers',
+                        name=f'MACD Valley ({interval_2})',
+                        marker=dict(size=10, symbol='triangle-up', color='green'),
+                        yaxis='y5',
+                        hoverinfo='x+y'
+                    ))
+
+            # MACD2 zero line
+            fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, yref='y5')
+
         # Add shaded regions for extended hours (only for intraday intervals)
         # Data timestamps are now in US Eastern Time (New York)
         # Regular market hours: 9:30 AM to 4:00 PM ET
@@ -2833,27 +2969,33 @@ with st.spinner(f"Downloading {ticker} data..."):
                 rangebreaks=rangebreaks,
                 range=xaxis_range
             ),
-            # yaxis for Price chart (top 50%)
+            # yaxis for Price chart (top 45%)
             yaxis=dict(
                 title=f'{ticker} Price',
-                domain=[0.50, 1.0]  # 0.50 height
+                domain=[0.55, 1.0]  # 0.45 height
             ),
-            # yaxis2 for Volume chart (15%)
+            # yaxis2 for Volume chart (12%)
             yaxis2=dict(
                 title='Volume',
-                domain=[0.33, 0.48],  # 0.15 height
+                domain=[0.42, 0.54],  # 0.12 height
                 showgrid=False
             ),
-            # yaxis3 for RSI chart (15%)
+            # yaxis3 for RSI chart (12%)
             yaxis3=dict(
                 title='RSI',
-                domain=[0.16, 0.31],  # 0.15 height
+                domain=[0.29, 0.41],  # 0.12 height
                 range=[0, 100]
             ),
-            # yaxis4 for MACD chart (16%)
+            # yaxis4 for MACD chart 1 (14%)
             yaxis4=dict(
-                title='MACD',
-                domain=[0.0, 0.15],  # 0.16 height (bottom panel)
+                title=f'MACD ({interval})',
+                domain=[0.14, 0.28],  # 0.14 height
+                showgrid=True
+            ),
+            # yaxis5 for MACD chart 2 (14%)
+            yaxis5=dict(
+                title=f'MACD ({interval_2})',
+                domain=[0.0, 0.13],  # 0.14 height (bottom panel)
                 showgrid=True
             ),
             # Add shapes for extended hours shading
@@ -2875,24 +3017,41 @@ with st.spinner(f"Downloading {ticker} data..."):
         # Reports section (only show if enabled)
         if show_reports:
             # Summary
-            st.subheader(f"Backtest for {ticker}")
             if trades_df.empty:
+                st.subheader(f"Backtest for {ticker}")
                 st.write("No trades with current rules.")
             else:
                 # Filter for rows that have exit_reason (completed trades)
                 # Include all trades for statistics, but mark EOD separately
                 display_trades = trades_df[trades_df["exit_reason"].notna()].copy()
 
-                st.dataframe(display_trades)
+                # Calculate cumulative return for title
+                cum_ret = (1 + display_trades["return_pct"]/100).prod() - 1
+                cum_ret_pct = cum_ret * 100
+
+                # Color code the return in title
+                if cum_ret_pct > 0:
+                    return_emoji = "📈"
+                    return_color = "green"
+                elif cum_ret_pct < 0:
+                    return_emoji = "📉"
+                    return_color = "red"
+                else:
+                    return_emoji = "➖"
+                    return_color = "gray"
+
+                st.subheader(f"Backtest for {ticker} - Return: :{return_color}[{return_emoji} {cum_ret_pct:+.2f}%]")
+
                 total = len(display_trades)
                 winrate = (display_trades["return_pct"] > 0).mean()
                 avg_ret = display_trades["return_pct"].mean()
-                cum_ret = (1 + display_trades["return_pct"]/100).prod() - 1
 
                 st.markdown(f"- **Total trades:** {total}")
                 st.markdown(f"- **Win rate:** {winrate:.1%}")
                 st.markdown(f"- **Average return per trade:** {avg_ret:.2f}%")
-                st.markdown(f"- **Cumulative return:** {cum_ret*100:.2f}%")
+                st.markdown(f"- **Cumulative return:** {cum_ret_pct:.2f}%")
+
+                st.dataframe(display_trades)
 
             # Logs + download
             st.subheader("Rule / event log")
