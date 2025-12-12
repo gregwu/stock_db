@@ -1272,9 +1272,20 @@ def backtest_symbol(df1,
 
 # ---------- Streamlit UI ----------
 
-st.set_page_config(page_title="Strategy Scalping", layout="wide")
+# Get ticker early for page config (before any other st commands)
+def get_ticker_for_page_config():
+    """Get ticker name for page config before session state is fully initialized"""
+    # Try to get from session state first
+    if 'settings' in st.session_state and 'ticker' in st.session_state.settings:
+        return st.session_state.settings['ticker']
+    # Otherwise get default ticker
+    available = get_available_tickers()
+    return available[0] if available else 'TQQQ'
 
-st.title("Strategy Scalping ")
+page_ticker = get_ticker_for_page_config()
+st.set_page_config(page_title=f"{page_ticker} - Strategy Scalping", layout="wide")
+
+st.title(f"Strategy Scalping - {page_ticker}")
 
 # ---------- Cached Settings Management ----------
 
