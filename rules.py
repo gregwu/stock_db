@@ -1275,9 +1275,21 @@ def backtest_symbol(df1,
 # Get ticker early for page config (before any other st commands)
 def get_ticker_for_page_config():
     """Get ticker name for page config before session state is fully initialized"""
-    # Try to get from session state first
+    # First, check URL query parameters
+    query_params = st.query_params
+    url_ticker = query_params.get('ticker', None)
+
+    # If URL parameter exists and is valid, use it
+    if url_ticker:
+        url_ticker = url_ticker.upper()
+        available = get_available_tickers()
+        if url_ticker in available:
+            return url_ticker
+
+    # Try to get from session state
     if 'settings' in st.session_state and 'ticker' in st.session_state.settings:
         return st.session_state.settings['ticker']
+
     # Otherwise get default ticker
     available = get_available_tickers()
     return available[0] if available else 'TQQQ'
@@ -1387,8 +1399,17 @@ def create_setting_callback(setting_key, ticker, widget_key=None):
 
 # Initialize session state for settings persistence
 if 'settings' not in st.session_state:
-    # Initialize with default ticker
-    default_ticker = get_available_tickers()[0]
+    # Check URL parameter first, otherwise use default
+    query_params = st.query_params
+    url_ticker = query_params.get('ticker', None)
+
+    if url_ticker:
+        url_ticker = url_ticker.upper()
+        available = get_available_tickers()
+        default_ticker = url_ticker if url_ticker in available else available[0]
+    else:
+        default_ticker = get_available_tickers()[0]
+
     init_session_state_once(default_ticker)
 
 # Get current ticker and ensure proper initialization
@@ -1593,6 +1614,9 @@ with st.sidebar:
         ticker = selected_option
 
     st.session_state.settings['ticker'] = ticker
+
+    # Update URL query parameter to match selected ticker
+    st.query_params['ticker'] = ticker
 
 
 
