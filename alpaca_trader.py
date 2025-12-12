@@ -54,7 +54,6 @@ MAX_BUY_SLIPPAGE_PCT = 0.5  # Skip buy if price rose > 0.5%
 MAX_SELL_SLIPPAGE_PCT = 1.0  # Skip sell if price dropped > 1.0%
 LIMIT_ORDER_SLIPPAGE_PCT = 2.0  # Loaded from alpaca.json, default 2.0%
 AVOID_EXTENDED_HOURS = False  # Whether to avoid trading in extended hours
-MAX_SIGNAL_AGE_MINUTES = 3  # Skip orders if signal is older than this (minutes)
 MARKET_HOURS_ORDER_TYPE = "MKT"  # Order type during market hours: "MKT" or "LMT"
 EMAIL_NOTIFICATIONS_ENABLED = True
 EMAIL_ON_BOT_START = True
@@ -284,7 +283,7 @@ def load_trading_config():
     """
     global USE_PAPER, POSITION_SIZE, STOP_LOSS_PCT, TAKE_PROFIT_PCT
     global MAX_BUY_SLIPPAGE_PCT, MAX_SELL_SLIPPAGE_PCT
-    global LIMIT_ORDER_SLIPPAGE_PCT, AVOID_EXTENDED_HOURS, MAX_SIGNAL_AGE_MINUTES
+    global LIMIT_ORDER_SLIPPAGE_PCT, AVOID_EXTENDED_HOURS
     global MARKET_HOURS_ORDER_TYPE
     global EMAIL_NOTIFICATIONS_ENABLED, EMAIL_ON_BOT_START, EMAIL_ON_BOT_STOP
     global EMAIL_ON_ENTRY, EMAIL_ON_EXIT, EMAIL_ON_ERRORS
@@ -303,7 +302,6 @@ def load_trading_config():
         MAX_SELL_SLIPPAGE_PCT = trading.get('max_sell_slippage_pct', 1.0)
         LIMIT_ORDER_SLIPPAGE_PCT = trading.get('limit_order_slippage_pct', 2.0)
         AVOID_EXTENDED_HOURS = trading.get('avoid_extended_hours', False)
-        MAX_SIGNAL_AGE_MINUTES = trading.get('max_signal_age_minutes', 3)
         MARKET_HOURS_ORDER_TYPE = trading.get('market_hours_order_type', 'MKT')
 
         # Risk management (from strategy.risk_management)
@@ -326,7 +324,6 @@ def load_trading_config():
         logging.info(f"   Limit order slippage: {LIMIT_ORDER_SLIPPAGE_PCT}%")
         logging.info(f"   Market hours order type: {MARKET_HOURS_ORDER_TYPE}")
         logging.info(f"   Avoid extended hours: {AVOID_EXTENDED_HOURS}")
-        logging.info(f"   Max signal age: {MAX_SIGNAL_AGE_MINUTES} minutes")
 
     except Exception as e:
         logging.warning(f"⚠️  Failed to load trading config from alpaca.json: {e}")
@@ -1444,106 +1441,6 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 send_email_alert(email_subject, email_body)
             return False
 
-        # Check if signal is too old (more than 3 minutes)
-        if timestamp:
-            try:
-                eastern = pytz.timezone('America/New_York')
-                now_et = datetime.now(eastern)
-
-                # Convert timestamp to datetime if needed
-                if hasattr(timestamp, 'tz_localize'):
-                    signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
-                elif hasattr(timestamp, 'tz_convert'):
-                    signal_time = timestamp.tz_convert('America/New_York')
-                else:
-                    # Try to parse string timestamp
-                    signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
-
-                time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
-
-                if time_diff > MAX_SIGNAL_AGE_MINUTES:
-                    # Signal is too old - skip it
-                    logging.warning(f"      ⚠️  SKIPPING BUY - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
-
-                    # Get current price for email notification
-                    current_price = None
-                    try:
-                        quote = alpaca_api.quote(ticker)
-                        if quote and 'last' in quote:
-                            current_price = quote['last']
-                    except Exception as e:
-                        logging.warning(f"      Could not check current price for email: {e}")
-
-                    # IMMEDIATELY update state to prevent reprocessing this stale signal
-                    # Use ticker from action_config directly
-                    if ticker:  # ticker is available from action_config.get('ticker') in this function
-                        ticker_check_key = f'last_check_{ticker}'
-
-                        # Load current state, update it, and save immediately
-                        current_state = load_state()
-                        current_state[ticker_check_key] = str(timestamp)
-                        save_state(current_state)
-                        logging.info(f"      ✅ STALE SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
-
-                    if EMAIL_ON_ENTRY:
-                        current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
-                        signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
-
-                        # Determine what order type would have been used
-                        if in_market_hours:
-                            order_type = "MKT"
-                            price_info = f"Signal Price: ${price:.2f}\nOrder Price: Market Order (best available price)"
-                        else:
-                            order_type = "LMT"
-                            limit_price = round(price * (1 + LIMIT_ORDER_SLIPPAGE_PCT / 100), 2)
-                            slippage_pct = ((limit_price - price) / price) * 100
-                            price_info = f"Signal Price: ${price:.2f}\nOrder Price: ${limit_price:.2f} (limit order with {slippage_pct:.2f}% slippage)"
-
-                        # Build current price info
-                        current_price_info = ""
-                        if current_price is not None:
-                            price_diff_pct = ((current_price - price) / price) * 100
-                            current_price_info = f"\nCurrent Price: ${current_price:.2f}\nPrice Change: {price_diff_pct:+.2f}%"
-
-                        # Get interval and period from ticker strategy
-                        ticker_configs = signal_actions_config.get('tickers', {})
-                        ticker_config = ticker_configs.get(ticker, {})
-                        ticker_strategy = ticker_config.get('strategy', {})
-                        interval = ticker_strategy.get('interval', 'N/A')
-                        period = ticker_strategy.get('period', 'N/A')
-
-                        email_subject = f"⚠️ BUY SKIPPED - {ticker} (Stale Signal)"
-                        email_body = f"""Buy Order Skipped - Signal Too Old
-
-Ticker: {ticker}
-Interval: {interval}
-Period: {period}
-Action: BUY {quantity} shares (SKIPPED)
-Order Type: {order_type}
-{price_info}{current_price_info}
-Signal Time: {signal_time_str}
-Current Time: {current_time}
-Time Difference: {time_diff:.1f} minutes
-
-Details: {note}
-
-Reason: Signal is {time_diff:.1f} minutes old (maximum allowed: {MAX_SIGNAL_AGE_MINUTES} minutes).
-Stale signals are skipped to avoid executing on outdated market conditions.
-
-Signal has been cleared and will not retry.
-
----
-Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
-"""
-                        send_email_alert(email_subject, email_body)
-                    # Return True to mark signal as processed (prevents retry)
-                    # Retrying won't help since signal is already too old
-                    logging.info(f"      ✅ Stale signal will be marked as processed to prevent re-notification")
-                    return True
-                else:
-                    logging.info(f"      ✅ Signal freshness check passed: {time_diff:.1f} minutes old (max 3 minutes)")
-            except Exception as e:
-                logging.warning(f"      Could not check signal age: {e}. Proceeding with order.")
 
         if in_market_hours:
             order_type = MARKET_HOURS_ORDER_TYPE  # Use configured order type during regular hours
@@ -1687,92 +1584,6 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         if description:
             logging.info(f"      Reason: {description}")
 
-        # Check if signal is too old (more than configured minutes)
-        if timestamp:
-            try:
-                eastern = pytz.timezone('America/New_York')
-                now_et = datetime.now(eastern)
-
-                # Convert timestamp to datetime if needed
-                if hasattr(timestamp, 'tz_localize'):
-                    signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
-                elif hasattr(timestamp, 'tz_convert'):
-                    signal_time = timestamp.tz_convert('America/New_York')
-                else:
-                    signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
-
-                time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
-
-                if time_diff > MAX_SIGNAL_AGE_MINUTES:
-                    # Signal is too old - skip it
-                    logging.warning(f"      ⚠️  SKIPPING SELL - Signal is too old ({time_diff:.1f} minutes old, max {MAX_SIGNAL_AGE_MINUTES} minutes)")
-
-                    # Get current price for email notification
-                    current_price = None
-                    try:
-                        quote = alpaca_api.quote(ticker)
-                        if quote and 'last' in quote:
-                            current_price = quote['last']
-                    except Exception as e:
-                        logging.warning(f"      Could not check current price for email: {e}")
-
-                    # IMMEDIATELY update state to prevent reprocessing this stale signal
-                    # Use ticker from action_config directly
-                    if ticker:  # ticker is available from action_config.get('ticker') in this function
-                        ticker_check_key = f'last_check_{ticker}'
-
-                        # Load current state, update it, and save immediately
-                        current_state = load_state()
-                        current_state[ticker_check_key] = str(timestamp)
-                        save_state(current_state)
-                        logging.info(f"      ✅ STALE SELL SIGNAL - State updated immediately: {ticker_check_key} = {timestamp}")
-
-                    if EMAIL_ON_EXIT:
-                        current_time = now_et.strftime('%Y-%m-%d %H:%M:%S %Z')
-                        signal_time_str = signal_time.strftime('%Y-%m-%d %H:%M:%S %Z')
-
-                        # Build current price info
-                        current_price_info = ""
-                        if current_price is not None:
-                            price_diff_pct = ((current_price - price) / price) * 100
-                            current_price_info = f"\nCurrent Price: ${current_price:.2f}\nPrice Change: {price_diff_pct:+.2f}%"
-
-                        # Get interval and period from ticker strategy
-                        ticker_configs = signal_actions_config.get('tickers', {})
-                        ticker_config = ticker_configs.get(ticker, {})
-                        ticker_strategy = ticker_config.get('strategy', {})
-                        interval = ticker_strategy.get('interval', 'N/A')
-                        period = ticker_strategy.get('period', 'N/A')
-
-                        email_subject = f"⚠️ SELL SKIPPED - {ticker} (Stale Signal)"
-                        email_body = f"""Sell Order Skipped - Signal Too Old
-
-Ticker: {ticker}
-Interval: {interval}
-Period: {period}
-Action: SELL {quantity} shares (SKIPPED)
-Signal Price: ${price:.2f}{current_price_info}
-Signal Time: {signal_time_str}
-Current Time: {current_time}
-Time Difference: {time_diff:.1f} minutes
-
-Details: {note}
-
-Reason: Signal is {time_diff:.1f} minutes old (maximum allowed: {MAX_SIGNAL_AGE_MINUTES} minutes).
-Stale signals are skipped to avoid executing on outdated market conditions.
-
-Signal has been cleared and will not retry.
-
----
-Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
-"""
-                        send_email_alert(email_subject, email_body)
-                    # Return True to mark signal as processed (prevents retry)
-                    return True
-                else:
-                    logging.info(f"      ✅ Signal freshness check passed: {time_diff:.1f} minutes old (max {MAX_SIGNAL_AGE_MINUTES} minutes)")
-            except Exception as e:
-                logging.warning(f"      Could not check signal age: {e}. Proceeding with order.")
 
         # Check if we have this position
         positions = alpaca_api.get_positions() if alpaca_api else []
@@ -2263,30 +2074,6 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
                 if EMAIL_NOTIFICATIONS_ENABLED and (EMAIL_ON_ENTRY or EMAIL_ON_EXIT):
                     # Only notify for actual buy/sell signals
                     if event in ['entry', 'exit_SL', 'exit_TP', 'exit_conditions_met']:
-                        # Check if signal is too old (more than MAX_SIGNAL_AGE_MINUTES)
-                        try:
-                            eastern = pytz.timezone('America/New_York')
-                            now_et = datetime.now(eastern)
-
-                            # Convert timestamp to datetime if needed
-                            if hasattr(timestamp, 'tz_localize'):
-                                signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
-                            elif hasattr(timestamp, 'tz_convert'):
-                                signal_time = timestamp.tz_convert('America/New_York')
-                            else:
-                                # Try to parse string timestamp
-                                signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
-
-                            time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
-
-                            if time_diff > MAX_SIGNAL_AGE_MINUTES:
-                                logging.info(f"      ⚠️  Signal is too old ({time_diff:.1f} minutes) - skipping notification for disabled ticker")
-                                logging.info("=" * 60)
-                                return False
-
-                        except Exception as e:
-                            logging.warning(f"      Could not check signal age: {e}. Proceeding with notification.")
-
                         try:
                             eastern = pytz.timezone('America/New_York')
                             current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
@@ -2379,30 +2166,6 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         if EMAIL_NOTIFICATIONS_ENABLED and (EMAIL_ON_ENTRY or EMAIL_ON_EXIT) and ticker:
             # Only notify for actual buy/sell signals
             if event in ['entry', 'exit_SL', 'exit_TP', 'exit_conditions_met']:
-                # Check if signal is too old (more than MAX_SIGNAL_AGE_MINUTES)
-                try:
-                    eastern = pytz.timezone('America/New_York')
-                    now_et = datetime.now(eastern)
-
-                    # Convert timestamp to datetime if needed
-                    if hasattr(timestamp, 'tz_localize'):
-                        signal_time = timestamp.tz_localize('America/New_York') if timestamp.tzinfo is None else timestamp.tz_convert('America/New_York')
-                    elif hasattr(timestamp, 'tz_convert'):
-                        signal_time = timestamp.tz_convert('America/New_York')
-                    else:
-                        # Try to parse string timestamp
-                        signal_time = pd.to_datetime(timestamp).tz_localize('America/New_York')
-
-                    time_diff = (now_et - signal_time).total_seconds() / 60  # minutes
-
-                    if time_diff > MAX_SIGNAL_AGE_MINUTES:
-                        logging.info(f"      ⚠️  Signal is too old ({time_diff:.1f} minutes) - skipping notification for disabled signal type")
-                        logging.info("=" * 60)
-                        return False
-
-                except Exception as e:
-                    logging.warning(f"      Could not check signal age: {e}. Proceeding with notification.")
-
                 try:
                     eastern = pytz.timezone('America/New_York')
                     current_time = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')
@@ -2729,62 +2492,54 @@ def run_strategy():
                 actionable_logs = logs_df[logs_df['event'] != 'exit_EOD']
 
                 if not actionable_logs.empty:
-                    # IMPORTANT: Only process signals that are recent (within MAX_SIGNAL_AGE_MINUTES)
-                    # This prevents processing old/stale signals from the backtest history
+                    # Process the most recent signal (no age filtering)
+                    # REVERTED: Age filtering removed to process all signals regardless of age
                     eastern = pytz.timezone('America/New_York')
                     now_et = datetime.now(eastern)
 
-                    # Filter to only signals from the last MAX_SIGNAL_AGE_MINUTES
-                    recent_signals = actionable_logs[
-                        actionable_logs['time'] >= (now_et - pd.Timedelta(minutes=MAX_SIGNAL_AGE_MINUTES))
-                    ]
+                    # Use the most recent actionable signal (no time window filtering)
+                    latest_log = actionable_logs.tail(1).iloc[-1]
+                    event = latest_log['event']
+                    price = latest_log['price']
+                    note = latest_log['note']
+                    timestamp = latest_log['time']
 
-                    if recent_signals.empty:
-                        logging.info(f"No recent signals for {ticker} (all signals older than {MAX_SIGNAL_AGE_MINUTES} minutes)")
+                    # Calculate signal age
+                    signal_age_minutes = (now_et - timestamp).total_seconds() / 60
+
+                    logging.info(f"Latest signal for {ticker}: {event}")
+                    logging.info(f"Time: {timestamp}")
+                    logging.info(f"Age: {signal_age_minutes:.1f} minutes")
+                    logging.info(f"Price: ${price:.2f}")
+                    logging.info(f"Details: {note}")
+
+                    # Create unique check key per ticker to track signals independently
+                    ticker_check_key = f'last_check_{ticker}'
+                    if ticker_check_key not in state:
+                        state[ticker_check_key] = None
+
+                    # Check if this is a new signal (not already processed)
+                    if state[ticker_check_key] != str(timestamp):
+                        logging.info("=" * 60)
+                        logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
+                        logging.info("=" * 60)
+
+                        # [1] Signal Classification
+                        logging.info("[1/4] Classifying signal...")
+
+                        # Add ticker metadata to note
+                        note_with_ticker = f"[{ticker}] {note}"
+
+                        # Process signal using configuration (pass ticker for ticker-specific actions)
+                        process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker)
+
+                        # Always update last check time for this ticker to mark signal as seen
+                        # (even if it was skipped due to being stale or disabled)
+                        state[ticker_check_key] = str(timestamp)
+                        save_state(state)
+                        logging.info(f"✅ State updated: {ticker_check_key} = {timestamp}")
                     else:
-                        # Use the most recent actionable signal within the time window
-                        latest_log = recent_signals.tail(1).iloc[-1]
-                        event = latest_log['event']
-                        price = latest_log['price']
-                        note = latest_log['note']
-                        timestamp = latest_log['time']
-
-                        # Calculate signal age
-                        signal_age_minutes = (now_et - timestamp).total_seconds() / 60
-
-                        logging.info(f"Latest signal for {ticker}: {event}")
-                        logging.info(f"Time: {timestamp}")
-                        logging.info(f"Age: {signal_age_minutes:.1f} minutes")
-                        logging.info(f"Price: ${price:.2f}")
-                        logging.info(f"Details: {note}")
-
-                        # Create unique check key per ticker to track signals independently
-                        ticker_check_key = f'last_check_{ticker}'
-                        if ticker_check_key not in state:
-                            state[ticker_check_key] = None
-
-                        # Check if this is a new signal (not already processed)
-                        if state[ticker_check_key] != str(timestamp):
-                            logging.info("=" * 60)
-                            logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
-                            logging.info("=" * 60)
-
-                            # [1] Signal Classification
-                            logging.info("[1/4] Classifying signal...")
-
-                            # Add ticker metadata to note
-                            note_with_ticker = f"[{ticker}] {note}"
-
-                            # Process signal using configuration (pass ticker for ticker-specific actions)
-                            process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker)
-
-                            # Always update last check time for this ticker to mark signal as seen
-                            # (even if it was skipped due to being stale or disabled)
-                            state[ticker_check_key] = str(timestamp)
-                            save_state(state)
-                            logging.info(f"✅ State updated: {ticker_check_key} = {timestamp}")
-                        else:
-                            logging.info(f"Signal for {ticker} already processed")
+                        logging.info(f"Signal for {ticker} already processed")
                 else:
                     # No actionable signals (only exit_EOD)
                     logging.info(f"No actionable signals for {ticker} (only exit_EOD markers)")

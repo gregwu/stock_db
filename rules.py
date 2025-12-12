@@ -1297,7 +1297,9 @@ def get_ticker_for_page_config():
 page_ticker = get_ticker_for_page_config()
 st.set_page_config(page_title=f"{page_ticker} - Strategy Scalping", layout="wide")
 
-st.title(f"Strategy Scalping - {page_ticker}")
+# Create placeholder for title that will be updated with price info
+title_placeholder = st.empty()
+title_placeholder.title(f"Strategy Scalping - {page_ticker}")
 
 # ---------- Cached Settings Management ----------
 
@@ -1795,12 +1797,6 @@ with st.sidebar:
     # Auto-save quantity when changed
     if new_quantity != current_quantity:
         update_ticker_default_quantity(ticker, new_quantity)
-
-    st.divider()
-
-    # Add manual reload button
-    if st.button("🔄 Reload Chart Data", help="Refresh chart with latest market data", use_container_width=True):
-        st.rerun()
 
     st.divider()
 
@@ -2459,6 +2455,32 @@ with st.spinner(f"Downloading {ticker} data..."):
 
     # Continue processing if we have data
     if not raw.empty:
+        # Update title with current price and change
+        try:
+            current_price = raw['Close'].iloc[-1]
+            previous_price = raw['Close'].iloc[-2] if len(raw) > 1 else current_price
+            price_change = current_price - previous_price
+            price_change_pct = (price_change / previous_price * 100) if previous_price != 0 else 0
+
+            # Format price change with color indicator
+            change_color = "🟢" if price_change >= 0 else "🔴"
+            change_sign = "+" if price_change >= 0 else ""
+
+            # Update the title with price info using the placeholder
+            title_html = f"""
+            <h1>Strategy Scalping - {ticker}
+            <span style='font-size: 0.8em; color: {"#00FF00" if price_change >= 0 else "#FF4444"};'>
+            ${current_price:.2f} {change_sign}{price_change:.2f} ({change_sign}{price_change_pct:.2f}%) {change_color}
+            </span></h1>
+            """
+            title_placeholder.markdown(title_html, unsafe_allow_html=True)
+
+            # Also update the page config with latest price (for browser tab)
+            # Note: st.set_page_config can only be called once, so we can't update it dynamically
+            # The tab will show the ticker name set earlier
+        except Exception as e:
+            # Keep the original title if we can't fetch price
+            pass
 
         # Filter data based on selected period BEFORE backtesting
         # This ensures backtest runs only on the selected timeframe
@@ -2637,7 +2659,13 @@ with st.spinner(f"Downloading {ticker} data..."):
                 df_macd2 = df_macd2[(df_macd2.index >= start_time) & (df_macd2.index <= end_time)]
 
         # Chart with entries/exits - single chart with multiple y-axes
-        st.subheader(f"{ticker} - {interval} chart with signals")
+        # Create header with reload button on the right
+        col_left, col_right = st.columns([4, 1])
+        with col_left:
+            st.subheader(f"{ticker} - {interval} chart with signals")
+        with col_right:
+            if st.button("🔄 Reload", help="Refresh chart with latest market data", key="reload_chart_btn"):
+                st.rerun()
 
         # Create figure with single x-axis and multiple y-axes (like check.py)
         fig = go.Figure()
