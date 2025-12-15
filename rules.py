@@ -439,6 +439,87 @@ def get_current_price(ticker):
         st.error(f"Failed to get price for {ticker}: {e}")
         return None
 
+def get_recent_filled_trades(ticker, limit=200):
+    """Fetch recent filled trades for a ticker from Alpaca"""
+    try:
+        api = get_alpaca_api()
+        if not api:
+            return []
+
+        orders = api.get_recent_filled_orders(limit=limit)
+        fills = []
+        for order in orders:
+            if order.get('symbol') != ticker:
+                continue
+
+            filled_at = order.get('filled_at')
+            if not filled_at:
+                continue
+
+            filled_ts = pd.Timestamp(filled_at)
+            if filled_ts.tzinfo is None:
+                filled_ts = filled_ts.tz_localize('UTC')
+            filled_ts = filled_ts.tz_convert('America/New_York')
+
+            price_val = order.get('filled_avg_price') or order.get('limit_price')
+            try:
+                price_val = float(price_val) if price_val is not None else None
+            except Exception:
+                price_val = None
+
+            qty_val = order.get('filled_qty') or order.get('qty')
+            try:
+                qty_val = float(qty_val) if qty_val is not None else 0.0
+            except Exception:
+                qty_val = 0.0
+
+            fills.append({
+                'time': filled_ts,
+                'price': price_val,
+                'qty': qty_val,
+                'side': str(order.get('side', '')).upper()
+            })
+
+        fills.sort(key=lambda x: x['time'])
+        return fills
+    except Exception as e:
+        st.warning(f"Failed to load filled trades from Alpaca: {e}")
+        return []
+
+def calculate_actual_return_pct(fills):
+    """Calculate realized return percentage from filled trades"""
+    realized_pl = 0.0
+    invested_capital = 0.0
+    position_qty = 0.0
+    avg_price = 0.0
+
+    for trade in fills:
+        price = trade.get('price')
+        qty = trade.get('qty', 0.0) or 0.0
+        side = str(trade.get('side', '')).upper()
+
+        if price is None or qty <= 0:
+            continue
+
+        if side == 'BUY':
+            total_cost = avg_price * position_qty + price * qty
+            position_qty += qty
+            if position_qty > 0:
+                avg_price = total_cost / position_qty
+        elif side == 'SELL':
+            if position_qty <= 0:
+                continue
+            sell_qty = min(qty, position_qty)
+            realized_pl += (price - avg_price) * sell_qty
+            invested_capital += avg_price * sell_qty
+            position_qty -= sell_qty
+            if position_qty == 0:
+                avg_price = 0.0
+
+    if invested_capital > 0:
+        return realized_pl / invested_capital * 100
+    return None
+
 def send_manual_order_email(subject, message):
     """
     Send email notification for manual orders
@@ -894,7 +975,8 @@ def backtest_symbol(df1,
                     ema21_slope_entry_threshold=0.0,
                     use_ema21_slope_exit=False,
                     ema21_slope_exit_threshold=0.0,
-                    avoid_extended_hours=False):
+                    avoid_extended_hours=False,
+                    analysis_start=None):
     """
     Apply Greg's rules to a single symbol.
     Returns:
@@ -973,6 +1055,8 @@ def backtest_symbol(df1,
     last_exit_time = None  # Track last exit time for timeout reset
 
     for t, row in df5.iterrows():
+        if analysis_start is not None and t < analysis_start:
+            continue
         # Check if we should avoid extended hours trading
         if avoid_extended_hours:
             # Regular market hours: 9:30 AM - 4:00 PM ET
@@ -2455,6 +2539,7 @@ with st.spinner(f"Downloading {ticker} data..."):
 
     # Continue processing if we have data
     if not raw.empty:
+        actual_return_pct = None
         # Update title with current price and change
         try:
             current_price = raw['Close'].iloc[-1]
@@ -2482,41 +2567,32 @@ with st.spinner(f"Downloading {ticker} data..."):
             # Keep the original title if we can't fetch price
             pass
 
-        # Filter data based on selected period BEFORE backtesting
-        # This ensures backtest runs only on the selected timeframe
+        # Keep full dataset for indicator accuracy; determine analysis window for backtest logic
         backtest_data = raw.copy()
+        analysis_start = None
         if not backtest_data.empty:
             last_time = backtest_data.index[-1]
 
             if period == "1d":
                 if interval == "1d":
-                    # For daily interval, show 1 day
-                    cutoff_time = last_time - pd.Timedelta(days=1)
+                    analysis_start = last_time - pd.Timedelta(days=1)
                 else:
-                    # For intraday, show only the last trading day (6.5 hours market + pre/post)
-                    # Get the date of the last timestamp
                     last_date = last_time.date()
-                    # Set cutoff to start of that trading day (4:00 AM ET for pre-market)
-                    cutoff_time = pd.Timestamp(last_date).tz_localize('America/New_York') + pd.Timedelta(hours=4)
+                    analysis_start = pd.Timestamp(last_date).tz_localize('America/New_York') + pd.Timedelta(hours=4)
             elif period == "5d":
-                cutoff_time = last_time - pd.Timedelta(days=5)
+                analysis_start = last_time - pd.Timedelta(days=5)
             elif period == "2wk":
-                cutoff_time = last_time - pd.Timedelta(weeks=2)
+                analysis_start = last_time - pd.Timedelta(weeks=2)
             elif period == "1mo":
-                cutoff_time = last_time - pd.Timedelta(days=30)
+                analysis_start = last_time - pd.Timedelta(days=30)
             elif period == "2mo":
-                cutoff_time = last_time - pd.Timedelta(days=60)
+                analysis_start = last_time - pd.Timedelta(days=60)
             elif period == "3mo":
-                cutoff_time = last_time - pd.Timedelta(days=90)
+                analysis_start = last_time - pd.Timedelta(days=90)
             elif period == "6mo":
-                cutoff_time = last_time - pd.Timedelta(days=180)
+                analysis_start = last_time - pd.Timedelta(days=180)
             elif period == "1y":
-                cutoff_time = last_time - pd.Timedelta(days=365)
-            else:
-                cutoff_time = backtest_data.index[0]  # Use all data if period not recognized
-
-            # Filter to backtest only on the selected period
-            backtest_data = backtest_data[backtest_data.index >= cutoff_time].copy()
+                analysis_start = last_time - pd.Timedelta(days=365)
 
         # Get avoid_extended_hours setting from trading settings
         avoid_extended_hours_setting = get_trading_settings().get('avoid_extended_hours', False)
@@ -2561,53 +2637,23 @@ with st.spinner(f"Downloading {ticker} data..."):
             use_ema21_slope_exit=use_ema21_slope_exit,
             ema21_slope_exit_threshold=ema21_slope_exit_threshold,
             avoid_extended_hours=avoid_extended_hours_setting
+            , analysis_start=analysis_start
         )
 
-        # Filter chart data based on selected period
-        if not df1.empty:
+        df1_display = df1
+        df5_display = df5
+        if period == "1d" and not df1.empty:
             last_time = df1.index[-1]
-
-            if period == "1d":
-                # Show only last 1 trading day
-                if interval == "1d":
-                    # For daily interval, show 1 day
-                    cutoff_time = last_time - pd.Timedelta(days=1)
-                else:
-                    # For intraday, show only the last trading day (6.5 hours market + pre/post)
-                    # Get the date of the last timestamp
-                    last_date = last_time.date()
-                    # Set cutoff to start of that trading day (4:00 AM ET for pre-market)
-                    cutoff_time = pd.Timestamp(last_date).tz_localize('America/New_York') + pd.Timedelta(hours=4)
-                df1_display = df1[df1.index >= cutoff_time].copy()
-                df5_display = df5[df5.index >= cutoff_time].copy()
-            elif period == "2wk":
-                # Show only last 2 weeks (14 days) for 2wk period
-                cutoff_time = last_time - pd.Timedelta(days=14)
-                df1_display = df1[df1.index >= cutoff_time].copy()
-                df5_display = df5[df5.index >= cutoff_time].copy()
-            elif period == "2mo":
-                # Show only last 2 months (60 days) for 2mo period
-                cutoff_time = last_time - pd.Timedelta(days=60)
-                df1_display = df1[df1.index >= cutoff_time].copy()
-                df5_display = df5[df5.index >= cutoff_time].copy()
-            elif period == "6mo":
-                # Show only last 6 months (180 days) for 6mo period
-                cutoff_time = last_time - pd.Timedelta(days=180)
-                df1_display = df1[df1.index >= cutoff_time].copy()
-                df5_display = df5[df5.index >= cutoff_time].copy()
-            elif period == "1y":
-                # Show only last 1 year (365 days) for 1y period
-                cutoff_time = last_time - pd.Timedelta(days=365)
-                df1_display = df1[df1.index >= cutoff_time].copy()
-                df5_display = df5[df5.index >= cutoff_time].copy()
+            if interval == "1d":
+                display_start = last_time - pd.Timedelta(days=1)
             else:
-                df1_display = df1
-                df5_display = df5
-        else:
-            df1_display = df1
-            df5_display = df5
+                last_date = last_time.date()
+                display_start = pd.Timestamp(last_date).tz_localize('America/New_York') + pd.Timedelta(hours=4)
+            df1_display = df1[df1.index >= display_start].copy()
+            df5_display = df5[df5.index >= display_start].copy()
 
         # Download data for second interval for comparison MACD
+        df_macd2 = pd.DataFrame()
         raw_2 = pd.DataFrame()
         if interval_2 in unsupported_intervals:
             # Fetch 1-minute data and aggregate
@@ -2642,9 +2688,7 @@ with st.spinner(f"Downloading {ticker} data..."):
                         raw_2.index = raw_2.index.tz_localize('UTC').tz_convert('America/New_York')
 
         # Calculate MACD for second interval
-        df_macd2 = pd.DataFrame()
         if not raw_2.empty:
-            # Calculate MACD using the macd function
             macd_line_2, signal_line_2, histogram_2 = macd(raw_2["Close"])
             df_macd2 = pd.DataFrame({
                 'macd': macd_line_2,
@@ -2657,6 +2701,13 @@ with st.spinner(f"Downloading {ticker} data..."):
                 start_time = df5_display.index[0]
                 end_time = df5_display.index[-1]
                 df_macd2 = df_macd2[(df_macd2.index >= start_time) & (df_macd2.index <= end_time)]
+
+                # When using the same interval, also align timestamps exactly so both charts
+                # show identical candle counts while keeping MACD values derived from the
+                # fresh download (which tends to have fewer gaps).
+                if interval_2 == interval:
+                    aligned_index = df_macd2.index.intersection(df5_display.index)
+                    df_macd2 = df_macd2.loc[aligned_index]
 
         # Chart with entries/exits - single chart with multiple y-axes
         # Create header with reload button on the right
@@ -2805,6 +2856,68 @@ with st.spinner(f"Downloading {ticker} data..."):
                     text=exit_tooltips,
                     hoverinfo='text',
                     yaxis='y3'
+                ))
+
+        # Overlay filled Alpaca trades on price chart (arrow markers at fill price)
+        alpaca_fills = []
+        if ticker and not df5_display.empty:
+            alpaca_fills = get_recent_filled_trades(ticker)
+            actual_return_pct = calculate_actual_return_pct(alpaca_fills)
+
+        if alpaca_fills and not df5_display.empty:
+            fill_times = []
+            fill_prices = []
+            fill_colors = []
+            fill_symbols = []
+            fill_tooltips = []
+
+            price_series = df5_display["Close"]
+            start_time = df5_display.index[0]
+            end_time = df5_display.index[-1]
+
+            for trade in alpaca_fills:
+                trade_time = trade['time']
+                if trade_time < start_time or trade_time > end_time:
+                    continue
+
+                price_val = trade.get('price')
+                if price_val is None:
+                    idx = price_series.index.get_indexer([trade_time], method='nearest')
+                    if len(idx) == 0 or idx[0] == -1:
+                        continue
+                    price_val = price_series.iloc[idx[0]]
+
+                fill_times.append(trade_time)
+                fill_prices.append(price_val)
+                side = trade.get('side', '').upper()
+                is_buy = (side == 'BUY')
+                fill_colors.append('royalblue' if is_buy else 'darkorange')
+                fill_symbols.append('arrow-up' if is_buy else 'arrow-down')
+
+                qty = trade.get('qty', 0.0)
+                qty_str = f"{qty:.2f}".rstrip('0').rstrip('.')
+                fill_tooltips.append(
+                    f"<b>{side or 'TRADE'}</b><br>"
+                    f"Qty: {qty_str}<br>"
+                    f"Price: ${price_val:.2f}<br>"
+                    f"Time: {trade_time.strftime('%Y-%m-%d %H:%M %Z')}"
+                )
+
+            if fill_times:
+                fig.add_trace(go.Scatter(
+                    x=fill_times,
+                    y=fill_prices,
+                    mode="markers",
+                    marker=dict(
+                        size=14,
+                        symbol=fill_symbols,
+                        color=fill_colors,
+                        line=dict(width=1, color='black')
+                    ),
+                    name="Filled Trades",
+                    text=fill_tooltips,
+                    hoverinfo='text',
+                    yaxis='y'
                 ))
 
         # Volume chart (yaxis2)
@@ -3103,7 +3216,21 @@ with st.spinner(f"Downloading {ticker} data..."):
                     return_emoji = "➖"
                     return_color = "gray"
 
-                st.subheader(f"Backtest for {ticker} - Return: :{return_color}[{return_emoji} {cum_ret_pct:+.2f}%]")
+                backtest_title = f"Backtest for {ticker} - Return: :{return_color}[{return_emoji} {cum_ret_pct:+.2f}%]"
+
+                if actual_return_pct is not None:
+                    if actual_return_pct > 0:
+                        actual_emoji = "✅"
+                        actual_color = "green"
+                    elif actual_return_pct < 0:
+                        actual_emoji = "⚠️"
+                        actual_color = "red"
+                    else:
+                        actual_emoji = "➖"
+                        actual_color = "gray"
+                    backtest_title += f" | Actual: :{actual_color}[{actual_emoji} {actual_return_pct:+.2f}%]"
+
+                st.subheader(backtest_title)
 
                 total = len(display_trades)
                 winrate = (display_trades["return_pct"] > 0).mean()
@@ -3134,4 +3261,3 @@ with st.spinner(f"Downloading {ticker} data..."):
                     file_name=f"{ticker}_rule_log.csv",
                     mime="text/csv"
                 )
-
