@@ -975,8 +975,7 @@ def backtest_symbol(df1,
                     ema21_slope_entry_threshold=0.0,
                     use_ema21_slope_exit=False,
                     ema21_slope_exit_threshold=0.0,
-                    avoid_extended_hours=False,
-                    analysis_start=None):
+                    avoid_extended_hours=False):
     """
     Apply Greg's rules to a single symbol.
     Returns:
@@ -1055,8 +1054,6 @@ def backtest_symbol(df1,
     last_exit_time = None  # Track last exit time for timeout reset
 
     for t, row in df5.iterrows():
-        if analysis_start is not None and t < analysis_start:
-            continue
         # Check if we should avoid extended hours trading
         if avoid_extended_hours:
             # Regular market hours: 9:30 AM - 4:00 PM ET
@@ -2399,7 +2396,7 @@ if settings_have_changed(st.session_state.settings, st.session_state.get('loaded
             # Update session state with the saved values
             st.session_state.settings.update({
                 'interval': alpaca_strategy.get('interval', '5m'),
-                'interval_2': alpaca_strategy.get('interval', '10m'),
+                'interval_2': alpaca_strategy.get('interval_2', '10m'),
                 'period': alpaca_strategy.get('period', '1d'),
                 'use_rsi': entry.get('use_rsi', False),
                 'rsi_threshold': entry.get('rsi_threshold', 30),
@@ -2428,36 +2425,34 @@ if settings_have_changed(st.session_state.settings, st.session_state.get('loaded
 
 # ---- Auto-run backtest and display chart ----
 with st.spinner(f"Downloading {ticker} data..."):
-    # Map period to yfinance compatible values and adjust for better data display
-    # yfinance supports: {"1d","5d","1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
+    # Helper to map requested period based on interval
+    def resolve_period(selected_interval, selected_period):
+        if selected_interval == "1d":
+            mapping = {
+                "1d": "5d",
+                "5d": "5d",
+                "2wk": "1mo",
+                "1mo": "3mo",
+                "2mo": "6mo",
+                "3mo": "1y",
+                "6mo": "2y",
+                "1y": "5y"
+            }
+        else:
+            mapping = {
+                "1d": "5d",
+                "5d": "5d",
+                "2wk": "1mo",
+                "1mo": "1mo",
+                "2mo": "3mo",
+                "3mo": "3mo",
+                "6mo": "6mo",
+                "1y": "1y"
+            }
+        return mapping.get(selected_period, selected_period)
 
-    # When interval is 1d (daily), adjust period to get more historical data
-    if interval == "1d":
-        # For daily interval, map period differently to get sufficient data
-        period_map = {
-            "1d": "5d",     # Get 5 days for 1d period
-            "5d": "5d",     # Get 5 days for 5d period
-            "2wk": "1mo",   # Get 1 month for 2wk period
-            "1mo": "3mo",   # Get 3 months for 1mo period (need more data for daily indicators)
-            "2mo": "6mo",   # Get 6 months for 2mo period
-            "3mo": "1y",    # Get 1 year for 3mo period
-            "6mo": "2y",    # Get 2 years for 6mo period
-            "1y": "5y"      # Get 5 years for 1y period
-        }
-    else:
-        # For intraday intervals, use existing mapping
-        period_map = {
-            "1d": "5d",    # Download 5 days for 1d period to get enough data for indicators
-            "5d": "5d",
-            "2wk": "1mo",  # yfinance doesn't support 2wk, use 1mo instead
-            "1mo": "1mo",
-            "2mo": "3mo",  # yfinance doesn't support 2mo, use 3mo instead
-            "3mo": "3mo",
-            "6mo": "6mo",
-            "1y": "1y"
-        }
-
-    main_period = period_map.get(period, period)
+    main_period = resolve_period(interval, period)
+    trading_period = resolve_period(interval_2, period)
 
     # Validate interval/period combination based on yfinance limits
     # 1m, 2m, 3m, 5m, 10m, 15m, 30m: max 60 days (3m and 10m use 1m data aggregation)
@@ -2476,8 +2471,17 @@ with st.spinner(f"Downloading {ticker} data..."):
             # 1y is ok, it's ~365 days
             pass
 
-    # Use extended hours for intraday intervals only
+    if interval_2 in intraday_short:
+        if trading_period in ["3mo", "6mo", "1y"]:
+            st.warning(f"⚠️ {interval_2} interval only supports up to 60 days of data. Adjusting secondary period from {trading_period} to 60d.")
+            trading_period = "60d"
+    elif interval_2 in intraday_hourly:
+        if trading_period == "1y" and period == "1y":
+            pass
+
+    # Use extended hours flags per interval
     use_extended_hours = interval not in ["1d", "5d", "1wk", "1mo", "3mo"]
+    use_extended_hours_trading = interval_2 not in ["1d", "5d", "1wk", "1mo", "3mo"]
 
     # Yahoo Finance doesn't support 3m or 10m intervals natively
     # Fetch 1-minute data and aggregate for these intervals
@@ -2540,18 +2544,16 @@ with st.spinner(f"Downloading {ticker} data..."):
     # Continue processing if we have data
     if not raw.empty:
         actual_return_pct = None
+        chart_data = raw.copy()
         # Update title with current price and change
         try:
-            current_price = raw['Close'].iloc[-1]
-            previous_price = raw['Close'].iloc[-2] if len(raw) > 1 else current_price
+            current_price = chart_data['Close'].iloc[-1]
+            previous_price = chart_data['Close'].iloc[-2] if len(chart_data) > 1 else current_price
             price_change = current_price - previous_price
             price_change_pct = (price_change / previous_price * 100) if previous_price != 0 else 0
 
-            # Format price change with color indicator
             change_color = "🟢" if price_change >= 0 else "🔴"
             change_sign = "+" if price_change >= 0 else ""
-
-            # Update the title with price info using the placeholder
             title_html = f"""
             <h1>Strategy Scalping - {ticker}
             <span style='font-size: 0.8em; color: {"#00FF00" if price_change >= 0 else "#FF4444"};'>
@@ -2559,22 +2561,63 @@ with st.spinner(f"Downloading {ticker} data..."):
             </span></h1>
             """
             title_placeholder.markdown(title_html, unsafe_allow_html=True)
-
-            # Also update the page config with latest price (for browser tab)
-            # Note: st.set_page_config can only be called once, so we can't update it dynamically
-            # The tab will show the ticker name set earlier
-        except Exception as e:
-            # Keep the original title if we can't fetch price
+        except Exception:
             pass
 
-        # Keep full dataset for indicator accuracy; determine analysis window for backtest logic
-        backtest_data = raw.copy()
+        # Download data for second interval (trading data + MACD panel)
+        df_macd2_full = pd.DataFrame()
+        trading_data = pd.DataFrame()
+        trading_interval = interval
+        raw_2 = pd.DataFrame()
+        if interval_2 in unsupported_intervals:
+            raw_2 = yf.download(ticker, period=trading_period,
+                               interval='1m', progress=False, prepost=use_extended_hours_trading)
+            if not raw_2.empty:
+                if isinstance(raw_2.columns, pd.MultiIndex):
+                    raw_2.columns = raw_2.columns.get_level_values(0)
+                if hasattr(raw_2.index, 'tz'):
+                    if raw_2.index.tz is not None:
+                        raw_2.index = raw_2.index.tz_convert('America/New_York')
+                    else:
+                        raw_2.index = raw_2.index.tz_localize('UTC').tz_convert('America/New_York')
+
+                interval_map = {'3m': '3min', '10m': '10min'}
+                resample_freq = interval_map[interval_2]
+                raw_2 = raw_2.resample(resample_freq).agg({
+                    'Open': 'first', 'High': 'max', 'Low': 'min',
+                    'Close': 'last', 'Volume': 'sum'
+                }).dropna()
+        else:
+            raw_2 = yf.download(ticker, period=trading_period,
+                               interval=interval_2, progress=False, prepost=use_extended_hours_trading)
+            if not raw_2.empty:
+                if isinstance(raw_2.columns, pd.MultiIndex):
+                    raw_2.columns = raw_2.columns.get_level_values(0)
+                if hasattr(raw_2.index, 'tz'):
+                    if raw_2.index.tz is not None:
+                        raw_2.index = raw_2.index.tz_convert('America/New_York')
+                    else:
+                        raw_2.index = raw_2.index.tz_localize('UTC').tz_convert('America/New_York')
+
+        if not raw_2.empty:
+            trading_data = raw_2.copy()
+            trading_interval = interval_2
+            macd_line_2, signal_line_2, histogram_2 = macd(trading_data["Close"])
+            df_macd2_full = pd.DataFrame({
+                'macd': macd_line_2,
+                'macd_signal': signal_line_2,
+                'macd_hist': histogram_2
+            }, index=trading_data.index)
+        else:
+            trading_data = chart_data.copy()
+
+        # Determine analysis window based on trading data
         analysis_start = None
-        if not backtest_data.empty:
-            last_time = backtest_data.index[-1]
+        if not trading_data.empty:
+            last_time = trading_data.index[-1]
 
             if period == "1d":
-                if interval == "1d":
+                if trading_interval == "1d":
                     analysis_start = last_time - pd.Timedelta(days=1)
                 else:
                     last_date = last_time.date()
@@ -2597,12 +2640,11 @@ with st.spinner(f"Downloading {ticker} data..."):
         # Get avoid_extended_hours setting from trading settings
         avoid_extended_hours_setting = get_trading_settings().get('avoid_extended_hours', False)
 
-        # Show if extended hours avoidance is enabled
         if avoid_extended_hours_setting:
-            st.info(f"ℹ️ Extended hours avoidance enabled - only entries during 9:30 AM - 4:00 PM ET will be allowed")
+            st.info("ℹ️ Extended hours avoidance enabled - only entries during 9:30 AM - 4:00 PM ET will be allowed")
 
-        df1, df5, trades_df, logs_df = backtest_symbol(
-            backtest_data,
+        _, _, trades_df, logs_df = backtest_symbol(
+            trading_data,
             stop_loss=stop_loss_pct,
             tp_pct=take_profit_pct,
             use_rsi=use_rsi,
@@ -2637,9 +2679,54 @@ with st.spinner(f"Downloading {ticker} data..."):
             use_ema21_slope_exit=use_ema21_slope_exit,
             ema21_slope_exit_threshold=ema21_slope_exit_threshold,
             avoid_extended_hours=avoid_extended_hours_setting
-            , analysis_start=analysis_start
         )
 
+        df1_chart, df5_chart, _, _ = backtest_symbol(
+            chart_data,
+            stop_loss=stop_loss_pct,
+            tp_pct=take_profit_pct,
+            use_rsi=use_rsi,
+            rsi_threshold=rsi_threshold,
+            use_bb_cross_up=use_bb_cross_up,
+            use_bb_width=use_bb_width,
+            bb_width_threshold=bb_width_threshold,
+            use_ema=use_ema,
+            use_volume=use_volume,
+            use_stop_loss=use_stop_loss,
+            use_take_profit=use_take_profit,
+            use_rsi_overbought=use_rsi_overbought,
+            rsi_overbought_threshold=rsi_overbought_threshold,
+            use_ema_cross_up=use_ema_cross_up,
+            use_ema_cross_down=use_ema_cross_down,
+            use_price_below_ema9=use_price_below_ema9,
+            use_bb_cross_down=use_bb_cross_down,
+            use_bb_width_exit=use_bb_width_exit,
+            bb_width_exit_threshold=bb_width_exit_threshold,
+            use_macd_cross_up=use_macd_cross_up,
+            use_macd_cross_down=use_macd_cross_down,
+            use_price_above_ema21=use_price_above_ema21,
+            use_price_below_ema21=use_price_below_ema21,
+            use_macd_below_threshold=use_macd_below_threshold,
+            macd_below_threshold=macd_below_threshold,
+            use_macd_above_threshold=use_macd_above_threshold,
+            macd_above_threshold=macd_above_threshold,
+            use_macd_peak=use_macd_peak,
+            use_macd_valley=use_macd_valley,
+            use_ema21_slope_entry=use_ema21_slope_entry,
+            ema21_slope_entry_threshold=ema21_slope_entry_threshold,
+            use_ema21_slope_exit=use_ema21_slope_exit,
+            ema21_slope_exit_threshold=ema21_slope_exit_threshold,
+            avoid_extended_hours=avoid_extended_hours_setting
+        )
+
+        if analysis_start is not None:
+            if not trades_df.empty and 'entry_time' in trades_df.columns:
+                trades_df = trades_df[trades_df['entry_time'] >= analysis_start].copy()
+            if not logs_df.empty and 'time' in logs_df.columns:
+                logs_df = logs_df[logs_df['time'] >= analysis_start].copy()
+
+        df1 = df1_chart
+        df5 = df5_chart
         df1_display = df1
         df5_display = df5
         if period == "1d" and not df1.empty:
@@ -2652,59 +2739,15 @@ with st.spinner(f"Downloading {ticker} data..."):
             df1_display = df1[df1.index >= display_start].copy()
             df5_display = df5[df5.index >= display_start].copy()
 
-        # Download data for second interval for comparison MACD
+        # Prepare MACD2 data for chart display
         df_macd2 = pd.DataFrame()
-        raw_2 = pd.DataFrame()
-        if interval_2 in unsupported_intervals:
-            # Fetch 1-minute data and aggregate
-            raw_2 = yf.download(ticker, period=main_period,
-                               interval='1m', progress=False, prepost=use_extended_hours)
-            if not raw_2.empty:
-                if isinstance(raw_2.columns, pd.MultiIndex):
-                    raw_2.columns = raw_2.columns.get_level_values(0)
-                if hasattr(raw_2.index, 'tz'):
-                    if raw_2.index.tz is not None:
-                        raw_2.index = raw_2.index.tz_convert('America/New_York')
-                    else:
-                        raw_2.index = raw_2.index.tz_localize('UTC').tz_convert('America/New_York')
-
-                interval_map = {'3m': '3min', '10m': '10min'}
-                resample_freq = interval_map[interval_2]
-                raw_2 = raw_2.resample(resample_freq).agg({
-                    'Open': 'first', 'High': 'max', 'Low': 'min',
-                    'Close': 'last', 'Volume': 'sum'
-                }).dropna()
-        else:
-            # Use Yahoo's native interval
-            raw_2 = yf.download(ticker, period=main_period,
-                               interval=interval_2, progress=False, prepost=use_extended_hours)
-            if not raw_2.empty:
-                if isinstance(raw_2.columns, pd.MultiIndex):
-                    raw_2.columns = raw_2.columns.get_level_values(0)
-                if hasattr(raw_2.index, 'tz'):
-                    if raw_2.index.tz is not None:
-                        raw_2.index = raw_2.index.tz_convert('America/New_York')
-                    else:
-                        raw_2.index = raw_2.index.tz_localize('UTC').tz_convert('America/New_York')
-
-        # Calculate MACD for second interval
-        if not raw_2.empty:
-            macd_line_2, signal_line_2, histogram_2 = macd(raw_2["Close"])
-            df_macd2 = pd.DataFrame({
-                'macd': macd_line_2,
-                'macd_signal': signal_line_2,
-                'macd_hist': histogram_2
-            }, index=raw_2.index)
-
-            # Filter to match display period
+        if not df_macd2_full.empty:
+            df_macd2 = df_macd2_full.copy()
             if not df5_display.empty:
                 start_time = df5_display.index[0]
                 end_time = df5_display.index[-1]
                 df_macd2 = df_macd2[(df_macd2.index >= start_time) & (df_macd2.index <= end_time)]
 
-                # When using the same interval, also align timestamps exactly so both charts
-                # show identical candle counts while keeping MACD values derived from the
-                # fresh download (which tends to have fewer gaps).
                 if interval_2 == interval:
                     aligned_index = df_macd2.index.intersection(df5_display.index)
                     df_macd2 = df_macd2.loc[aligned_index]
