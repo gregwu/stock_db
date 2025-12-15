@@ -234,6 +234,15 @@ def flatten_strategy(strategy):
     return settings
 
 
+def mark_signal_processed(state, ticker, event, timestamp):
+    """Record that a specific ticker/event signal was processed."""
+    if state is None or ticker is None or event is None or timestamp is None:
+        return
+    state.setdefault('processed_signals', {})
+    ticker_events = state['processed_signals'].setdefault(ticker, {})
+    ticker_events[event] = str(timestamp)
+
+
 def get_macd_label(strategy=None, fallback_interval='5m', fallback_interval_2=None):
     """
     Build a descriptive MACD label based on interval settings.
@@ -257,6 +266,36 @@ def get_macd_label(strategy=None, fallback_interval='5m', fallback_interval_2=No
         macd_interval = base_interval
 
     return f"MACD ({macd_interval})"
+
+
+def format_macd_metadata(metadata):
+    """Format MACD indicator details for logging/email."""
+    if not metadata:
+        return ""
+    macd_value = metadata.get('macd')
+    if macd_value is None:
+        return ""
+
+    label = metadata.get('macd_label') or f"MACD ({metadata.get('macd_interval', 'N/A')})"
+    macd_str = f"{label}: {macd_value:.4f}"
+
+    macd_signal_value = metadata.get('macd_signal')
+    if macd_signal_value is not None:
+        macd_str += f" | Signal: {macd_signal_value:.4f}"
+
+    macd_hist_value = metadata.get('macd_hist')
+    if macd_hist_value is not None:
+        macd_str += f" | Hist: {macd_hist_value:.4f}"
+
+    return macd_str
+
+
+def macd_email_section(metadata):
+    """Return formatted MACD section for email bodies."""
+    macd_str = format_macd_metadata(metadata)
+    if not macd_str:
+        return ""
+    return f"\nIndicators:\n{macd_str}"
 
 
 def resolve_trading_interval(strategy_settings, default_value='5m'):
@@ -389,6 +428,8 @@ def load_state():
                         'entry_conditions': state.get('entry_conditions'),
                         'quantity': state.get('position_size', 0)
                     }
+            if 'processed_signals' not in state:
+                state['processed_signals'] = {}
             return state
     return {
         'last_check_time': None,
@@ -398,7 +439,8 @@ def load_state():
         'entry_conditions': None,   # Legacy - for backward compatibility
         'position_size': 0,         # Legacy - for backward compatibility
         'order_ids': [],
-        'positions': {}  # New multi-ticker tracking: {ticker: {entry_price, entry_time, quantity, ...}}
+        'positions': {},  # New multi-ticker tracking: {ticker: {entry_price, entry_time, quantity, ...}}
+        'processed_signals': {}
     }
 
 
@@ -1312,15 +1354,18 @@ def check_stop_loss_take_profit(state):
     return False
 
 
-def execute_action(action_config, price, note, timestamp, state):
+def execute_action(action_config, price, note, timestamp, state, metadata=None):
     """
     Execute a single action based on configuration
     Returns True if successful, False otherwise
+
+    metadata: Optional dict with signal context (e.g., MACD values)
     """
     action_type = action_config.get('type', 'BUY')
     ticker = action_config.get('ticker')
     quantity = action_config.get('quantity', POSITION_SIZE)
     description = action_config.get('description', '')
+    indicator_section = macd_email_section(metadata)
 
     if action_type == 'BUY':
         if not ticker:
@@ -1392,6 +1437,7 @@ Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
+{indicator_section}
 
 Reason: Current market price is {price_diff_pct:.2f}% higher than signal price.
 This indicates the signal is too old or market has moved significantly.
@@ -1605,6 +1651,7 @@ Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
+{indicator_section}
 
 Reason: {description if description else 'Entry signal detected'}
 
@@ -1761,6 +1808,7 @@ Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
+{indicator_section}
 
 Reason: {description if description else 'Exit signal detected'}{pnl_info}
 
@@ -1850,6 +1898,7 @@ Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
+{indicator_section}
 
 Reason: Current market price is {price_diff_pct:.2f}% lower than signal price.
 This indicates the signal is too old or market has dropped significantly.
@@ -2000,6 +2049,7 @@ Signal Time: {signal_time_str}
 Current Time: {current_time}
 
 Details: {note}
+{indicator_section}
 
 Reason: {description if description else 'Exit signal detected'}{pnl_info}
 
@@ -2075,7 +2125,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
         return False
 
 
-def process_signal_with_config(event, price, note, timestamp, state, ticker=None):
+def process_signal_with_config(event, price, note, timestamp, state, ticker=None, metadata=None):
     """
     Process a signal based on configuration from alpaca_signal_actions.json
     Supports multiple actions per signal and ticker-specific actions
@@ -2087,6 +2137,7 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
         timestamp: Signal timestamp
         state: Bot state dictionary
         ticker: Ticker that generated the signal (optional)
+        metadata: Optional dict containing signal metadata (e.g., MACD values)
 
     Returns:
         True if signal was processed, False otherwise
@@ -2098,6 +2149,7 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
         return False
 
     workflow = signal_actions_config.get('workflow', {})
+    indicator_section = macd_email_section(metadata)
 
     # NEW: Look up ticker-specific signal actions first
     signal_config = None
@@ -2160,7 +2212,7 @@ Signal Price: ${price:.2f}
 Signal Time: {signal_time_str}
 Current Time: {current_time}
 
-Details: {note}
+Details: {note}{indicator_section}
 
 ⚠️ NOTE: Trading bot is currently DISABLED for {ticker}.
 No order was placed. This is a notification only.
@@ -2254,7 +2306,7 @@ Signal Price: ${price:.2f}
 Signal Time: {signal_time_str}
 Current Time: {current_time}
 
-Details: {note}
+Details: {note}{indicator_section}
 
 ⚠️ NOTE: The '{event}' signal type is currently DISABLED in configuration.
 No order was placed. This is a notification only.
@@ -2340,7 +2392,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
     success_count = 0
     for idx, action_config in enumerate(actions, 1):
         logging.info(f"      Action {idx}/{len(actions)}:")
-        if execute_action(action_config, price, note, timestamp, state):
+        if execute_action(action_config, price, note, timestamp, state, metadata=metadata):
             success_count += 1
         logging.info("")
 
@@ -2359,6 +2411,7 @@ def run_strategy():
     logging.info("Running strategy check...")
 
     state = load_state()
+    state.setdefault('processed_signals', {})
 
     # Check stop loss / take profit first
     if check_stop_loss_take_profit(state):
@@ -2568,13 +2621,51 @@ def run_strategy():
                     logging.info(f"Price: ${price:.2f}")
                     logging.info(f"Details: {note}")
 
+                    # Capture MACD values for this signal
+                    macd_value = None
+                    macd_signal_value = None
+                    macd_hist_value = None
+                    if 'macd' in df5.columns and timestamp in df5.index:
+                        try:
+                            macd_row = df5.loc[timestamp]
+                            macd_value = macd_row.get('macd')
+                            macd_signal_value = macd_row.get('macd_signal')
+                            macd_hist_value = macd_row.get('macd_hist')
+
+                            if pd.isna(macd_value):
+                                macd_value = None
+                            if pd.isna(macd_signal_value):
+                                macd_signal_value = None
+                            if pd.isna(macd_hist_value):
+                                macd_hist_value = None
+                        except KeyError:
+                            pass
+
+                    macd_label = get_macd_label({'interval': interval, 'interval_2': trading_interval},
+                                                interval, trading_interval)
+                    signal_metadata = {
+                        'macd': macd_value,
+                        'macd_signal': macd_signal_value,
+                        'macd_hist': macd_hist_value,
+                        'macd_label': macd_label,
+                        'macd_interval': trading_interval
+                    }
+                    macd_snapshot = format_macd_metadata(signal_metadata)
+                    if macd_snapshot:
+                        logging.info(f"Indicator Snapshot: {macd_snapshot}")
+
                     # Create unique check key per ticker to track signals independently
                     ticker_check_key = f'last_check_{ticker}'
                     if ticker_check_key not in state:
                         state[ticker_check_key] = None
+                    signal_identifier = str(timestamp)
+                    ticker_event_state = state['processed_signals'].setdefault(ticker, {})
+                    if ticker_event_state.get(event) == signal_identifier:
+                        logging.info(f"Signal already processed for {ticker} ({event}). Skipping.")
+                        continue
 
                     # Check if this is a new signal (not already processed)
-                    if state[ticker_check_key] != str(timestamp):
+                    if state[ticker_check_key] != signal_identifier:
                         logging.info("=" * 60)
                         logging.info(f"🔔 NEW SIGNAL DETECTED FOR {ticker}")
                         logging.info("=" * 60)
@@ -2586,11 +2677,20 @@ def run_strategy():
                         note_with_ticker = f"[{ticker}] {note}"
 
                         # Process signal using configuration (pass ticker for ticker-specific actions)
-                        process_signal_with_config(event, price, note_with_ticker, timestamp, state, ticker=ticker)
+                        process_signal_with_config(
+                            event,
+                            price,
+                            note_with_ticker,
+                            timestamp,
+                            state,
+                            ticker=ticker,
+                            metadata=signal_metadata
+                        )
 
                         # Always update last check time for this ticker to mark signal as seen
                         # (even if it was skipped due to being stale or disabled)
-                        state[ticker_check_key] = str(timestamp)
+                        state[ticker_check_key] = signal_identifier
+                        mark_signal_processed(state, ticker, event, timestamp)
                         save_state(state)
                         logging.info(f"✅ State updated: {ticker_check_key} = {timestamp}")
                     else:
