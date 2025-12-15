@@ -259,6 +259,18 @@ def get_macd_label(strategy=None, fallback_interval='5m', fallback_interval_2=No
     return f"MACD ({macd_interval})"
 
 
+def resolve_trading_interval(strategy_settings, default_value='5m'):
+    """
+    Determine the effective trading interval (prefers interval_2).
+    """
+    if not strategy_settings:
+        return default_value
+
+    interval = strategy_settings.get('interval', default_value) or default_value
+    trading_interval = strategy_settings.get('interval_2', interval) or interval
+    return trading_interval
+
+
 def load_alpaca_settings():
     """
     Load DEFAULT strategy settings and return flattened dictionary
@@ -270,7 +282,11 @@ def load_alpaca_settings():
     if not strategy:
         return None
 
-    return flatten_strategy(strategy)
+    settings = flatten_strategy(strategy)
+    trading_interval = resolve_trading_interval(settings)
+    settings['interval'] = trading_interval
+    settings['interval_2'] = trading_interval
+    return settings
 
 
 def load_signal_actions():
@@ -2396,10 +2412,14 @@ def run_strategy():
         ticker_strategy = ticker_config.get('strategy', {})
 
         # Get interval settings and period from ticker-specific strategy, with fallback to defaults
-        default_interval = default_settings.get('interval', '5m')
-        default_interval_2 = default_settings.get('interval_2', default_interval)
+        default_interval = default_settings.get('interval', '5m') if default_settings else '5m'
         interval = ticker_strategy.get('interval', default_interval)
-        trading_interval = ticker_strategy.get('interval_2', default_interval_2) or interval
+        trading_interval = ticker_strategy.get('interval_2')
+        if not trading_interval:
+            trading_interval = interval
+        if not trading_interval:
+            trading_interval = default_interval
+        interval = trading_interval
         period = ticker_strategy.get('period', default_settings.get('period', '1d'))
 
         # Download recent data
@@ -2470,6 +2490,8 @@ def run_strategy():
             # Get ticker-specific strategy settings (with overrides)
             ticker_strategy = get_ticker_strategy(ticker, default_strategy, signal_actions_config)
             ticker_settings = flatten_strategy(ticker_strategy)
+            ticker_settings['interval'] = trading_interval
+            ticker_settings['interval_2'] = trading_interval
 
             # Log if using ticker-specific overrides
             ticker_config = ticker_configs.get(ticker, {})
