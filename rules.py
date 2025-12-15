@@ -2058,6 +2058,7 @@ with st.sidebar:
                               key=f'interval_2_widget_{ticker}', on_change=update_interval_2,
                               help="Select a different timeframe for comparison MACD")
     st.session_state.settings['interval_2'] = interval_2
+    macd_display_name = f"MACD ({interval_2})"
 
     st.divider()
 
@@ -2115,9 +2116,9 @@ with st.sidebar:
     if 'use_macd_cross_up' not in st.session_state.settings:
         st.session_state.settings['use_macd_cross_up'] = False
 
-    use_macd_cross_up = st.checkbox("MACD crosses above Signal line",
+    use_macd_cross_up = st.checkbox(f"{macd_display_name} crosses above Signal line",
                                      value=st.session_state.settings['use_macd_cross_up'],
-                                     help="Entry when MACD line crosses above signal line (bullish)",
+                                     help=f"Entry when {macd_display_name} line crosses above signal line (bullish)",
                                      key=f'use_macd_cross_up_widget_{ticker}', on_change=create_setting_callback('use_macd_cross_up', ticker))
     st.session_state.settings['use_macd_cross_up'] = use_macd_cross_up
 
@@ -2141,18 +2142,18 @@ with st.sidebar:
     if 'macd_below_threshold' not in st.session_state.settings:
         st.session_state.settings['macd_below_threshold'] = 0.0
 
-    use_macd_below_threshold = st.checkbox("MACD < Threshold",
+    use_macd_below_threshold = st.checkbox(f"{macd_display_name} < Threshold",
                                             value=st.session_state.settings['use_macd_below_threshold'],
-                                            help="Entry when MACD is below threshold",
+                                            help=f"Entry when {macd_display_name} is below threshold",
                                             key=f'use_macd_below_threshold_widget_{ticker}', on_change=create_setting_callback('use_macd_below_threshold', ticker))
     st.session_state.settings['use_macd_below_threshold'] = use_macd_below_threshold
 
-    macd_below_threshold = st.number_input("MACD below threshold value",
+    macd_below_threshold = st.number_input(f"{macd_display_name} below threshold value",
                                             value=st.session_state.settings['macd_below_threshold'],
                                             step=0.001,
                                             format="%.3f",
                                             disabled=not use_macd_below_threshold,
-                                            help="Enter when MACD is below this value",
+                                            help=f"Enter when {macd_display_name} is below this value",
                                             key=f'macd_below_threshold_widget_{ticker}', on_change=create_setting_callback('macd_below_threshold', ticker))
     st.session_state.settings['macd_below_threshold'] = macd_below_threshold
 
@@ -2160,9 +2161,9 @@ with st.sidebar:
     if 'use_macd_valley' not in st.session_state.settings:
         st.session_state.settings['use_macd_valley'] = False
 
-    use_macd_valley = st.checkbox("MACD Valley (turning up)",
+    use_macd_valley = st.checkbox(f"{macd_display_name} Valley (turning up)",
                                    value=st.session_state.settings['use_macd_valley'],
-                                   help="Entry when MACD valley is detected (MACD turning up)",
+                                   help=f"Entry when {macd_display_name} valley is detected (turning up)",
                                    key=f'use_macd_valley_widget_{ticker}', on_change=create_setting_callback('use_macd_valley', ticker))
     st.session_state.settings['use_macd_valley'] = use_macd_valley
 
@@ -2290,9 +2291,9 @@ with st.sidebar:
     if 'use_macd_cross_down' not in st.session_state.settings:
         st.session_state.settings['use_macd_cross_down'] = False
 
-    use_macd_cross_down = st.checkbox("Exit on MACD crosses below Signal line",
+    use_macd_cross_down = st.checkbox(f"Exit on {macd_display_name} crosses below Signal line",
                                        value=st.session_state.settings['use_macd_cross_down'],
-                                       help="Exit when MACD line crosses below signal line (bearish)",
+                                       help=f"Exit when {macd_display_name} line crosses below signal line (bearish)",
                                        key=f'use_macd_cross_down_widget_{ticker}', on_change=create_setting_callback('use_macd_cross_down', ticker))
     st.session_state.settings['use_macd_cross_down'] = use_macd_cross_down
 
@@ -2302,18 +2303,18 @@ with st.sidebar:
     if 'macd_above_threshold' not in st.session_state.settings:
         st.session_state.settings['macd_above_threshold'] = 0.0
 
-    use_macd_above_threshold = st.checkbox("Exit on MACD > Threshold",
+    use_macd_above_threshold = st.checkbox(f"Exit on {macd_display_name} > Threshold",
                                             value=st.session_state.settings['use_macd_above_threshold'],
-                                            help="Exit when MACD exceeds threshold",
+                                            help=f"Exit when {macd_display_name} exceeds threshold",
                                             key=f'use_macd_above_threshold_widget_{ticker}', on_change=create_setting_callback('use_macd_above_threshold', ticker))
     st.session_state.settings['use_macd_above_threshold'] = use_macd_above_threshold
 
-    macd_above_threshold = st.number_input("MACD above threshold value",
+    macd_above_threshold = st.number_input(f"{macd_display_name} above threshold value",
                                             value=st.session_state.settings['macd_above_threshold'],
                                             step=0.001,
                                             format="%.3f",
                                             disabled=not use_macd_above_threshold,
-                                            help="Exit when MACD exceeds this value",
+                                            help=f"Exit when {macd_display_name} exceeds this value",
                                             key=f'macd_above_threshold_widget_{ticker}', on_change=create_setting_callback('macd_above_threshold', ticker))
     st.session_state.settings['macd_above_threshold'] = macd_above_threshold
 
@@ -2321,9 +2322,9 @@ with st.sidebar:
     if 'use_macd_peak' not in st.session_state.settings:
         st.session_state.settings['use_macd_peak'] = False
 
-    use_macd_peak = st.checkbox("Exit on MACD Peak (turning down)",
+    use_macd_peak = st.checkbox(f"Exit on {macd_display_name} Peak (turning down)",
                                  value=st.session_state.settings['use_macd_peak'],
-                                 help="Exit when MACD peak is detected (MACD turning down)",
+                                 help=f"Exit when {macd_display_name} peak is detected (turning down)",
                                  key=f'use_macd_peak_widget_{ticker}', on_change=create_setting_callback('use_macd_peak', ticker))
     st.session_state.settings['use_macd_peak'] = use_macd_peak
 

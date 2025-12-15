@@ -183,6 +183,7 @@ def flatten_strategy(strategy):
     """
     settings = {
         'interval': strategy.get('interval', '5m'),
+        'interval_2': strategy.get('interval_2', strategy.get('interval', '5m')),
         'period': strategy.get('period', '1d'),
     }
 
@@ -231,6 +232,31 @@ def flatten_strategy(strategy):
     settings['check_interval_seconds'] = trading.get('check_interval_seconds', 300)
 
     return settings
+
+
+def get_macd_label(strategy=None, fallback_interval='5m', fallback_interval_2=None):
+    """
+    Build a descriptive MACD label based on interval settings.
+
+    Args:
+        strategy: Dict containing interval/interval_2 keys.
+        fallback_interval: Default interval if not provided.
+        fallback_interval_2: Default secondary interval; falls back to interval if missing.
+
+    Returns:
+        String label like "MACD (10m)"
+    """
+    base_interval = fallback_interval or 'N/A'
+    macd_interval = fallback_interval_2 or base_interval
+
+    if strategy:
+        base_interval = strategy.get('interval', base_interval) or base_interval
+        macd_interval = strategy.get('interval_2', macd_interval) or macd_interval
+
+    if not macd_interval:
+        macd_interval = base_interval
+
+    return f"MACD ({macd_interval})"
 
 
 def load_alpaca_settings():
@@ -544,6 +570,7 @@ def initialize_alpaca(settings_config=None, signal_actions=None):
 GLOBAL SETTINGS
 ═══════════════════════════════════════
 Interval: {settings.get('interval', '5m')}
+Trading Interval: {settings.get('interval_2', settings.get('interval', '5m'))}
 Period: {settings.get('period', '1d')}"""
 
         # Build enabled/disabled ticker lists and trading strategies
@@ -552,6 +579,8 @@ Period: {settings.get('period', '1d')}"""
         trading_strategies = ""
 
         if signal_actions:
+            default_interval = settings.get('interval', '5m') if settings else '5m'
+            default_interval_2 = settings.get('interval_2', default_interval) if settings else default_interval
             ticker_configs = signal_actions.get('tickers', {})
             # Get all tickers from signal_actions config
             all_tickers = list(ticker_configs.keys())
@@ -569,6 +598,7 @@ Period: {settings.get('period', '1d')}"""
                 entry_cond = strategy.get('entry_conditions', {})
                 exit_cond = strategy.get('exit_conditions', {})
                 risk_mgmt = strategy.get('risk_management', {})
+                macd_label = get_macd_label(strategy, default_interval, default_interval_2)
 
                 # Get entry actions
                 entry_actions = ticker_config.get('entry', {}).get('actions', [])
@@ -596,15 +626,15 @@ Period: {settings.get('period', '1d')}"""
                 if entry_cond.get('use_bb_width'):
                     entry_conditions_list.append(f"BB Width > {entry_cond.get('bb_width_threshold', 0.4)}%")
                 if entry_cond.get('use_macd_cross_up'):
-                    entry_conditions_list.append("MACD cross above Signal")
+                    entry_conditions_list.append(f"{macd_label} cross above Signal")
                 if entry_cond.get('use_price_vs_ema9'):
                     entry_conditions_list.append("Price > EMA9")
                 if entry_cond.get('use_price_vs_ema21'):
                     entry_conditions_list.append("Price > EMA21")
                 if entry_cond.get('use_macd_threshold'):
-                    entry_conditions_list.append(f"MACD < {entry_cond.get('macd_threshold', 0.1)}")
+                    entry_conditions_list.append(f"{macd_label} < {entry_cond.get('macd_threshold', 0.1)}")
                 if entry_cond.get('use_macd_valley'):
-                    entry_conditions_list.append("MACD Valley (turning up)")
+                    entry_conditions_list.append(f"{macd_label} Valley (turning up)")
                 if entry_cond.get('use_volume'):
                     entry_conditions_list.append("Volume Rising")
 
@@ -634,15 +664,15 @@ Period: {settings.get('period', '1d')}"""
                 if exit_cond.get('use_bb_width_exit'):
                     exit_conditions_list.append(f"BB Width > {exit_cond.get('bb_width_exit_threshold', 0.4)}%")
                 if exit_cond.get('use_macd_cross_down'):
-                    exit_conditions_list.append("MACD cross below Signal")
+                    exit_conditions_list.append(f"{macd_label} cross below Signal")
                 if exit_cond.get('use_price_vs_ema9_exit'):
                     exit_conditions_list.append("Price < EMA9")
                 if exit_cond.get('use_price_vs_ema21_exit'):
                     exit_conditions_list.append("Price < EMA21")
                 if exit_cond.get('use_macd_above_threshold'):
-                    exit_conditions_list.append(f"MACD > {exit_cond.get('macd_above_threshold', 0.0)}")
+                    exit_conditions_list.append(f"{macd_label} > {exit_cond.get('macd_above_threshold', 0.0)}")
                 if exit_cond.get('use_macd_peak'):
-                    exit_conditions_list.append("MACD Peak (turning down)")
+                    exit_conditions_list.append(f"{macd_label} Peak (turning down)")
 
                 if exit_conditions_list:
                     for cond in exit_conditions_list:
@@ -1327,7 +1357,7 @@ def execute_action(action_config, price, note, timestamp, state):
                         ticker_configs = signal_actions_config.get('tickers', {})
                         ticker_config = ticker_configs.get(ticker, {})
                         ticker_strategy = ticker_config.get('strategy', {})
-                        interval = ticker_strategy.get('interval', 'N/A')
+                        interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                         period = ticker_strategy.get('period', 'N/A')
 
                         email_subject = f"⚠️ BUY SKIPPED - {ticker} (Price Too High)"
@@ -1414,7 +1444,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 ticker_configs = signal_actions_config.get('tickers', {})
                 ticker_config = ticker_configs.get(ticker, {})
                 ticker_strategy = ticker_config.get('strategy', {})
-                interval = ticker_strategy.get('interval', 'N/A')
+                interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                 period = ticker_strategy.get('period', 'N/A')
 
                 email_subject = f"⚠️ BUY SKIPPED - {ticker} (Extended Hours)"
@@ -1543,7 +1573,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 ticker_configs = signal_actions_config.get('tickers', {})
                 ticker_config = ticker_configs.get(ticker, {})
                 ticker_strategy = ticker_config.get('strategy', {})
-                interval = ticker_strategy.get('interval', 'N/A')
+                interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                 period = ticker_strategy.get('period', 'N/A')
 
                 email_subject = f"🟢 ENTRY SIGNAL - {ticker}"
@@ -1687,7 +1717,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                 ticker_configs = signal_actions_config.get('tickers', {})
                 ticker_config = ticker_configs.get(ticker, {})
                 ticker_strategy = ticker_config.get('strategy', {})
-                interval = ticker_strategy.get('interval', 'N/A')
+                interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                 period = ticker_strategy.get('period', 'N/A')
 
                 # Choose emoji based on P&L
@@ -1787,7 +1817,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                             ticker_configs = signal_actions_config.get('tickers', {})
                             ticker_config = ticker_configs.get(ticker, {})
                             ticker_strategy = ticker_config.get('strategy', {})
-                            interval = ticker_strategy.get('interval', 'N/A')
+                            interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                             period = ticker_strategy.get('period', 'N/A')
 
                             email_subject = f"⚠️ SELL SKIPPED - {ticker} (Price Too Low)"
@@ -1926,7 +1956,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     ticker_configs = signal_actions_config.get('tickers', {})
                     ticker_config = ticker_configs.get(ticker, {})
                     ticker_strategy = ticker_config.get('strategy', {})
-                    interval = ticker_strategy.get('interval', 'N/A')
+                    interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                     period = ticker_strategy.get('period', 'N/A')
 
                     # Choose emoji based on P&L
@@ -2086,7 +2116,7 @@ def process_signal_with_config(event, price, note, timestamp, state, ticker=None
 
                             # Get interval and period from ticker strategy
                             ticker_strategy = ticker_config.get('strategy', {})
-                            interval = ticker_strategy.get('interval', 'N/A')
+                            interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                             period = ticker_strategy.get('period', 'N/A')
 
                             # Determine if this is entry or exit signal
@@ -2180,7 +2210,7 @@ Alpaca Trading Bot ({USE_PAPER and 'PAPER' or 'LIVE'} Trading)
                     ticker_configs = signal_actions_config.get('tickers', {})
                     ticker_config = ticker_configs.get(ticker, {})
                     ticker_strategy = ticker_config.get('strategy', {})
-                    interval = ticker_strategy.get('interval', 'N/A')
+                    interval = ticker_strategy.get('interval_2', ticker_strategy.get('interval', 'N/A'))
                     period = ticker_strategy.get('period', 'N/A')
 
                     # Determine if this is entry or exit signal
@@ -2365,8 +2395,11 @@ def run_strategy():
         ticker_config = ticker_configs.get(ticker, {})
         ticker_strategy = ticker_config.get('strategy', {})
 
-        # Get interval and period from ticker-specific strategy, with fallback to defaults
-        interval = ticker_strategy.get('interval', default_settings.get('interval', '5m'))
+        # Get interval settings and period from ticker-specific strategy, with fallback to defaults
+        default_interval = default_settings.get('interval', '5m')
+        default_interval_2 = default_settings.get('interval_2', default_interval)
+        interval = ticker_strategy.get('interval', default_interval)
+        trading_interval = ticker_strategy.get('interval_2', default_interval_2) or interval
         period = ticker_strategy.get('period', default_settings.get('period', '1d'))
 
         # Download recent data
@@ -2379,7 +2412,7 @@ def run_strategy():
             download_period = period if period else "5d"
 
             # Always fetch 1-minute data first (it's the freshest)
-            logging.info(f"Fetching 1-minute data, will aggregate to {interval} interval")
+            logging.info(f"Fetching 1-minute data, will aggregate to {trading_interval} interval")
             raw = yf.download(ticker, period=download_period, interval='1m',
                              progress=False, prepost=True)
 
@@ -2398,8 +2431,8 @@ def run_strategy():
                 else:
                     raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
 
-            # Resample 1-minute data to desired interval
-            if interval != '1m':
+            # Resample 1-minute data to desired interval (interval_2 when available)
+            if trading_interval != '1m':
                 # Map interval to pandas resample frequency
                 interval_map = {
                     '2m': '2min',
@@ -2412,9 +2445,9 @@ def run_strategy():
                     '1d': '1D'
                 }
 
-                if interval in interval_map:
-                    resample_freq = interval_map[interval]
-                    logging.info(f"Resampling 1-minute bars to {interval} ({len(raw)} → aggregating...)")
+                if trading_interval in interval_map:
+                    resample_freq = interval_map[trading_interval]
+                    logging.info(f"Resampling 1-minute bars to {trading_interval} ({len(raw)} → aggregating...)")
 
                     df = raw.resample(resample_freq).agg({
                         'Open': 'first',
@@ -2424,10 +2457,10 @@ def run_strategy():
                         'Volume': 'sum'
                     }).dropna()
 
-                    logging.info(f"✅ Aggregated to {len(df)} {interval} bars (from {len(raw)} 1-min bars)")
+                    logging.info(f"✅ Aggregated to {len(df)} {trading_interval} bars (from {len(raw)} 1-min bars)")
                 else:
                     # Unsupported interval, use 1-minute data as-is
-                    logging.warning(f"Unsupported interval {interval}, using 1-minute bars")
+                    logging.warning(f"Unsupported interval {trading_interval}, using 1-minute bars")
                     df = raw.copy()
             else:
                 # Use 1-minute data as-is
@@ -2566,7 +2599,9 @@ def display_settings(settings):
     # Strategy settings apply to all tickers
 
     logging.info(f"Interval: {settings.get('interval', 'N/A')}")
+    logging.info(f"Trading Interval: {settings.get('interval_2', settings.get('interval', 'N/A'))}")
     logging.info(f"Period: {settings.get('period', 'N/A')}")
+    macd_label = get_macd_label(settings, settings.get('interval', 'N/A'), settings.get('interval_2', settings.get('interval', 'N/A')))
 
     # Entry conditions
     logging.info("\nEntry Conditions:")
@@ -2577,15 +2612,15 @@ def display_settings(settings):
     if settings.get('use_bb_cross_up', False):
         logging.info(f"  - Price cross below BB lower")
     if settings.get('use_macd_cross_up', False):
-        logging.info(f"  - MACD cross above signal")
+        logging.info(f"  - {macd_label} cross above signal")
     if settings.get('use_price_vs_ema9', False):
         logging.info(f"  - Price > EMA9")
     if settings.get('use_price_vs_ema21', False):
         logging.info(f"  - Price > EMA21")
     if settings.get('use_macd_threshold', False):
-        logging.info(f"  - MACD > {settings.get('macd_threshold', 0)}")
+        logging.info(f"  - {macd_label} > {settings.get('macd_threshold', 0)}")
     if settings.get('use_macd_valley', False):
-        logging.info(f"  - MACD Valley (turning up)")
+        logging.info(f"  - {macd_label} Valley (turning up)")
 
     # Exit conditions
     logging.info("\nExit Conditions:")
@@ -2596,15 +2631,15 @@ def display_settings(settings):
     if settings.get('use_bb_cross_down', False):
         logging.info(f"  - Price cross above BB upper")
     if settings.get('use_macd_cross_down', False):
-        logging.info(f"  - MACD cross below signal")
+        logging.info(f"  - {macd_label} cross below signal")
     if settings.get('use_price_vs_ema9_exit', False):
         logging.info(f"  - Price < EMA9")
     if settings.get('use_price_vs_ema21_exit', False):
         logging.info(f"  - Price < EMA21")
     if settings.get('use_macd_above_threshold', False):
-        logging.info(f"  - MACD > {settings.get('macd_above_threshold', 0.0)}")
+        logging.info(f"  - {macd_label} > {settings.get('macd_above_threshold', 0.0)}")
     if settings.get('use_macd_peak', False):
-        logging.info(f"  - MACD Peak (turning down)")
+        logging.info(f"  - {macd_label} Peak (turning down)")
 
     # Risk management
     logging.info("\nRisk Management:")
