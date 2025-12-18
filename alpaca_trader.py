@@ -25,7 +25,8 @@ from trading_config import is_market_hours
 
 # Import functions from rules.py
 from rules import (
-    rsi, ema, bollinger_bands, macd, backtest_symbol, load_strategy_from_alpaca
+    rsi, ema, bollinger_bands, macd, backtest_symbol, load_strategy_from_alpaca,
+    compute_macd_features_df
 )
 
 # Setup logging
@@ -194,11 +195,15 @@ def flatten_strategy(strategy):
     settings['use_ema_cross_up'] = entry.get('use_ema_cross_up', False)
     settings['use_bb_cross_up'] = entry.get('use_bb_cross_up', False)
     settings['use_macd_cross_up'] = entry.get('use_macd_cross_up', False)
+    settings['use_primary_macd_cross_up'] = entry.get('use_primary_macd_cross_up', False)
     settings['use_price_vs_ema9'] = entry.get('use_price_vs_ema9', False)
     settings['use_price_vs_ema21'] = entry.get('use_price_vs_ema21', False)
     settings['use_macd_threshold'] = entry.get('use_macd_threshold', False)
     settings['macd_threshold'] = entry.get('macd_threshold', 0)
+    settings['use_primary_macd_below_threshold'] = entry.get('use_primary_macd_below_threshold', False)
+    settings['primary_macd_below_threshold'] = entry.get('primary_macd_below_threshold', 0.0)
     settings['use_macd_valley'] = entry.get('use_macd_valley', False)
+    settings['use_primary_macd_valley'] = entry.get('use_primary_macd_valley', False)
     settings['use_ema'] = entry.get('use_ema', False)
     settings['use_volume'] = entry.get('use_volume', False)
     settings['use_ema21_slope_entry'] = entry.get('use_ema21_slope_entry', False)
@@ -211,11 +216,15 @@ def flatten_strategy(strategy):
     settings['use_ema_cross_down'] = exit_cond.get('use_ema_cross_down', False)
     settings['use_bb_cross_down'] = exit_cond.get('use_bb_cross_down', False)
     settings['use_macd_cross_down'] = exit_cond.get('use_macd_cross_down', False)
+    settings['use_primary_macd_cross_down'] = exit_cond.get('use_primary_macd_cross_down', False)
     settings['use_price_vs_ema9_exit'] = exit_cond.get('use_price_vs_ema9_exit', False)
     settings['use_price_vs_ema21_exit'] = exit_cond.get('use_price_vs_ema21_exit', False)
     settings['use_macd_peak'] = exit_cond.get('use_macd_peak', False)
+    settings['use_primary_macd_peak'] = exit_cond.get('use_primary_macd_peak', False)
     settings['use_macd_above_threshold'] = exit_cond.get('use_macd_above_threshold', False)
     settings['macd_above_threshold'] = exit_cond.get('macd_above_threshold', 0.0)
+    settings['use_primary_macd_above_threshold'] = exit_cond.get('use_primary_macd_above_threshold', False)
+    settings['primary_macd_above_threshold'] = exit_cond.get('primary_macd_above_threshold', 0.0)
     settings['use_ema21_slope_exit'] = exit_cond.get('use_ema21_slope_exit', False)
     settings['ema21_slope_exit_threshold'] = exit_cond.get('ema21_slope_exit_threshold', 0.0)
 
@@ -243,7 +252,7 @@ def mark_signal_processed(state, ticker, event, timestamp):
     ticker_events[event] = str(timestamp)
 
 
-def get_macd_label(strategy=None, fallback_interval='5m', fallback_interval_2=None):
+def get_macd_label(strategy=None, fallback_interval='5m', fallback_interval_2=None, use_primary=False):
     """
     Build a descriptive MACD label based on interval settings.
 
@@ -251,19 +260,24 @@ def get_macd_label(strategy=None, fallback_interval='5m', fallback_interval_2=No
         strategy: Dict containing interval/interval_2 keys.
         fallback_interval: Default interval if not provided.
         fallback_interval_2: Default secondary interval; falls back to interval if missing.
+        use_primary: Whether to reference the primary (interval) MACD.
 
     Returns:
         String label like "MACD (10m)"
     """
-    base_interval = fallback_interval or 'N/A'
-    macd_interval = fallback_interval_2 or base_interval
+    primary_interval = fallback_interval or 'N/A'
+    secondary_interval = fallback_interval_2 or primary_interval
 
     if strategy:
-        base_interval = strategy.get('interval', base_interval) or base_interval
-        macd_interval = strategy.get('interval_2', macd_interval) or macd_interval
+        primary_interval = strategy.get('interval', primary_interval) or primary_interval
+        secondary_interval = strategy.get('interval_2', secondary_interval) or secondary_interval
 
+    if not secondary_interval:
+        secondary_interval = primary_interval
+
+    macd_interval = primary_interval if use_primary else secondary_interval
     if not macd_interval:
-        macd_interval = base_interval
+        macd_interval = 'N/A'
 
     return f"MACD ({macd_interval})"
 
@@ -657,6 +671,7 @@ Period: {settings.get('period', '1d')}"""
                 exit_cond = strategy.get('exit_conditions', {})
                 risk_mgmt = strategy.get('risk_management', {})
                 macd_label = get_macd_label(strategy, default_interval, default_interval_2)
+                primary_macd_label = get_macd_label(strategy, default_interval, default_interval_2, use_primary=True)
 
                 # Get entry actions
                 entry_actions = ticker_config.get('entry', {}).get('actions', [])
@@ -685,14 +700,20 @@ Period: {settings.get('period', '1d')}"""
                     entry_conditions_list.append(f"BB Width > {entry_cond.get('bb_width_threshold', 0.4)}%")
                 if entry_cond.get('use_macd_cross_up'):
                     entry_conditions_list.append(f"{macd_label} cross above Signal")
+                if entry_cond.get('use_primary_macd_cross_up'):
+                    entry_conditions_list.append(f"{primary_macd_label} cross above Signal")
                 if entry_cond.get('use_price_vs_ema9'):
                     entry_conditions_list.append("Price > EMA9")
                 if entry_cond.get('use_price_vs_ema21'):
                     entry_conditions_list.append("Price > EMA21")
                 if entry_cond.get('use_macd_threshold'):
                     entry_conditions_list.append(f"{macd_label} < {entry_cond.get('macd_threshold', 0.1)}")
+                if entry_cond.get('use_primary_macd_below_threshold'):
+                    entry_conditions_list.append(f"{primary_macd_label} < {entry_cond.get('primary_macd_below_threshold', 0.1)}")
                 if entry_cond.get('use_macd_valley'):
                     entry_conditions_list.append(f"{macd_label} Valley (turning up)")
+                if entry_cond.get('use_primary_macd_valley'):
+                    entry_conditions_list.append(f"{primary_macd_label} Valley (turning up)")
                 if entry_cond.get('use_volume'):
                     entry_conditions_list.append("Volume Rising")
 
@@ -723,14 +744,20 @@ Period: {settings.get('period', '1d')}"""
                     exit_conditions_list.append(f"BB Width > {exit_cond.get('bb_width_exit_threshold', 0.4)}%")
                 if exit_cond.get('use_macd_cross_down'):
                     exit_conditions_list.append(f"{macd_label} cross below Signal")
+                if exit_cond.get('use_primary_macd_cross_down'):
+                    exit_conditions_list.append(f"{primary_macd_label} cross below Signal")
                 if exit_cond.get('use_price_vs_ema9_exit'):
                     exit_conditions_list.append("Price < EMA9")
                 if exit_cond.get('use_price_vs_ema21_exit'):
                     exit_conditions_list.append("Price < EMA21")
                 if exit_cond.get('use_macd_above_threshold'):
                     exit_conditions_list.append(f"{macd_label} > {exit_cond.get('macd_above_threshold', 0.0)}")
+                if exit_cond.get('use_primary_macd_above_threshold'):
+                    exit_conditions_list.append(f"{primary_macd_label} > {exit_cond.get('primary_macd_above_threshold', 0.0)}")
                 if exit_cond.get('use_macd_peak'):
                     exit_conditions_list.append(f"{macd_label} Peak (turning down)")
+                if exit_cond.get('use_primary_macd_peak'):
+                    exit_conditions_list.append(f"{primary_macd_label} Peak (turning down)")
 
                 if exit_conditions_list:
                     for cond in exit_conditions_list:
@@ -2466,13 +2493,10 @@ def run_strategy():
 
         # Get interval settings and period from ticker-specific strategy, with fallback to defaults
         default_interval = default_settings.get('interval', '5m') if default_settings else '5m'
-        interval = ticker_strategy.get('interval', default_interval)
+        interval = ticker_strategy.get('interval', default_interval) or default_interval
         trading_interval = ticker_strategy.get('interval_2')
         if not trading_interval:
             trading_interval = interval
-        if not trading_interval:
-            trading_interval = default_interval
-        interval = trading_interval
         period = ticker_strategy.get('period', default_settings.get('period', '1d'))
 
         # Download recent data
@@ -2504,47 +2528,63 @@ def run_strategy():
                 else:
                     raw.index = raw.index.tz_localize('UTC').tz_convert('America/New_York')
 
-            # Resample 1-minute data to desired interval (interval_2 when available)
-            if trading_interval != '1m':
-                # Map interval to pandas resample frequency
-                interval_map = {
-                    '2m': '2min',
-                    '3m': '3min',
-                    '5m': '5min',
-                    '10m': '10min',
-                    '15m': '15min',
-                    '30m': '30min',
-                    '1h': '1H',
-                    '1d': '1D'
-                }
+            interval_map = {
+                '2m': '2min',
+                '3m': '3min',
+                '5m': '5min',
+                '10m': '10min',
+                '15m': '15min',
+                '30m': '30min',
+                '1h': '1H',
+                '1d': '1D'
+            }
 
-                if trading_interval in interval_map:
-                    resample_freq = interval_map[trading_interval]
-                    logging.info(f"Resampling 1-minute bars to {trading_interval} ({len(raw)} → aggregating...)")
-
-                    df = raw.resample(resample_freq).agg({
+            def resample_to_interval(target_interval, label):
+                if target_interval == '1m':
+                    logging.info(f"✅ Using {len(raw)} 1-minute bars for {label}")
+                    return raw.copy()
+                if target_interval in interval_map:
+                    resample_freq = interval_map[target_interval]
+                    logging.info(f"Resampling 1-minute bars to {target_interval} for {label} ({len(raw)} → aggregating...)")
+                    df_local = raw.resample(resample_freq).agg({
                         'Open': 'first',
                         'High': 'max',
                         'Low': 'min',
                         'Close': 'last',
                         'Volume': 'sum'
                     }).dropna()
+                    logging.info(f"✅ Aggregated to {len(df_local)} {target_interval} bars for {label}")
+                    return df_local
+                logging.warning(f"Unsupported interval {target_interval} for {label}, using 1-minute bars")
+                return raw.copy()
 
-                    logging.info(f"✅ Aggregated to {len(df)} {trading_interval} bars (from {len(raw)} 1-min bars)")
-                else:
-                    # Unsupported interval, use 1-minute data as-is
-                    logging.warning(f"Unsupported interval {trading_interval}, using 1-minute bars")
-                    df = raw.copy()
+            df = resample_to_interval(trading_interval, f"{ticker} trading interval")
+            if interval == trading_interval:
+                primary_df = df.copy()
             else:
-                # Use 1-minute data as-is
-                df = raw.copy()
-                logging.info(f"✅ Using {len(df)} 1-minute bars")
+                primary_df = resample_to_interval(interval, f"{ticker} primary interval")
 
             # Get ticker-specific strategy settings (with overrides)
             ticker_strategy = get_ticker_strategy(ticker, default_strategy, signal_actions_config)
             ticker_settings = flatten_strategy(ticker_strategy)
-            ticker_settings['interval'] = trading_interval
+            ticker_settings['interval'] = interval
             ticker_settings['interval_2'] = trading_interval
+
+            primary_macd_features = pd.DataFrame()
+            if not primary_df.empty:
+                primary_macd_features = compute_macd_features_df(primary_df).add_prefix('primary_')
+            if not df.empty and not primary_macd_features.empty:
+                aligned_primary = primary_macd_features.reindex(df.index, method='pad')
+                for col in aligned_primary.columns:
+                    df[col] = aligned_primary[col]
+                if "primary_macd" in df.columns:
+                    df["primary_macd_prev"] = df["primary_macd"].shift(1)
+                if "primary_macd_signal" in df.columns:
+                    df["primary_macd_signal_prev"] = df["primary_macd_signal"].shift(1)
+                if "primary_macd_peak" in df.columns:
+                    df["primary_macd_peak"] = df["primary_macd_peak"].fillna(False)
+                if "primary_macd_valley" in df.columns:
+                    df["primary_macd_valley"] = df["primary_macd_valley"].fillna(False)
 
             # Log if using ticker-specific overrides
             ticker_config = ticker_configs.get(ticker, {})
@@ -2575,15 +2615,23 @@ def run_strategy():
                 use_bb_width_exit=ticker_settings.get('use_bb_width_exit', False),
                 bb_width_exit_threshold=ticker_settings.get('bb_width_exit_threshold', 0.4),
                 use_macd_cross_up=ticker_settings.get('use_macd_cross_up', False),
+                use_primary_macd_cross_up=ticker_settings.get('use_primary_macd_cross_up', False),
                 use_macd_cross_down=ticker_settings.get('use_macd_cross_down', False),
+                use_primary_macd_cross_down=ticker_settings.get('use_primary_macd_cross_down', False),
                 use_price_above_ema21=ticker_settings.get('use_price_vs_ema21', False),
                 use_price_below_ema21=ticker_settings.get('use_price_vs_ema21_exit', False),
                 use_macd_below_threshold=ticker_settings.get('use_macd_threshold', False),
                 macd_below_threshold=ticker_settings.get('macd_threshold', 0),
+                use_primary_macd_below_threshold=ticker_settings.get('use_primary_macd_below_threshold', False),
+                primary_macd_below_threshold=ticker_settings.get('primary_macd_below_threshold', 0.0),
                 use_macd_above_threshold=ticker_settings.get('use_macd_above_threshold', False),
                 macd_above_threshold=ticker_settings.get('macd_above_threshold', 0),
                 use_macd_peak=ticker_settings.get('use_macd_peak', False),
+                use_primary_macd_above_threshold=ticker_settings.get('use_primary_macd_above_threshold', False),
+                primary_macd_above_threshold=ticker_settings.get('primary_macd_above_threshold', 0.0),
                 use_macd_valley=ticker_settings.get('use_macd_valley', False),
+                use_primary_macd_peak=ticker_settings.get('use_primary_macd_peak', False),
+                use_primary_macd_valley=ticker_settings.get('use_primary_macd_valley', False),
                 use_ema21_slope_entry=ticker_settings.get('use_ema21_slope_entry', False),
                 ema21_slope_entry_threshold=ticker_settings.get('ema21_slope_entry_threshold', 0.0),
                 use_ema21_slope_exit=ticker_settings.get('use_ema21_slope_exit', False),
@@ -2724,6 +2772,8 @@ def display_settings(settings):
     logging.info(f"Trading Interval: {settings.get('interval_2', settings.get('interval', 'N/A'))}")
     logging.info(f"Period: {settings.get('period', 'N/A')}")
     macd_label = get_macd_label(settings, settings.get('interval', 'N/A'), settings.get('interval_2', settings.get('interval', 'N/A')))
+    primary_macd_label = get_macd_label(settings, settings.get('interval', 'N/A'),
+                                        settings.get('interval_2', settings.get('interval', 'N/A')), use_primary=True)
 
     # Entry conditions
     logging.info("\nEntry Conditions:")
@@ -2735,14 +2785,20 @@ def display_settings(settings):
         logging.info(f"  - Price cross below BB lower")
     if settings.get('use_macd_cross_up', False):
         logging.info(f"  - {macd_label} cross above signal")
+    if settings.get('use_primary_macd_cross_up', False):
+        logging.info(f"  - {primary_macd_label} cross above signal")
     if settings.get('use_price_vs_ema9', False):
         logging.info(f"  - Price > EMA9")
     if settings.get('use_price_vs_ema21', False):
         logging.info(f"  - Price > EMA21")
     if settings.get('use_macd_threshold', False):
         logging.info(f"  - {macd_label} > {settings.get('macd_threshold', 0)}")
+    if settings.get('use_primary_macd_below_threshold', False):
+        logging.info(f"  - {primary_macd_label} > {settings.get('primary_macd_below_threshold', 0.0)}")
     if settings.get('use_macd_valley', False):
         logging.info(f"  - {macd_label} Valley (turning up)")
+    if settings.get('use_primary_macd_valley', False):
+        logging.info(f"  - {primary_macd_label} Valley (turning up)")
 
     # Exit conditions
     logging.info("\nExit Conditions:")
@@ -2754,14 +2810,20 @@ def display_settings(settings):
         logging.info(f"  - Price cross above BB upper")
     if settings.get('use_macd_cross_down', False):
         logging.info(f"  - {macd_label} cross below signal")
+    if settings.get('use_primary_macd_cross_down', False):
+        logging.info(f"  - {primary_macd_label} cross below signal")
     if settings.get('use_price_vs_ema9_exit', False):
         logging.info(f"  - Price < EMA9")
     if settings.get('use_price_vs_ema21_exit', False):
         logging.info(f"  - Price < EMA21")
     if settings.get('use_macd_above_threshold', False):
         logging.info(f"  - {macd_label} > {settings.get('macd_above_threshold', 0.0)}")
+    if settings.get('use_primary_macd_above_threshold', False):
+        logging.info(f"  - {primary_macd_label} > {settings.get('primary_macd_above_threshold', 0.0)}")
     if settings.get('use_macd_peak', False):
         logging.info(f"  - {macd_label} Peak (turning down)")
+    if settings.get('use_primary_macd_peak', False):
+        logging.info(f"  - {primary_macd_label} Peak (turning down)")
 
     # Risk management
     logging.info("\nRisk Management:")
