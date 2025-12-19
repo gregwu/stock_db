@@ -2,7 +2,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import datetime as dt
 import plotly.graph_objs as go
 import json
@@ -19,6 +18,21 @@ from trading_config import is_market_hours
 
 # Load environment variables
 load_dotenv()
+
+def _init_yfinance_cache():
+    """Ensure yfinance cache dir is writable to avoid peewee sqlite errors."""
+    cache_dir = os.getenv("YFINANCE_CACHE_DIR")
+    if not cache_dir:
+        cache_dir = os.path.join(os.getcwd(), ".cache", "yfinance")
+        os.environ["YFINANCE_CACHE_DIR"] = cache_dir
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError:
+        pass
+
+_init_yfinance_cache()
+
+import yfinance as yf
 
 # ---------- Settings persistence ----------
 
